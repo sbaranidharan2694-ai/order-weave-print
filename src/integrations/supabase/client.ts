@@ -16,16 +16,9 @@ const configured = Boolean(
   SUPABASE_URL && SUPABASE_KEY && !SUPABASE_URL.includes("placeholder") && SUPABASE_KEY !== "placeholder"
 );
 
-// #region agent log
-fetch('http://127.0.0.1:7932/ingest/c42627de-8b23-4aa5-8010-342238c3f680',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'da479d'},body:JSON.stringify({sessionId:'da479d',location:'client.ts:init',message:'Supabase client init',data:{hasUrl:Boolean(SUPABASE_URL),hasKey:Boolean(SUPABASE_KEY),isConfigured:configured},timestamp:Date.now(),runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-// #endregion
-
 let _client: ReturnType<typeof createClient<Database>>;
 let _isConfigured: boolean;
 try {
-  // #region agent log
-  fetch('http://127.0.0.1:7932/ingest/c42627de-8b23-4aa5-8010-342238c3f680',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'da479d'},body:JSON.stringify({sessionId:'da479d',location:'client.ts:createClient',message:'Before createClient',data:{},timestamp:Date.now(),runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-  // #endregion
   _client = createClient<Database>(
     SUPABASE_URL || "https://placeholder.supabase.co",
     SUPABASE_KEY || "placeholder",
@@ -38,9 +31,6 @@ try {
     }
   );
   _isConfigured = configured;
-  // #region agent log
-  fetch('http://127.0.0.1:7932/ingest/c42627de-8b23-4aa5-8010-342238c3f680',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'da479d'},body:JSON.stringify({sessionId:'da479d',location:'client.ts:afterCreate',message:'After createClient',data:{},timestamp:Date.now(),runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-  // #endregion
 } catch (e) {
   _client = createClient<Database>("https://placeholder.supabase.co", "placeholder", {
     auth: { persistSession: false, autoRefreshToken: false },
