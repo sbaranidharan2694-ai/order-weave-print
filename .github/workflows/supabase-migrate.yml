@@ -16,6 +16,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Check secrets
+        run: |
+          if [ -z "${{ secrets.SUPABASE_ACCESS_TOKEN }}" ]; then
+            echo "::error::SUPABASE_ACCESS_TOKEN is not set. Add it in repo Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+          if [ -z "${{ secrets.SUPABASE_PROJECT_REF }}" ]; then
+            echo "::error::SUPABASE_PROJECT_REF is not set. Add your Supabase project Reference ID in repo Settings → Secrets and variables → Actions (Supabase Dashboard → Project Settings → General)."
+            exit 1
+          fi
+          echo "Secrets are set."
+
       - name: Setup Supabase CLI
         uses: supabase/setup-cli@v1
         with:
