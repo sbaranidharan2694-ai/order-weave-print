@@ -557,12 +557,13 @@ export default function BankAnalyser() {
       toast.error(`Period already exists (${periodDup.fileName}).`);
       return;
     }
+    // Insert parent statement FIRST so FK constraint on bank_transactions is satisfied
+    newStmt.transactionCount = txns.length;
+    await saveStatement(newStmt);
     for (const txn of txns) {
       const exists = await hasTransaction(finalStmtId, txn.id);
       if (!exists) await saveTransaction(txn);
     }
-    newStmt.transactionCount = txns.length;
-    await saveStatement(newStmt);
     const saved = await pdfStorage.save(finalStmtId, file);
     if (saved) {
       newStmt.pdfStored = true;
@@ -1142,6 +1143,10 @@ function AccountTab({ account, statements, transactions, onRefresh, customLookup
           continue;
         }
 
+        // Insert parent statement FIRST so FK constraint on bank_transactions is satisfied
+        newStmt.transactionCount = txns.length;
+        await saveStatement(newStmt);
+
         let saved = 0, skipped = 0;
         for (let ti = 0; ti < txns.length; ti++) {
           const txn = txns[ti];
@@ -1153,8 +1158,10 @@ function AccountTab({ account, statements, transactions, onRefresh, customLookup
             setQueue(prev => prev.map((p, i) => i === qi ? { ...p, progress: `Saving transactions ${ti + 1}/${txns.length}` } : p));
           }
         }
-        newStmt.transactionCount = saved;
-        await saveStatement(newStmt);
+        if (saved !== txns.length) {
+          newStmt.transactionCount = saved;
+          await saveStatement(newStmt);
+        }
 
         if (item.file.size <= 50 * 1024 * 1024) {
           setQueue(prev => prev.map((p, i) => i === qi ? { ...p, progress: "Saving PDF…" } : p));
