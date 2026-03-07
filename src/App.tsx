@@ -43,10 +43,10 @@ function SetupRequired() {
         </p>
         <pre className="text-left text-xs bg-muted p-4 rounded-lg overflow-x-auto mb-4">
           {`VITE_SUPABASE_URL=https://your-project.supabase.co
-VITE_SUPABASE_ANON_KEY=your-anon-key`}
+VITE_SUPABASE_PUBLISHABLE_KEY=your-anon-key`}
         </pre>
         <p className="text-xs text-muted-foreground">
-          Or use <code className="bg-muted px-1 rounded">VITE_SUPABASE_PUBLISHABLE_KEY</code>. Get values from Supabase Dashboard → Settings → API. Then restart <code className="bg-muted px-1 rounded">npm run dev</code>.
+          Lovable uses the same names when Supabase is connected. Get values from Supabase Dashboard → Settings → API. Then restart <code className="bg-muted px-1 rounded">npm run dev</code>.
         </p>
       </div>
     </div>
