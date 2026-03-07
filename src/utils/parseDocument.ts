@@ -1,104 +1,133 @@
-/**
- * Parse PDF/image via Supabase Edge Function (Deno) → Anthropic Claude.
- * Use this in Lovable; the Edge Function handles API key and document type.
- */
+import { extractTextFromPdf } from "./extractPdfText";
+import {
+  parseBankStatement,
+  type BankStatementData,
+} from "./parseBankStatement";
+import {
+  parsePurchaseOrder,
+  type PurchaseOrderData,
+} from "./parsePurchaseOrder";
 
-export type ParseMode = "auto" | "purchase_order" | "bank_statement";
+export type ParsedDocument = BankStatementData | PurchaseOrderData;
+export type { BankStatementData, PurchaseOrderData };
+
+export type DocType = "bank_statement" | "purchase_order" | "unknown";
+
+function detectDocType(text: string): DocType {
+  const upper = text.toUpperCase();
+  if (
+    upper.includes("STATEMENT OF ACCOUNT") ||
+    upper.includes("OPENING BALANCE") ||
+    upper.includes("CLOSING BALANCE") ||
+    upper.includes("TOTAL CREDITS") ||
+    upper.includes("TOTAL DEBITS")
+  )
+    return "bank_statement";
+
+  if (
+    upper.includes("PURCHASE ORDER") ||
+    upper.includes("PO NO") ||
+    upper.includes("VENDOR CODE") ||
+    upper.includes("HSN")
+  )
+    return "purchase_order";
+
+  return "unknown";
+}
 
 export interface ParseResult {
   success: boolean;
-  data?: Record<string, unknown>;
+  docType: DocType;
+  data?: ParsedDocument;
+  rawText?: string;
   error?: string;
+  fileName: string;
+  pageCount?: number;
 }
-
-const fileToBase64 = (file: File): Promise<string> =>
-  new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve((reader.result as string) ?? "");
-    reader.onerror = () =>
-      reject(new Error(`FileReader failed for: ${file.name}`));
-    reader.readAsDataURL(file);
-  });
 
 export async function parseDocument(
   file: File,
-  mode: ParseMode = "auto"
+  forceMode?: DocType
 ): Promise<ParseResult> {
-  if (file.size > 4.5 * 1024 * 1024) {
+  if (!file) {
     return {
       success: false,
-      error: `File too large: ${(file.size / 1024 / 1024).toFixed(1)}MB. Maximum is 4MB.`,
+      docType: "unknown",
+      error: "No file provided",
+      fileName: "",
     };
   }
 
-  const allowed = [
-    "application/pdf",
-    "image/png",
-    "image/jpeg",
-    "image/webp",
-  ];
-  if (
-    !allowed.includes(file.type) &&
-    !file.name.toLowerCase().endsWith(".pdf")
-  ) {
+  const isPdf =
+    file.type === "application/pdf" ||
+    file.name.toLowerCase().endsWith(".pdf");
+
+  if (!isPdf) {
     return {
       success: false,
-      error: `Unsupported file type: ${file.type || "unknown"}`,
+      docType: "unknown",
+      error: `Only PDF files are supported. Got: ${file.type || file.name}`,
+      fileName: file.name,
+    };
+  }
+
+  if (file.size > 10 * 1024 * 1024) {
+    return {
+      success: false,
+      docType: "unknown",
+      error: `File too large: ${(file.size / 1024 / 1024).toFixed(1)}MB. Maximum is 10MB.`,
+      fileName: file.name,
     };
   }
 
   try {
-    const fileBase64 = await fileToBase64(file);
+    const { text: rawText, pageCount } = await extractTextFromPdf(file);
 
-    const supabaseUrl =
-      (import.meta as unknown as { env?: Record<string, string> }).env
-        ?.VITE_SUPABASE_URL ?? "";
-    const anonKey =
-      (import.meta as unknown as { env?: Record<string, string> }).env
-        ?.VITE_SUPABASE_ANON_KEY ??
-      (import.meta as unknown as { env?: Record<string, string> }).env
-        ?.VITE_SUPABASE_PUBLISHABLE_KEY ??
-      "";
-
-    if (!supabaseUrl || !anonKey) {
+    if (!rawText || rawText.trim().length < 50) {
       return {
         success: false,
-        error: "Supabase URL or anon key not configured.",
+        docType: "unknown",
+        error:
+          "Could not extract text from PDF. File may be scanned/image-based.",
+        fileName: file.name,
+        rawText,
       };
     }
 
-    const response = await fetch(
-      `${supabaseUrl.replace(/\/$/, "")}/functions/v1/parse-document`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${anonKey}`,
-        },
-        body: JSON.stringify({
-          fileBase64,
-          fileName: file.name,
-          parseMode: mode,
-        }),
-      }
-    );
+    const docType = forceMode || detectDocType(rawText);
 
-    const result = (await response.json()) as {
-      success?: boolean;
-      data?: Record<string, unknown>;
-      error?: string;
+    if (docType === "unknown") {
+      return {
+        success: false,
+        docType: "unknown",
+        error:
+          "Could not identify document type. Expected bank statement or purchase order.",
+        fileName: file.name,
+        rawText,
+      };
+    }
+
+    const data: ParsedDocument =
+      docType === "bank_statement"
+        ? parseBankStatement(rawText)
+        : parsePurchaseOrder(rawText);
+
+    return {
+      success: true,
+      docType,
+      data,
+      rawText,
+      fileName: file.name,
+      pageCount,
     };
-
-    if (!response.ok || !result.success) {
-      return {
-        success: false,
-        error: result.error ?? `Server error: ${response.status}`,
-      };
-    }
-
-    return { success: true, data: result.data };
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Network error";
-    return { success: false, error: message };
+    const message =
+      err instanceof Error ? err.message : "Unknown parsing error";
+    return {
+      success: false,
+      docType: "unknown",
+      error: message,
+      fileName: file.name,
+    };
   }
 }

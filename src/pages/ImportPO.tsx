@@ -15,10 +15,9 @@ import { Upload, Loader2, FileText, Trash2, CheckCircle2, X, PlusCircle } from "
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { format } from "date-fns";
-import { parseDocument } from "@/utils/parseDocument";
-import type { ClaudePurchaseOrderResponse } from "@/lib/parseDocumentWithClaude";
+import { parseDocument, type PurchaseOrderData } from "@/utils/parseDocument";
 
-const MAX_PO_FILE_BYTES = 4 * 1024 * 1024; // 4MB for Edge Function limit
+const MAX_PO_FILE_BYTES = 10 * 1024 * 1024; // 10MB for client-side PDF.js
 
 type ParsedLineItem = {
   description: string;
@@ -54,29 +53,26 @@ type ParsedPO = {
   line_items: ParsedLineItem[];
 };
 
-/** Map Claude API purchase_order response to ParsedPO shape used by ImportPO. */
-function mapClaudePOToParsedPO(claude: ClaudePurchaseOrderResponse): ParsedPO {
-  const buyer = claude.buyer ?? {};
-  const vendor = claude.vendor ?? {};
-  const items = claude.items ?? [];
-  const grandTotal = Number(claude.grand_total) || 0;
+/** Map PurchaseOrderData (PDF.js parser) to ParsedPO shape used by ImportPO. */
+function mapPODataToParsedPO(po: PurchaseOrderData): ParsedPO {
+  const items = po.items ?? [];
   return {
-    po_number: claude.po_number ?? "",
-    po_date: claude.po_date ?? null,
-    vendor_name: buyer.name ?? vendor.name ?? "",
+    po_number: po.poNumber ?? "",
+    po_date: po.poDate ?? null,
+    vendor_name: po.buyerName ?? po.vendorName ?? "",
     contact_no: null,
-    contact_person: claude.order_handled_by ?? null,
-    gstin: buyer.gst ?? null,
-    delivery_address: buyer.address ?? vendor.address ?? null,
-    delivery_date: items[0]?.delivery_date ?? null,
-    payment_terms: claude.payment_terms ?? null,
+    contact_person: po.orderHandledBy ?? null,
+    gstin: po.buyerGst ?? null,
+    delivery_address: po.buyerAddress ?? po.vendorAddress ?? null,
+    delivery_date: items[0]?.deliveryDate ?? null,
+    payment_terms: po.paymentTerms ?? null,
     currency: "INR",
-    total_amount: grandTotal,
+    total_amount: Number(po.grandTotal) || 0,
     tax_amount: 0,
-    base_amount: grandTotal,
-    cgst_percent: items[0]?.cgst_pct ?? 0,
+    base_amount: Number(po.grandTotal) || 0,
+    cgst_percent: items[0]?.cgstPct ?? 0,
     cgst_amount: 0,
-    sgst_percent: items[0]?.sgst_pct ?? 0,
+    sgst_percent: items[0]?.sgstPct ?? 0,
     sgst_amount: 0,
     igst_percent: 0,
     igst_amount: 0,
@@ -86,7 +82,7 @@ function mapClaudePOToParsedPO(claude: ClaudePurchaseOrderResponse): ParsedPO {
       qty: Number(i.qty) || 0,
       uom: i.uom ?? "NOS",
       unit_price: Number(i.rate) || 0,
-      amount: Number(i.total_value) || 0,
+      amount: Number(i.totalValue) || 0,
       suggested_product_type: "Other",
     })),
   };
@@ -171,8 +167,8 @@ export default function ImportPO() {
         toast.error(result.error ?? "Parsing failed");
         return;
       }
-      const poData = mapClaudePOToParsedPO(
-        (result.data ?? {}) as ClaudePurchaseOrderResponse
+      const poData = mapPODataToParsedPO(
+        (result.data ?? {}) as PurchaseOrderData
       );
       setParsed(poData);
 
@@ -429,11 +425,11 @@ export default function ImportPO() {
                 >
                   <Upload className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
                   <p className="text-lg font-medium text-foreground">Drag PDF purchase order or click to browse</p>
-                  <p className="text-sm text-muted-foreground mt-1">Accepts .pdf up to 4MB (parsed via Claude)</p>
+                  <p className="text-sm text-muted-foreground mt-1">Accepts .pdf up to 10MB (parsed in browser)</p>
                   <input
                     id="po-file-input"
                     type="file"
-                    accept=".pdf,application/pdf,image/png,image/jpeg,image/webp"
+                    accept=".pdf"
                     className="hidden"
                     onChange={handleFileChange}
                   />

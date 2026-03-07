@@ -43,37 +43,37 @@ import {
 import { useStorageMode } from "@/hooks/useStorageMode";
 import { SharedDataBanner } from "@/components/SharedDataBanner";
 import { friendlyDbError } from "@/lib/utils";
-import { parseDocument } from "@/utils/parseDocument";
-import type { ClaudeBankStatementResponse } from "@/lib/parseDocumentWithClaude";
+import { parseDocument, type BankStatementData } from "@/utils/parseDocument";
+import { extractTextFromPdf } from "@/utils/extractPdfText";
+import { parseBankStatement } from "@/utils/parseBankStatement";
 import type { BankStatement, BankTransaction } from "@/lib/bankStorage";
 
-const MAX_CLAUDE_FILE_BYTES = 4 * 1024 * 1024; // 4MB for Claude API
-
-/** Detect account key from Claude bank_statement account_number or account_holder. */
-function detectAccountFromClaudeBank(claude: ClaudeBankStatementResponse): string | null {
-  const num = (claude.account_number ?? "").replace(/\s/g, "");
-  const holder = (claude.account_holder ?? "").toUpperCase();
+/** Detect account key from parsed bank statement accountNumber or accountHolder. */
+function detectAccountFromBankStatementData(data: BankStatementData): string | null {
+  const num = (data.accountNumber ?? "").replace(/\s/g, "");
+  const holder = (data.accountHolder ?? "").toUpperCase();
   if (num.includes("0244020080155") || holder.includes("SUPER SCREENS")) return "superscreens";
   if (num.includes("0244011477662") || holder.includes("REVATHY")) return "revathy";
   if (holder.includes("SUPER PRINTERS")) return "superprinters";
   return null;
 }
 
-/** Map Claude bank_statement response to our statement + transactions. */
-function mapClaudeBankToStatementAndTransactions(
-  claude: ClaudeBankStatementResponse,
+/** Map BankStatementData (PDF.js parser) to our statement + transactions. */
+function mapBankStatementDataToStatementAndTransactions(
+  data: BankStatementData,
   statementId: string,
   accountKey: string,
   fileName: string
 ): { statement: BankStatement; transactions: BankTransaction[] } {
-  const txns = (claude.transactions ?? []).map((t, idx) => {
-    const refNo = t.ref_no ?? "";
+  const txns = (data.transactions ?? []).map((t) => {
+    const refNo = t.refNo ?? "";
     const date = t.date ?? "";
     const debit = Number(t.debit) || 0;
     const credit = Number(t.credit) || 0;
     const txnId = btoa(statementId + refNo + date + String(debit || credit))
       .replace(/[^a-zA-Z0-9]/g, "")
       .substring(0, 40);
+    const category = (t as { category?: string }).category ?? "";
     return {
       id: txnId,
       statementId,
@@ -83,12 +83,12 @@ function mapClaudeBankToStatementAndTransactions(
       debit,
       credit,
       balance: Number(t.balance) || 0,
-      type: "OTHER",
+      type: category || "OTHER",
       counterparty: "",
     };
   });
-  const periodFrom = claude.period_from ?? "";
-  const periodTo = claude.period_to ?? "";
+  const periodFrom = data.periodFrom ?? "";
+  const periodTo = data.periodTo ?? "";
   const period = periodFrom && periodTo ? `${periodFrom} to ${periodTo}` : "";
   const statement: BankStatement = {
     id: statementId,
@@ -98,11 +98,11 @@ function mapClaudeBankToStatementAndTransactions(
     period,
     periodStart: periodFrom,
     periodEnd: periodTo,
-    accountNumber: claude.account_number ?? "",
-    openingBalance: Number(claude.opening_balance) || 0,
-    closingBalance: Number(claude.closing_balance) || 0,
-    totalCredits: Number(claude.total_credits) || 0,
-    totalDebits: Number(claude.total_debits) || 0,
+    accountNumber: data.accountNumber ?? "",
+    openingBalance: Number(data.openingBalance) || 0,
+    closingBalance: Number(data.closingBalance) || 0,
+    totalCredits: Number(data.totalCredits) || 0,
+    totalDebits: Number(data.totalDebits) || 0,
     transactionCount: txns.length,
     pdfStored: false,
     pdfFileSize: 0,
@@ -110,31 +110,6 @@ function mapClaudeBankToStatementAndTransactions(
     lastValidated: null,
   };
   return { statement, transactions: txns };
-}
-
-/* ═══════════ PDF.js CDN (v4.4.168, .mjs) ═══════════ */
-const PDFJS_CDN = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168";
-let pdfjsLib: any = null;
-
-function loadPdfJs(): Promise<any> {
-  if (pdfjsLib) return Promise.resolve(pdfjsLib);
-  return new Promise((resolve, reject) => {
-    if ((window as any).pdfjsLib) {
-      pdfjsLib = (window as any).pdfjsLib;
-      pdfjsLib.GlobalWorkerOptions.workerSrc = `${PDFJS_CDN}/pdf.worker.min.mjs`;
-      return resolve(pdfjsLib);
-    }
-    const s = document.createElement("script");
-    s.src = `${PDFJS_CDN}/pdf.min.mjs`;
-    s.type = "module";
-    s.onload = () => {
-      pdfjsLib = (window as any).pdfjsLib;
-      pdfjsLib.GlobalWorkerOptions.workerSrc = `${PDFJS_CDN}/pdf.worker.min.mjs`;
-      resolve(pdfjsLib);
-    };
-    s.onerror = () => reject(new Error("Failed to load PDF.js"));
-    document.head.appendChild(s);
-  });
 }
 
 /* ═══════════ ACCOUNTS ═══════════ */
@@ -767,6 +742,8 @@ function AccountTab({ account, statements, transactions, onRefresh, customLookup
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [unparsedModal, setUnparsedModal] = useState(false);
   const [validating, setValidating] = useState(false);
+  const [parsedPreview, setParsedPreview] = useState<{ statementId: string; data: BankStatementData } | null>(null);
+  const [isParsingPreview, setIsParsingPreview] = useState(false);
 
   const fileInputRef = useRef(null);
   const dropRef = useRef(null);
@@ -861,8 +838,6 @@ function AccountTab({ account, statements, transactions, onRefresh, customLookup
   }, [account.key, statements, customLookup]);
 
   const processQueue = async (items) => {
-    const lib = await loadPdfJs();
-    const lookup = await loadCustomLookup();
     for (let qi = 0; qi < items.length; qi++) {
       const item = items[qi];
       setQueue(prev => prev.map((p, i) => i === qi ? { ...p, status: "processing", progress: "Loading PDF..." } : p));
@@ -878,207 +853,40 @@ function AccountTab({ account, statements, transactions, onRefresh, customLookup
           continue;
         }
 
-        // Optional: try Edge Function (Claude) first for bank statement (≤4MB)
-        if (item.file.size <= MAX_CLAUDE_FILE_BYTES) {
-          try {
-            setQueue(prev => prev.map((p, i) => i === qi ? { ...p, progress: "Parsing with Claude…" } : p));
-            const result = await parseDocument(item.file, "bank_statement");
-            if (!result.success || !result.data) throw new Error(result.error ?? "No data");
-            const raw = result.data as ClaudeBankStatementResponse;
-            const detected = detectAccountFromClaudeBank(raw);
-            const finalAccount = detected || item.account;
-            const finalStmtId = btoa(finalAccount + item.file.name + item.file.size)
-              .replace(/[^a-zA-Z0-9]/g, "").substring(0, 40);
-            const existing2 = await getStatement(finalStmtId);
-            if (existing2) {
-              setQueue(prev => prev.map((p, i) => i === qi ? { ...p, status: "blocked", error: `Already uploaded on ${new Date(existing2.uploadedAt).toLocaleDateString()}` } : p));
-              continue;
-            }
-            const { statement: newStmt, transactions: claudeTxns } = mapClaudeBankToStatementAndTransactions(raw, finalStmtId, finalAccount, item.file.name);
-            if (claudeTxns.length === 0) throw new Error("No transactions in response");
-
-            const allStmts = await loadStatements();
-            const periodDup = allStmts.find(s =>
-              s.accountKey === finalAccount && s.periodStart === newStmt.periodStart && s.periodEnd === newStmt.periodEnd && newStmt.periodStart && newStmt.periodEnd
-            );
-            if (periodDup) {
-              setQueue(prev => prev.map((p, i) => i === qi ? { ...p, status: "blocked", error: `Period already exists (${periodDup.fileName})` } : p));
-              continue;
-            }
-
-            let saved = 0, skipped = 0;
-            for (const txn of claudeTxns) {
-              const exists = await hasTransaction(finalStmtId, txn.id);
-              if (exists) { skipped++; continue; }
-              await saveTransaction(txn);
-              saved++;
-            }
-            newStmt.transactionCount = saved;
-            await saveStatement(newStmt);
-
-            if (item.file.size <= 50 * 1024 * 1024) {
-              setQueue(prev => prev.map((p, i) => i === qi ? { ...p, progress: "Saving PDF…" } : p));
-              try {
-                const pdfSaved = await savePDF(finalStmtId, item.file, (msg) => {
-                  setQueue(prev => prev.map((p, i) => i === qi ? { ...p, progress: msg } : p));
-                });
-                if (pdfSaved) {
-                  newStmt.pdfStored = true;
-                  newStmt.pdfFileSize = item.file.size;
-                  await saveStatement(newStmt);
-                }
-              } catch (_) { /* PDF save optional */ }
-            }
-
-            setQueue(prev => prev.map((p, i) => i === qi ? { ...p, status: "done", saved, skipped } : p));
-            await new Promise((r) => setTimeout(r, 200));
-            await onRefresh();
-            continue;
-          } catch (claudeErr) {
-            // Fall through to local PDF.js parsing (no toast here to avoid double error)
-          }
-        }
-
-        // Load PDF with streaming
-        const url = URL.createObjectURL(item.file);
-        let doc;
-        try {
-          const loadingTask = lib.getDocument({ url, password: "", disableAutoFetch: true, disableStream: false });
-          loadingTask.onProgress = ({ loaded, total }) => {
-            if (total > 0) {
-              setQueue(prev => prev.map((p, i) => i === qi ? { ...p, progress: `Loading PDF... ${Math.round(loaded / total * 100)}%` } : p));
-            }
-          };
-
-          // Password handling
-          let passwordNeeded = false;
-          loadingTask.onPassword = (updatePassword, reason) => {
-            passwordNeeded = true;
-            setQueue(prev => prev.map((p, i) => i === qi ? {
-              ...p,
-              status: reason === 1 ? "password" : "wrong_password",
-              passwordRef: updatePassword,
-              attempts: reason === 1 ? p.attempts : p.attempts + 1,
-            } : p));
-          };
-
-          try {
-            doc = await loadingTask.promise;
-          } catch (e) {
-            if (passwordNeeded) {
-              // Wait for user to enter password — handled via queue state
-              await new Promise((resolve) => {
-                const check = setInterval(() => {
-                  setQueue(prev => {
-                    const cur = prev[qi];
-                    if (cur.status === "unlocked" || cur.status === "skipped") {
-                      clearInterval(check);
-                      setTimeout(resolve, 100);
-                    }
-                    return prev;
-                  });
-                }, 200);
-              });
-              // Check if skipped
-              const curItem = items[qi];
-              if (curItem.status === "skipped") {
-                setQueue(prev => prev.map((p, i) => i === qi ? { ...p, status: "skipped", error: "Skipped by user" } : p));
-                continue;
-              }
-              // Try to get doc after unlock — the onPassword callback should have been called
-              // Actually the password flow is complex with pdf.js callbacks.
-              // Let's simplify: just continue, the doc should be available
-              // For simplicity, we'll re-attempt loading
-              try {
-                const lt2 = lib.getDocument({ url, password: curItem.password || "", disableAutoFetch: true, disableStream: false });
-                doc = await lt2.promise;
-              } catch (e2) {
-                setQueue(prev => prev.map((p, i) => i === qi ? { ...p, status: "error", error: e2?.message || "Failed" } : p));
-                continue;
-              }
-            } else if (/encrypt/i.test(e?.message || "")) {
-              setQueue(prev => prev.map((p, i) => i === qi ? { ...p, status: "error", error: "Unsupported encryption" } : p));
-              continue;
-            } else {
-              throw e;
-            }
-          }
-        } finally {
-          URL.revokeObjectURL(url);
-        }
-
-        if (!doc) { setQueue(prev => prev.map((p, i) => i === qi ? { ...p, status: "error", error: "Failed to load" } : p)); continue; }
-
-        // Extract text
-        const numPages = doc.numPages;
-        const allLines = [];
-        let headerText = "";
-
-        for (let pi = 1; pi <= numPages; pi++) {
-          setQueue(prev => prev.map((p, i) => i === qi ? { ...p, progress: `Page ${pi} of ${numPages}` } : p));
-          const page = await doc.getPage(pi);
-          const tc = await page.getTextContent();
-          const items2 = tc.items.filter(it => it.str.trim());
-
-          const yGroups = new Map();
-          for (const it of items2) {
-            const y = Math.round(it.transform[5] / 2) * 2;
-            if (!yGroups.has(y)) yGroups.set(y, []);
-            yGroups.get(y).push({ x: it.transform[4], str: it.str });
-          }
-          const sortedYs = [...yGroups.keys()].sort((a, b) => b - a);
-          for (const y of sortedYs) {
-            const lineItems = yGroups.get(y).sort((a, b) => a.x - b.x);
-            const lineText = lineItems.map(it => it.str).join(" ").trim();
-            if (lineText) allLines.push(lineText);
-          }
-
-          if (pi === 1) headerText = allLines.join("\n");
-          page.cleanup();
-          if (pi % 10 === 0) await new Promise(r => setTimeout(r, 0));
-        }
-
-        const fullText = allLines.join("\n");
-        if (!fullText.trim() || fullText.replace(/\s/g, "").length < 50) {
-          setQueue(prev => prev.map((p, i) => i === qi ? { ...p, status: "error", error: "Scanned image PDF — download digital version" } : p));
+        // Parse PDF in browser with PDF.js (no API keys)
+        setQueue(prev => prev.map((p, i) => i === qi ? { ...p, progress: "Parsing PDF…" } : p));
+        const result = await parseDocument(item.file, "bank_statement");
+        if (!result.success || !result.data) {
+          setQueue(prev => prev.map((p, i) => i === qi ? { ...p, status: "error", error: result.error ?? "Parsing failed" } : p));
+          toast.error(result.error ?? "Parsing failed");
           continue;
         }
-
-        // Auto-detect account
-        const detected = detectAccount(headerText);
+        const data = result.data as BankStatementData;
+        const detected = detectAccountFromBankStatementData(data);
         const finalAccount = detected || item.account;
-        // Recalc stmtId with detected account
         const finalStmtId = btoa(finalAccount + item.file.name + item.file.size)
           .replace(/[^a-zA-Z0-9]/g, "").substring(0, 40);
-
-        // Re-check L1 with correct account
         const existing2 = await getStatement(finalStmtId);
         if (existing2) {
           setQueue(prev => prev.map((p, i) => i === qi ? { ...p, status: "blocked", error: `Already uploaded on ${new Date(existing2.uploadedAt).toLocaleDateString()}` } : p));
           continue;
         }
-
-        setQueue(prev => prev.map((p, i) => i === qi ? { ...p, progress: "Parsing transactions...", account: finalAccount } : p));
-
-        const { transactions: txns, meta } = parseTransactions(allLines, finalStmtId, lookup);
-
+        const { statement: newStmt, transactions: txns } = mapBankStatementDataToStatementAndTransactions(data, finalStmtId, finalAccount, item.file.name);
         if (txns.length === 0) {
           setQueue(prev => prev.map((p, i) => i === qi ? { ...p, status: "error", error: "No transactions found" } : p));
+          toast.error("No transactions found in PDF");
           continue;
         }
 
-        // L2 — Period dedup
         const allStmts = await loadStatements();
         const periodDup = allStmts.find(s =>
-          s.accountKey === finalAccount && s.periodStart === meta.periodStart && s.periodEnd === meta.periodEnd &&
-          meta.periodStart && meta.periodEnd
+          s.accountKey === finalAccount && s.periodStart === newStmt.periodStart && s.periodEnd === newStmt.periodEnd && newStmt.periodStart && newStmt.periodEnd
         );
         if (periodDup) {
-          setQueue(prev => prev.map((p, i) => i === qi ? { ...p, status: "blocked", error: `Period ${meta.period} already exists (${periodDup.fileName})` } : p));
+          setQueue(prev => prev.map((p, i) => i === qi ? { ...p, status: "blocked", error: `Period already exists (${periodDup.fileName})` } : p));
           continue;
         }
 
-        // L3 — Transaction dedup
         let saved = 0, skipped = 0;
         for (let ti = 0; ti < txns.length; ti++) {
           const txn = txns[ti];
@@ -1090,23 +898,11 @@ function AccountTab({ account, statements, transactions, onRefresh, customLookup
             setQueue(prev => prev.map((p, i) => i === qi ? { ...p, progress: `Saving transactions ${ti + 1}/${txns.length}` } : p));
           }
         }
-
-        // Save statement metadata
-        const newStmt = {
-          id: finalStmtId, accountKey: finalAccount, fileName: item.file.name,
-          uploadedAt: new Date().toISOString(), period: meta.period,
-          periodStart: meta.periodStart, periodEnd: meta.periodEnd,
-          accountNumber: meta.accountNumber, openingBalance: meta.openingBalance,
-          closingBalance: meta.closingBalance, totalCredits: meta.totalCredits,
-          totalDebits: meta.totalDebits, transactionCount: saved,
-          pdfStored: false, pdfFileSize: item.file.size, pdfChunks: 0, lastValidated: null,
-        };
+        newStmt.transactionCount = saved;
         await saveStatement(newStmt);
 
-        // PDF in Supabase Storage (same DB, no localStorage)
-        const fileSizeMB = item.file.size / (1024 * 1024);
-        if (fileSizeMB <= 50) {
-          setQueue(prev => prev.map((p, i) => i === qi ? { ...p, progress: "Saving PDF to database…" } : p));
+        if (item.file.size <= 50 * 1024 * 1024) {
+          setQueue(prev => prev.map((p, i) => i === qi ? { ...p, progress: "Saving PDF…" } : p));
           try {
             const pdfSaved = await savePDF(finalStmtId, item.file, (msg) => {
               setQueue(prev => prev.map((p, i) => i === qi ? { ...p, progress: msg } : p));
@@ -1116,11 +912,10 @@ function AccountTab({ account, statements, transactions, onRefresh, customLookup
               newStmt.pdfFileSize = item.file.size;
               await saveStatement(newStmt);
             }
-          } catch (e) { /* PDF save failed, statement data is still saved */ }
+          } catch (_) { /* PDF save optional */ }
         }
 
         setQueue(prev => prev.map((p, i) => i === qi ? { ...p, status: "done", saved, skipped } : p));
-        // Brief delay so Supabase has committed before we reload for Overview
         await new Promise((r) => setTimeout(r, 200));
         await onRefresh();
       } catch (e) {
@@ -1169,6 +964,37 @@ function AccountTab({ account, statements, transactions, onRefresh, customLookup
     a.href = b64;
     a.download = stmt.fileName;
     a.click();
+  };
+
+  const handleParsePdf = async (statementId: string) => {
+    setIsParsingPreview(true);
+    setParsedPreview(null);
+    try {
+      const url = await pdfStorage.retrieve(statementId);
+      if (!url) {
+        toast.error("PDF not found in storage");
+        return;
+      }
+      toast.loading("Extracting text from PDF…", { id: "parse-pdf" });
+      const { text, pageCount } = await extractTextFromPdf(url);
+      if (!text || text.trim().length < 30) {
+        toast.error("No text found in PDF — file may be image-based", { id: "parse-pdf" });
+        return;
+      }
+      toast.loading(`Parsing ${pageCount} page(s)…`, { id: "parse-pdf" });
+      const data = parseBankStatement(text);
+      setParsedPreview({ statementId, data });
+      toast.success(
+        `Parsed: ${data.transactions.length} transactions | Closing ₹${data.closingBalance.toLocaleString("en-IN", { minimumFractionDigits: 2 })}`,
+        { id: "parse-pdf" }
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Parse failed";
+      toast.error(msg, { id: "parse-pdf" });
+      console.error("PDF parse error:", err);
+    } finally {
+      setIsParsingPreview(false);
+    }
   };
 
   const handleValidate = async () => {
@@ -1316,13 +1142,24 @@ function AccountTab({ account, statements, transactions, onRefresh, customLookup
                       <td className="px-3 py-2 text-right text-destructive">{fmt(s.totalDebits)}</td>
                       <td className="px-3 py-2 text-center">
                         {s.pdfStored ? (
-                          <div className="flex items-center justify-center gap-1">
+                          <div className="flex items-center justify-center gap-1 flex-wrap">
+                            <span className="text-muted-foreground text-xs">🔓</span>
                             <span className="text-muted-foreground">📄 {(s.pdfFileSize / (1024 * 1024)).toFixed(1)}mb</span>
-                            <Button variant="ghost" size="sm" className="h-6 px-1" onClick={() => handleViewPDF(s.id)}>
+                            <Button variant="ghost" size="sm" className="h-6 px-1" onClick={() => handleViewPDF(s.id)} title="View PDF">
                               <ExternalLink className="h-3 w-3" />
                             </Button>
-                            <Button variant="ghost" size="sm" className="h-6 px-1" onClick={() => handleDownloadPDF(s)}>
+                            <Button variant="ghost" size="sm" className="h-6 px-1" onClick={() => handleDownloadPDF(s)} title="Download">
                               <Download className="h-3 w-3" />
+                            </Button>
+                            <Button
+                              variant="default"
+                              size="sm"
+                              className="h-6 px-2 text-xs"
+                              disabled={isParsingPreview}
+                              onClick={() => handleParsePdf(s.id)}
+                              title="Parse PDF"
+                            >
+                              {isParsingPreview ? "Parsing…" : "Parse PDF"}
                             </Button>
                           </div>
                         ) : "—"}
@@ -1339,6 +1176,72 @@ function AccountTab({ account, statements, transactions, onRefresh, customLookup
                   ))}
                 </tbody>
               </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Parsed PDF preview (from Parse PDF button) */}
+      {parsedPreview && (
+        <Card className="rounded-2xl shadow-sm print:hidden">
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-base">Parsed statement</CardTitle>
+              <Button variant="ghost" size="sm" onClick={() => setParsedPreview(null)}><X className="h-4 w-4" /></Button>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="bg-muted/50 p-3 rounded-lg">
+                <p className="text-xs text-muted-foreground">Opening Balance</p>
+                <p className="text-lg font-bold">₹{parsedPreview.data.openingBalance.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</p>
+              </div>
+              <div className="bg-muted/50 p-3 rounded-lg">
+                <p className="text-xs text-muted-foreground">Total Credits</p>
+                <p className="text-lg font-bold text-green-600">₹{parsedPreview.data.totalCredits.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</p>
+              </div>
+              <div className="bg-muted/50 p-3 rounded-lg">
+                <p className="text-xs text-muted-foreground">Total Debits</p>
+                <p className="text-lg font-bold text-red-600">₹{parsedPreview.data.totalDebits.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</p>
+              </div>
+              <div className="bg-muted/50 p-3 rounded-lg">
+                <p className="text-xs text-muted-foreground">Closing Balance</p>
+                <p className="text-lg font-bold text-blue-600">₹{parsedPreview.data.closingBalance.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</p>
+              </div>
+            </div>
+            <div className="bg-muted/30 p-3 rounded-lg text-sm grid grid-cols-2 md:grid-cols-3 gap-2">
+              <div><span className="text-muted-foreground">Holder:</span> {parsedPreview.data.accountHolder}</div>
+              <div><span className="text-muted-foreground">Account:</span> {parsedPreview.data.accountNumber}</div>
+              <div><span className="text-muted-foreground">Period:</span> {parsedPreview.data.periodFrom} – {parsedPreview.data.periodTo}</div>
+            </div>
+            <div className="rounded-lg border overflow-hidden">
+              <div className="p-2 border-b bg-muted/50 text-sm font-medium">Transactions ({parsedPreview.data.transactions.length})</div>
+              <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
+                <table className="w-full text-xs">
+                  <thead className="bg-muted/50 sticky top-0">
+                    <tr className="text-muted-foreground">
+                      <th className="text-left p-2 font-medium">Date</th>
+                      <th className="text-left p-2 font-medium">Details</th>
+                      <th className="text-left p-2 font-medium">Category</th>
+                      <th className="text-right p-2 font-medium">Debit</th>
+                      <th className="text-right p-2 font-medium">Credit</th>
+                      <th className="text-right p-2 font-medium">Balance</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/50">
+                    {parsedPreview.data.transactions.map((tx, idx) => (
+                      <tr key={idx} className="hover:bg-muted/30">
+                        <td className="p-2 whitespace-nowrap">{tx.date}</td>
+                        <td className="p-2 max-w-[200px] truncate" title={tx.details}>{tx.details}</td>
+                        <td className="p-2"><span className="bg-muted px-1.5 py-0.5 rounded text-xs">{tx.category}</span></td>
+                        <td className="p-2 text-right text-red-600">{tx.debit > 0 ? `₹${tx.debit.toLocaleString("en-IN", { minimumFractionDigits: 2 })}` : "—"}</td>
+                        <td className="p-2 text-right text-green-600">{tx.credit > 0 ? `₹${tx.credit.toLocaleString("en-IN", { minimumFractionDigits: 2 })}` : "—"}</td>
+                        <td className="p-2 text-right">₹{tx.balance.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </CardContent>
         </Card>
