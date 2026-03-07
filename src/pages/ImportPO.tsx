@@ -15,7 +15,6 @@ import { Upload, Loader2, FileText, Trash2, CheckCircle2, X, PlusCircle } from "
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { format } from "date-fns";
-import pdfWorkerSrc from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
 type ParsedLineItem = {
   description: string;
@@ -53,7 +52,10 @@ type ParsedPO = {
 
 async function extractPDFText(file: File): Promise<string> {
   const pdfjsLib = await import("pdfjs-dist");
-  pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerSrc;
+  pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+    "pdfjs-dist/build/pdf.worker.min.mjs",
+    import.meta.url
+  ).href;
 
   const arrayBuffer = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
