@@ -54,9 +54,10 @@ export function getLabelForAccount(accountNumber: string): string {
   return ACCOUNT_LABEL_MAP[normalized] ?? `Unknown (${accountNumber || "—"})`;
 }
 
-function toNum(s: string): number {
-  if (!s) return 0;
-  return parseFloat(s.replace(/[^0-9.]/g, "")) || 0;
+function toNum(raw: string | number): number {
+  if (typeof raw === "number") return isNaN(raw) ? 0 : raw;
+  if (!raw) return 0;
+  return parseFloat(String(raw).replace(/[^0-9.]/g, "")) || 0;
 }
 
 function categorise(detail: string): string {
@@ -72,117 +73,132 @@ function categorise(detail: string): string {
 }
 
 export function parseBankStatement(rawText: string): BankStatementData {
-  const lines = rawText.split("\n").map((l) => l.trim()).filter(Boolean);
+  // Split into lines, remove blanks
+  const lines = rawText
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+
   const joined = lines.join(" ");
 
-  const accountHolder = lines[0] || "";
+  // ── Header fields ─────────────────────────────────────────────
+  const accountHolder = lines[0] ?? "";
 
-  const accMatch = joined.match(/Account\s+Number\s*[:\s]+(\d{10,16})/i);
-  const accountNumber = accMatch?.[1] || "";
+  const accountNumber =
+    joined.match(/Account\s+Number\s*[:\s]+(\d{10,16})/i)?.[1] ?? "";
 
-  const typeMatch = joined.match(
-    /Type\s+of\s+Account\s*[:\s]+(SAVING|CURRENT)/i
-  );
-  const accountType = typeMatch?.[1] || "";
+  const accountType =
+    joined.match(/Type\s+of\s+Account\s*[:\s]+(SAVING|CURRENT)/i)?.[1] ?? "";
 
-  const branchMatch = joined.match(/Home\s+Branch\s*[:\s]+([A-Z]+)/i);
-  const branch = branchMatch?.[1] || "";
+  const branch =
+    joined.match(/Home\s+Branch\s*[:\s]+([A-Z]+)/i)?.[1] ?? "";
 
-  const ifscMatch = joined.match(/IFSC\s+Code\s*[:\s]+([A-Z0-9]{11})/i);
-  const ifsc = ifscMatch?.[1] || "";
+  const ifsc =
+    joined.match(/IFSC\s+Code\s*[:\s]+([A-Z0-9]{11})/i)?.[1] ?? "";
 
-  const periodMatch = joined.match(
+  const pm = joined.match(
     /period[:\s]+(\d{2}[-\s][A-Za-z]{3}[-\s]\d{4})\s+to\s+(\d{2}[-\s][A-Za-z]{3}[-\s]\d{4})/i
   );
-  const periodFrom = periodMatch?.[1] || "";
-  const periodTo = periodMatch?.[2] || "";
+  const periodFrom = pm?.[1] ?? "";
+  const periodTo = pm?.[2] ?? "";
 
-  const obMatch = joined.match(/Opening\s+Balance\s+INR\s+([\d,]+\.\d{2})/i);
-  const openingBalance = obMatch ? toNum(obMatch[1]) : 0;
+  const openingBalance = toNum(
+    joined.match(/Opening\s+Balance\s+INR\s+([\d,]+\.\d{2})/i)?.[1] ?? "0"
+  );
+  const totalCredits = toNum(
+    joined.match(/Total\s+Credits\s+INR\s+([\d,]+\.\d{2})/i)?.[1] ?? "0"
+  );
+  const totalDebits = toNum(
+    joined.match(/Total\s+Debits\s+INR\s+([\d,]+\.\d{2})/i)?.[1] ?? "0"
+  );
+  const closingBalance = toNum(
+    joined.match(/Closing\s+Balance\s+INR\s+([\d,]+\.\d{2})/i)?.[1] ?? "0"
+  );
 
-  const tcMatch = joined.match(/Total\s+Credits\s+INR\s+([\d,]+\.\d{2})/i);
-  const totalCredits = tcMatch ? toNum(tcMatch[1]) : 0;
-
-  const tdMatch = joined.match(/Total\s+Debits\s+INR\s+([\d,]+\.\d{2})/i);
-  const totalDebits = tdMatch ? toNum(tdMatch[1]) : 0;
-
-  const cbMatch = joined.match(/Closing\s+Balance\s+INR\s+([\d,]+\.\d{2})/i);
-  const closingBalance = cbMatch ? toNum(cbMatch[1]) : 0;
+  // ── Transaction parsing ───────────────────────────────────────
+  // CSB date format: "20 FEB 2026"
+  const DATE_RE = /^(\d{1,2}\s+[A-Z]{3}\s+\d{4})\s+(.*)/;
+  const BAL_RE = /INR\s+([\d,]+\.\d{2})\s*Cr/i;
+  const AMOUNT_RE = /\b(\d{1,3}(?:,\d{3})*\.\d{2})\b/g;
 
   const transactions: Transaction[] = [];
-  // Match "20  FEB  2026" or "20-Feb-2026" at start of line
-  const dateRe = /^(\d{1,2}\s+[A-Za-z]{3}\s+\d{4}|\d{1,2}-[A-Za-z]{3}-\d{4})\s+(.*)/;
-  const balRe = /INR\s+([\d,]+\.\d{2})\s*Cr/i;
-  const amtRe = /\b(\d{1,3}(?:,\d{3})*\.\d{2})\b/g;
 
   let i = 0;
+
   while (i < lines.length) {
-    const m = lines[i].match(dateRe);
-    if (!m) {
+    const dateMatch = lines[i].match(DATE_RE);
+
+    // Skip lines that don't start with a date
+    if (!dateMatch) {
       i++;
       continue;
     }
 
-    const date = m[1];
-    const detailParts: string[] = [m[2]];
-    let balance = 0;
-    let j = i + 1;
+    const date = dateMatch[1];
+    const detailParts: string[] = [dateMatch[2]];
 
+    // Advance and collect continuation lines
+    let j = i + 1;
     while (j < lines.length) {
-      const next = lines[j];
-      const isNextDateLine = /^\d{1,2}\s+[A-Za-z]{3}\s+\d{4}\s|^\d{1,2}-[A-Za-z]{3}-\d{4}\s/.test(next);
-      if (isNextDateLine || next.toLowerCase().includes("end of statement"))
-        break;
-      detailParts.push(next);
+      const nextLine = lines[j];
+      // Stop if next line starts a new transaction date
+      if (DATE_RE.test(nextLine)) break;
+      // Stop at end of statement
+      if (/end\s+of\s+statement/i.test(nextLine)) break;
+      detailParts.push(nextLine);
       j++;
     }
 
-    const detailFull = detailParts.join(" ");
+    const fullText = detailParts.join(" ");
 
-    const bm = detailFull.match(balRe);
-    if (bm) balance = toNum(bm[1]);
+    // Extract running balance
+    const balMatch = fullText.match(BAL_RE);
+    const balance = balMatch ? toNum(balMatch[1]) : 0;
 
-    const amounts = [...detailFull.matchAll(amtRe)]
-      .map((x) => toNum(x[1]))
+    // Extract reference number (long digit string 12–20 digits)
+    const refMatch = fullText.match(/\b(\d{12,20})\b/);
+    const refNo = refMatch?.[1] ?? "";
+
+    // Classify direction
+    const isDebit = /UPI\/DR|ATW\s+using|Chq\s+Paid|Issuer\s+ATM\s+Fin|DEBIT/i.test(fullText);
+    const isCredit = /UPI\/CR|NEFT\s+Cr--|IMPS--|NEFT\s+Cr\b|CREDIT/i.test(fullText);
+
+    // Find smallest amount (that isn't the balance) as the transaction amount
+    const allAmounts = [...fullText.matchAll(AMOUNT_RE)]
+      .map((m) => toNum(m[1]))
       .filter((a) => a > 0 && Math.abs(a - balance) > 0.01);
 
-    const isDebit = /UPI\/DR|ATW\s+using|Chq\s+Paid|Issuer\s+ATM|DR\b/i.test(detailFull);
-    const isCredit = /UPI\/CR|NEFT\s+Cr--|IMPS--|NEFT\s+Cr\b/i.test(detailFull);
+    const txAmount = allAmounts.length > 0 ? Math.min(...allAmounts) : 0;
 
-    const txAmount =
-      amounts.length > 0
-        ? amounts.reduce((min, a) => (a < min ? a : min), amounts[0])
-        : 0;
-
-    const debit = isDebit ? txAmount : 0;
-    const credit = isCredit ? txAmount : 0;
-
-    const refMatch = detailFull.match(/\b(\d{12,20})\b/);
-    const refNo = refMatch?.[1] || "";
-
-    const details = detailFull
-      .replace(balRe, "")
+    // Clean up details text
+    const details = fullText
+      .replace(BAL_RE, "")
       .replace(/\b\d{12,20}\b/g, "")
-      .replace(/\b\d{1,3}(?:,\d{3})*\.\d{2}\b/g, "")
+      .replace(AMOUNT_RE, "")
       .replace(/\s+/g, " ")
       .trim();
 
-    // Push every transaction found — no filter that could drop valid rows
-    transactions.push({
-      date,
-      details,
-      refNo,
-      debit,
-      credit,
-      balance,
-      type: isDebit ? "debit" : "credit",
-      counterparty: categorise(detailFull),
-    });
+    // Only push if we have a meaningful balance or amount
+    if (balance > 0 || txAmount > 0) {
+      transactions.push({
+        date,
+        details,
+        refNo,
+        debit: isDebit ? txAmount : 0,
+        credit: isCredit ? txAmount : 0,
+        balance,
+        type: isDebit ? "debit" : "credit",
+        counterparty: categorise(fullText),
+      });
+    }
 
+    // Move to the next date line
     i = j;
   }
 
-  console.log(`[parser] Found ${transactions.length} transactions for ${accountHolder}`);
+  console.log(
+    `[parseBankStatement] ${accountHolder} | ${accountNumber} | ${transactions.length} transactions`
+  );
 
   return {
     docType: "bank_statement",
