@@ -44,18 +44,29 @@ import { useStorageMode } from "@/hooks/useStorageMode";
 import { SharedDataBanner } from "@/components/SharedDataBanner";
 import { friendlyDbError } from "@/lib/utils";
 
-/* ═══════════ PDF.js (dynamic import, matches npm pdfjs-dist v4) ═══════════ */
+/* ═══════════ PDF.js CDN (v4.4.168, .mjs) ═══════════ */
+const PDFJS_CDN = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168";
 let pdfjsLib: any = null;
 
-async function loadPdfJs() {
-  if (pdfjsLib) return pdfjsLib;
-  const lib = await import("pdfjs-dist");
-  lib.GlobalWorkerOptions.workerSrc = new URL(
-    "pdfjs-dist/build/pdf.worker.min.mjs",
-    import.meta.url
-  ).href;
-  pdfjsLib = lib;
-  return lib;
+function loadPdfJs(): Promise<any> {
+  if (pdfjsLib) return Promise.resolve(pdfjsLib);
+  return new Promise((resolve, reject) => {
+    if ((window as any).pdfjsLib) {
+      pdfjsLib = (window as any).pdfjsLib;
+      pdfjsLib.GlobalWorkerOptions.workerSrc = `${PDFJS_CDN}/pdf.worker.min.mjs`;
+      return resolve(pdfjsLib);
+    }
+    const s = document.createElement("script");
+    s.src = `${PDFJS_CDN}/pdf.min.mjs`;
+    s.type = "module";
+    s.onload = () => {
+      pdfjsLib = (window as any).pdfjsLib;
+      pdfjsLib.GlobalWorkerOptions.workerSrc = `${PDFJS_CDN}/pdf.worker.min.mjs`;
+      resolve(pdfjsLib);
+    };
+    s.onerror = () => reject(new Error("Failed to load PDF.js"));
+    document.head.appendChild(s);
+  });
 }
 
 /* ═══════════ ACCOUNTS ═══════════ */

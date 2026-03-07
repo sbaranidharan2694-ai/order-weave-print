@@ -2,13 +2,31 @@
  * Load PDF.js and extract text from a PDF file (for attendance parsing).
  */
 
-async function getPdfJs() {
-  const pdfjsLib = await import("pdfjs-dist");
-  pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-    "pdfjs-dist/build/pdf.worker.min.mjs",
-    import.meta.url
-  ).href;
-  return pdfjsLib;
+const PDFJS_CDN = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168";
+
+function getPdfJs(): Promise<typeof import("pdfjs-dist")> {
+  return new Promise((resolve, reject) => {
+    if (typeof window === "undefined") {
+      reject(new Error("PDF.js runs in browser only"));
+      return;
+    }
+    const w = window as Window & { pdfjsLib?: typeof import("pdfjs-dist") };
+    if (w.pdfjsLib) {
+      w.pdfjsLib.GlobalWorkerOptions.workerSrc = `${PDFJS_CDN}/pdf.worker.min.mjs`;
+      resolve(w.pdfjsLib);
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = `${PDFJS_CDN}/pdf.min.mjs`;
+    script.type = "module";
+    script.onload = () => {
+      const lib = (window as Window & { pdfjsLib: typeof import("pdfjs-dist") }).pdfjsLib;
+      lib.GlobalWorkerOptions.workerSrc = `${PDFJS_CDN}/pdf.worker.min.mjs`;
+      resolve(lib);
+    };
+    script.onerror = () => reject(new Error("Failed to load PDF.js"));
+    document.head.appendChild(script);
+  });
 }
 
 export async function extractTextFromPdf(file: File): Promise<string> {
