@@ -53,7 +53,11 @@ VITE_SUPABASE_PUBLISHABLE_KEY=your-anon-key`}
   );
 }
 
-const App = () => (
+const App = () => {
+  // #region agent log
+  fetch('http://127.0.0.1:7932/ingest/c42627de-8b23-4aa5-8010-342238c3f680',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'da479d'},body:JSON.stringify({sessionId:'da479d',location:'App.tsx:render',message:'App render',data:{isSupabaseConfigured},timestamp:Date.now(),runId:'run1',hypothesisId:'A,B'})}).catch(()=>{});
+  // #endregion
+  return (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
       <Toaster />
@@ -84,6 +88,7 @@ const App = () => (
       )}
     </TooltipProvider>
   </QueryClientProvider>
-);
+  );
+};
 
 export default App;
