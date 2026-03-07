@@ -48,6 +48,7 @@ import { extractTextFromPdf } from "@/utils/extractPdfText";
 import { parseBankStatement, getTabForAccount } from "@/utils/parseBankStatement";
 import { PasswordModal } from "@/components/BankAnalyser/PasswordModal";
 import { SummaryCards } from "@/components/BankAnalyser/SummaryCards";
+import { extractParty } from "@/utils/saveBankStatement";
 import { TransactionTable } from "@/components/BankAnalyser/TransactionTable";
 import { useAccountTransactions } from "@/hooks/useAccountTransactions";
 import type { BankStatement, BankTransaction } from "@/lib/bankStorage";
@@ -89,6 +90,7 @@ function mapBankStatementDataToStatementAndTransactions(
       .replace(/[^a-zA-Z0-9]/g, "")
       .substring(0, 40);
     const category = (t as { category?: string }).category ?? "";
+    const counterpartyVal = (t as { counterparty?: string }).counterparty ?? (category || extractParty(t.details ?? ""));
     return {
       id: txnId,
       statementId,
@@ -99,7 +101,7 @@ function mapBankStatementDataToStatementAndTransactions(
       credit,
       balance: Number(t.balance) || 0,
       type: category || "OTHER",
-      counterparty: "",
+      counterparty: counterpartyVal,
     };
   });
   const periodFrom = data.periodFrom ?? "";
@@ -1568,7 +1570,7 @@ function AccountTab({ account, onRefresh, customLookup, onUpdateLookup }) {
                       <tr key={idx} className="hover:bg-muted/30">
                         <td className="p-2 whitespace-nowrap">{tx.date}</td>
                         <td className="p-2 max-w-[200px] truncate" title={tx.details}>{tx.details}</td>
-                        <td className="p-2"><span className="bg-muted px-1.5 py-0.5 rounded text-xs">{tx.category}</span></td>
+                        <td className="p-2"><span className="bg-muted px-1.5 py-0.5 rounded text-xs">{(tx as { counterparty?: string }).counterparty ?? tx.category ?? extractParty(tx.details ?? "")}</span></td>
                         <td className="p-2 text-right text-red-600">{tx.debit > 0 ? `₹${tx.debit.toLocaleString("en-IN", { minimumFractionDigits: 2 })}` : "—"}</td>
                         <td className="p-2 text-right text-green-600">{tx.credit > 0 ? `₹${tx.credit.toLocaleString("en-IN", { minimumFractionDigits: 2 })}` : "—"}</td>
                         <td className="p-2 text-right">₹{tx.balance.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>

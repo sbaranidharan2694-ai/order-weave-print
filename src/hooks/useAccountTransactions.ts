@@ -12,6 +12,7 @@ export interface Transaction {
   balance: number;
   type: string | null;
   counterparty: string | null;
+  created_at?: string;
 }
 
 export interface StatementRow {
@@ -93,7 +94,7 @@ export function useAccountTransactions(accountIdentifier: string) {
       // ── 2. Load ALL transactions for ALL statements (never .eq — always .in + .limit(2000)) ──
       const { data: txRows, error: txErr } = await supabase
         .from("bank_transactions")
-        .select("*")
+        .select("id, statement_id, date, details, ref_no, debit, credit, balance, type, counterparty, created_at")
         .in("statement_id", statementIds)
         .order("date", { ascending: false })
         .limit(2000);
