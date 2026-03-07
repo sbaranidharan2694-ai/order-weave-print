@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { isSupabaseConfigured } from "@/integrations/supabase/client";
+import { ThemeProvider } from "next-themes";
 
 const Dashboard = lazy(() => import("@/pages/Dashboard"));
 const OrderHistory = lazy(() => import("@/pages/OrderHistory"));
@@ -32,58 +33,75 @@ const queryClient = new QueryClient();
 
 function SetupRequired() {
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-muted/30">
-      <div className="max-w-md rounded-2xl border bg-card p-8 shadow-lg text-center">
-        <h1 className="text-xl font-bold text-foreground mb-2">Supabase not configured</h1>
-        <p className="text-sm text-muted-foreground mb-4">
-          <strong>Using Lovable?</strong> Connect Supabase in Project Settings → Integrations → Supabase. Lovable will inject the URL and key automatically; you don’t need a client ID or .env.
+    <div style={{
+      minHeight: "100vh", display: "flex", flexDirection: "column",
+      alignItems: "center", justifyContent: "center", padding: "1.5rem",
+      backgroundColor: "#f1f5f9", fontFamily: "system-ui, sans-serif"
+    }}>
+      <div style={{
+        maxWidth: "480px", width: "100%", borderRadius: "16px",
+        border: "1px solid #e2e8f0", backgroundColor: "#ffffff",
+        padding: "2rem", boxShadow: "0 4px 24px rgba(0,0,0,0.08)",
+        textAlign: "center"
+      }}>
+        <div style={{ fontSize: "2.5rem", marginBottom: "0.75rem" }}>🖨️</div>
+        <h1 style={{
+          fontSize: "1.25rem", fontWeight: "700",
+          color: "#1e293b", marginBottom: "0.5rem", margin: "0 0 0.5rem 0"
+        }}>
+          Super Printers OMS
+        </h1>
+        <p style={{ fontSize: "0.875rem", color: "#64748b", marginBottom: "1.25rem" }}>
+          <strong>Supabase is not connected.</strong><br />
+          In Lovable: Project Settings → Integrations → Supabase → Connect your project.
+          Lovable injects the credentials automatically — no .env file needed.
         </p>
-        <p className="text-sm text-muted-foreground mb-4">
-          <strong>Running locally?</strong> Add a <code className="bg-muted px-1 rounded text-xs">.env</code> file in the project root:
-        </p>
-        <pre className="text-left text-xs bg-muted p-4 rounded-lg overflow-x-auto mb-4">
-          {`VITE_SUPABASE_URL=https://your-project.supabase.co
-VITE_SUPABASE_PUBLISHABLE_KEY=your-anon-key`}
+        <pre style={{
+          backgroundColor: "#f8fafc", border: "1px solid #e2e8f0",
+          borderRadius: "8px", padding: "1rem", textAlign: "left",
+          fontSize: "0.72rem", color: "#475569", overflowX: "auto",
+          fontFamily: "monospace", margin: 0
+        }}>
+          {`VITE_SUPABASE_URL=https://your-project.supabase.co\nVITE_SUPABASE_PUBLISHABLE_KEY=your-anon-key`}
         </pre>
-        <p className="text-xs text-muted-foreground">
-          Lovable uses the same names when Supabase is connected. Get values from Supabase Dashboard → Settings → API. Then restart <code className="bg-muted px-1 rounded">npm run dev</code>.
-        </p>
       </div>
     </div>
   );
 }
 
 const App = () => (
-  <QueryClientProvider client={queryClient}>
-    <TooltipProvider>
-      <Toaster />
-      <Sonner />
-      {!isSupabaseConfigured ? (
-        <SetupRequired />
-      ) : (
-      <BrowserRouter>
-        <AppLayout>
-          <Suspense fallback={<PageLoader />}>
-            <Routes>
-              <Route path="/" element={<Dashboard />} />
-              <Route path="/orders" element={<OrderHistory />} />
-              <Route path="/orders/new" element={<NewOrder />} />
-              <Route path="/orders/:id" element={<OrderDetail />} />
-              <Route path="/orders/:id/edit" element={<EditOrder />} />
-              <Route path="/import-po" element={<ImportPO />} />
-              <Route path="/bank-analyser" element={<BankAnalyser />} />
-              <Route path="/attendance" element={<Attendance />} />
-              <Route path="/customers" element={<Customers />} />
-              <Route path="/customers/:id" element={<CustomerDetail />} />
-              <Route path="/settings" element={<SettingsPage />} />
-              <Route path="*" element={<NotFound />} />
-            </Routes>
-          </Suspense>
-        </AppLayout>
-      </BrowserRouter>
-      )}
-    </TooltipProvider>
-  </QueryClientProvider>
+  <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false}>
+    <QueryClientProvider client={queryClient}>
+      <TooltipProvider>
+        <Toaster />
+        <Sonner />
+        {!isSupabaseConfigured ? (
+          <SetupRequired />
+        ) : (
+          <BrowserRouter>
+            <AppLayout>
+              <Suspense fallback={<PageLoader />}>
+                <Routes>
+                  <Route path="/" element={<Dashboard />} />
+                  <Route path="/orders" element={<OrderHistory />} />
+                  <Route path="/orders/new" element={<NewOrder />} />
+                  <Route path="/orders/:id" element={<OrderDetail />} />
+                  <Route path="/orders/:id/edit" element={<EditOrder />} />
+                  <Route path="/import-po" element={<ImportPO />} />
+                  <Route path="/bank-analyser" element={<BankAnalyser />} />
+                  <Route path="/attendance" element={<Attendance />} />
+                  <Route path="/customers" element={<Customers />} />
+                  <Route path="/customers/:id" element={<CustomerDetail />} />
+                  <Route path="/settings" element={<SettingsPage />} />
+                  <Route path="*" element={<NotFound />} />
+                </Routes>
+              </Suspense>
+            </AppLayout>
+          </BrowserRouter>
+        )}
+      </TooltipProvider>
+    </QueryClientProvider>
+  </ThemeProvider>
 );
 
 export default App;
