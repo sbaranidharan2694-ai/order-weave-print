@@ -100,10 +100,10 @@ export default function SettingsPage() {
         <CardHeader><CardTitle className="text-sm">Business Information</CardTitle></CardHeader>
         <CardContent className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div><Label>Business Name</Label><Input value={form.business_name} onChange={(e) => update("business_name", e.target.value)} /></div>
+            <div><Label>Business Name</Label><Input value={form.business_name} onChange={(e) => update("business_name", e.target.value)} autoComplete="off" /></div>
             <div><Label>Order No. Prefix</Label><Input value={form.order_prefix} onChange={(e) => update("order_prefix", e.target.value)} /></div>
-            <div><Label>Contact Number</Label><Input value={form.contact_number} onChange={(e) => update("contact_number", e.target.value)} /></div>
-            <div><Label>WhatsApp Number</Label><Input value={form.whatsapp_number} onChange={(e) => update("whatsapp_number", e.target.value)} /></div>
+            <div><Label>Contact Number</Label><Input value={form.contact_number} onChange={(e) => update("contact_number", e.target.value)} autoComplete="off" /></div>
+            <div><Label>WhatsApp Number</Label><Input value={form.whatsapp_number} onChange={(e) => update("whatsapp_number", e.target.value)} autoComplete="off" /></div>
             <div>
               <Label>GSTIN</Label>
               <div className="relative">

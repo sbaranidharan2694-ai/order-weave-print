@@ -44,35 +44,25 @@ import { useStorageMode } from "@/hooks/useStorageMode";
 import { SharedDataBanner } from "@/components/SharedDataBanner";
 import { friendlyDbError } from "@/lib/utils";
 
-/* ═══════════ PDF.js CDN ═══════════ */
-const PDFJS_CDN = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174";
+/* ═══════════ PDF.js (dynamic import, matches npm pdfjs-dist v4) ═══════════ */
 let pdfjsLib: any = null;
 
-function loadPdfJs(): Promise<any> {
-  if (pdfjsLib) return Promise.resolve(pdfjsLib);
-  return new Promise((resolve, reject) => {
-    if ((window as any).pdfjsLib) {
-      pdfjsLib = (window as any).pdfjsLib;
-      pdfjsLib.GlobalWorkerOptions.workerSrc = `${PDFJS_CDN}/pdf.worker.min.js`;
-      return resolve(pdfjsLib);
-    }
-    const s = document.createElement("script");
-    s.src = `${PDFJS_CDN}/pdf.min.js`;
-    s.onload = () => {
-      pdfjsLib = (window as any).pdfjsLib;
-      pdfjsLib.GlobalWorkerOptions.workerSrc = `${PDFJS_CDN}/pdf.worker.min.js`;
-      resolve(pdfjsLib);
-    };
-    s.onerror = () => reject(new Error("Failed to load PDF.js"));
-    document.head.appendChild(s);
-  });
+async function loadPdfJs() {
+  if (pdfjsLib) return pdfjsLib;
+  const lib = await import("pdfjs-dist");
+  lib.GlobalWorkerOptions.workerSrc = new URL(
+    "pdfjs-dist/build/pdf.worker.min.mjs",
+    import.meta.url
+  ).href;
+  pdfjsLib = lib;
+  return lib;
 }
 
 /* ═══════════ ACCOUNTS ═══════════ */
 const ACCOUNTS = [
-  { key: "superprinters", label: "Super Printers", color: "#1B2B4B", icon: "🖨️" },
-  { key: "superscreens", label: "Super Screens", color: "#F4A100", icon: "🪟", accountNo: "0244020080155" },
-  { key: "revathy", label: "Revathy Bharanidharan", color: "#16A34A", icon: "👤", accountNo: "0244011477662" },
+  { key: "superprinters", label: "Super Printers", shortLabel: "S.Printers", color: "#1B2B4B", icon: "🖨️" },
+  { key: "superscreens", label: "Super Screens", shortLabel: "S.Screens", color: "#F4A100", icon: "🪟", accountNo: "0244020080155" },
+  { key: "revathy", label: "Revathy B.", shortLabel: "Revathy", color: "#16A34A", icon: "👤", accountNo: "0244011477662" },
 ];
 
 function detectAccount(text) {
@@ -524,7 +514,9 @@ export default function BankAnalyser() {
           <TabsTrigger value="overview" className="gap-1"><Home className="h-3.5 w-3.5" />Overview</TabsTrigger>
           {ACCOUNTS.map(a => (
             <TabsTrigger key={a.key} value={a.key} className="gap-1">
-              <span>{a.icon}</span>{a.label.split(" ")[0]}
+              <span>{a.icon}</span>
+              <span className="hidden sm:inline">{a.label}</span>
+              <span className="sm:hidden">{a.shortLabel}</span>
             </TabsTrigger>
           ))}
           <TabsTrigger value="reports" className="gap-1"><BarChart3 className="h-3.5 w-3.5" />Reports</TabsTrigger>
@@ -1164,7 +1156,6 @@ function AccountTab({ account, statements, transactions, onRefresh, customLookup
               <table className="w-full text-xs">
                 <thead className="bg-muted/50">
                   <tr className="text-muted-foreground">
-                    <th className="px-3 py-2 text-left font-medium">Period</th>
                     <th className="px-3 py-2 text-left font-medium">File</th>
                     <th className="px-3 py-2 text-left font-medium">Uploaded</th>
                     <th className="px-3 py-2 text-right font-medium">Txns</th>
@@ -1178,7 +1169,6 @@ function AccountTab({ account, statements, transactions, onRefresh, customLookup
                 <tbody className="divide-y divide-border/50">
                   {statements.map(s => (
                     <tr key={s.id} className="hover:bg-muted/30">
-                      <td className="px-3 py-2">{s.period || "—"}</td>
                       <td className="px-3 py-2 font-mono truncate max-w-[150px]">{s.fileName}</td>
                       <td className="px-3 py-2">{new Date(s.uploadedAt).toLocaleDateString()}</td>
                       <td className="px-3 py-2 text-right">{s.transactionCount}</td>

@@ -13,13 +13,16 @@ import { useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
 const PIPELINE_GROUPS = [
-  { label: "Received", statuses: ["Order Received"], color: "bg-status-received" },
-  { label: "Design", statuses: ["Design Review"], color: "bg-status-design" },
-  { label: "Plate/Print", statuses: ["Plate Making", "Printing"], color: "bg-secondary" },
-  { label: "Finishing", statuses: ["Cutting / Binding"], color: "bg-status-cutting" },
-  { label: "QC", statuses: ["Quality Check"], color: "bg-status-quality" },
-  { label: "Ready", statuses: ["Ready to Dispatch"], color: "bg-success" },
-  { label: "Done", statuses: ["Delivered"], color: "bg-muted-foreground" },
+  { label: "Received",  statuses: ["Order Received"],         color: "bg-status-received" },
+  { label: "Design",    statuses: ["Design Review"],           color: "bg-status-design" },
+  { label: "Plate",     statuses: ["Plate Making"],            color: "bg-secondary" },
+  { label: "Printing",  statuses: ["Printing"],                color: "bg-secondary" },
+  { label: "Finishing", statuses: ["Cutting / Binding"],       color: "bg-status-cutting" },
+  { label: "QC",        statuses: ["Quality Check"],           color: "bg-status-quality" },
+  { label: "Partial",   statuses: ["Partially Fulfilled"],     color: "bg-status-partial" },
+  { label: "Ready",     statuses: ["Ready to Dispatch"],       color: "bg-success" },
+  { label: "Payment",   statuses: ["Payment Pending"],         color: "bg-status-payment" },
+  { label: "Done",      statuses: ["Delivered"],               color: "bg-muted-foreground" },
 ];
 
 export default function Dashboard() {
@@ -212,8 +215,7 @@ export default function Dashboard() {
                       navigate(`/orders?status=${encodeURIComponent(stage.statuses[0])}`);
                     }
                   }}
-                  className="flex flex-col items-center min-w-[60px] flex-1 group cursor-pointer"
-                  style={{ flex: `${pct} 0 0` }}
+                  className="flex flex-col items-center w-[64px] flex-shrink-0 group cursor-pointer"
                 >
                   <div className={`${stage.color} w-full h-10 rounded-lg flex items-center justify-center text-white font-bold text-lg transition-transform group-hover:scale-105`}>
                     {stage.count}

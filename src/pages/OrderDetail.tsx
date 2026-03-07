@@ -173,7 +173,8 @@ export default function OrderDetail() {
   const handleWhatsAppNow = () => {
     const template = WHATSAPP_STATUS_TEMPLATES[order.status] || "";
     const msg = fillWhatsAppTemplate(template, order, shopPhone);
-    const url = `https://wa.me/91${formatContact(order.contact_no)}?text=${encodeURIComponent(msg)}`;
+    const safeMsg = unescape(encodeURIComponent(msg));
+    const url = `https://wa.me/91${formatContact(order.contact_no)}?text=${encodeURIComponent(safeMsg)}`;
     window.open(url, "_blank");
     logNotification.mutate({
       order_id: order.id, channel: "whatsapp", status_at_send: order.status,
@@ -206,9 +207,7 @@ export default function OrderDetail() {
     const unitRate = order.quantity > 0 ? taxableAmount / order.quantity : taxableAmount;
     const grandTotal = Number(order.amount);
     const grandTotalWords = numberToWords(grandTotal);
-    const w = window.open("", "_blank");
-    if (!w) return;
-    w.document.write(`
+    const html = `
       <html><head><title>Invoice - ${order.order_no}</title>
       <style>
         body { font-family: Arial, sans-serif; padding: 30px; color: #1a1a1a; max-width: 800px; margin: 0 auto; }
@@ -264,7 +263,15 @@ export default function OrderDetail() {
       ${bankName ? `<div class="bank-details"><strong>Bank Details:</strong><br>${bankAccName ? `A/C Name: ${bankAccName}<br>` : ""}A/C No: ${bankAccNo}<br>IFSC: ${bankIfsc}<br>Bank: ${bankName}</div>` : ""}
       ${invoiceFooter ? `<div class="footer">${invoiceFooter}</div>` : ""}
       <script>window.print();</script></body></html>
-    `);
+    `;
+    const blob = new Blob([html], { type: "text/html" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.target = "_blank";
+    a.rel = "noopener";
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
   };
 
   // Get last notification info

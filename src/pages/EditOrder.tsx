@@ -36,6 +36,7 @@ export default function EditOrder() {
         color_mode: order.color_mode,
         paper_type: order.paper_type || "",
         hsn_code: (order as any).hsn_code || "",
+        gstin: (order as any).gstin || "",
         po_number: (order as any).po_number || "",
         special_instructions: order.special_instructions || "",
         order_date: order.order_date,
@@ -79,6 +80,7 @@ export default function EditOrder() {
       quantity: parseInt(form.quantity) || 1,
       amount: amt,
       advance_paid: adv,
+      gstin: form.gstin || null,
     });
     navigate(`/orders/${id}`);
   };
@@ -136,6 +138,7 @@ export default function EditOrder() {
               </div>
               <div><Label>Paper Type</Label><Input value={form.paper_type} onChange={e => update("paper_type", e.target.value)} /></div>
               <div><Label>HSN Code</Label><Input value={form.hsn_code} onChange={e => update("hsn_code", e.target.value)} /></div>
+              <div><Label>GSTIN</Label><Input value={form.gstin || ""} onChange={e => update("gstin", e.target.value)} placeholder="15-char GSTIN" maxLength={15} /></div>
               <div><Label>PO Number</Label><Input value={form.po_number} onChange={e => update("po_number", e.target.value)} placeholder="e.g. 94384819" /></div>
               <div><Label>Assigned To</Label>
                 {operators.length > 0 ? (

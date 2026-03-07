@@ -93,6 +93,13 @@ export default function CustomerDetail() {
         </Card>
       )}
 
+      {customer.gstin && (
+        <div className="mt-2">
+          <p className="text-xs text-muted-foreground">GSTIN</p>
+          <p className="text-sm font-medium font-mono">{customer.gstin}</p>
+        </div>
+      )}
+
       <Card className="shadow-card">
         <CardHeader><CardTitle className="text-sm">Orders</CardTitle></CardHeader>
         <CardContent className="p-0">

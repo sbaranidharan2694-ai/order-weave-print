@@ -54,7 +54,9 @@ export default function OrderHistory() {
   const [searchParams] = useSearchParams();
 
   const [search, setSearch] = useState(searchParams.get("customer") || "");
-  const [statusFilter, setStatusFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState(
+    searchParams.get("status") || "all"
+  );
   const [sourceFilter, setSourceFilter] = useState("all");
   const [dateFilter, setDateFilter] = useState("all");
   const [page, setPage] = useState(1);
@@ -365,14 +367,14 @@ export default function OrderHistory() {
       ) : (
         <Card className="rounded-2xl border border-border/80 shadow-card overflow-hidden">
           <CardContent className="p-0">
-            <div style={{ overflowX: "auto", width: "100%" }}>
+            <div className="overflow-x-auto">
               <table className="w-full text-sm" style={{ minWidth: "800px" }}>
                 <thead>
                   <tr className="border-b bg-muted/50">
                     {visibleCols.map((col) => (
                       <th
                         key={col.key}
-                        className="text-left p-3 font-medium text-muted-foreground cursor-pointer hover:text-foreground whitespace-nowrap select-none"
+                        className={`text-left p-3 font-medium text-muted-foreground cursor-pointer hover:text-foreground whitespace-nowrap select-none ${col.key === "po_number" ? "min-w-[90px]" : ""}`}
                         onClick={() => col.key !== "actions" && toggleSort(col.key)}
                       >
                         {col.label}

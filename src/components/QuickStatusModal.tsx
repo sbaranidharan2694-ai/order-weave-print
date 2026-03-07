@@ -62,7 +62,8 @@ export function QuickStatusModal({ open, onOpenChange }: Props) {
     if (channel === "whatsapp" || channel === "both") {
       const template = WHATSAPP_STATUS_TEMPLATES[newStatus] || "";
       const msg = fillWhatsAppTemplate(template, { ...selectedOrder, status: newStatus }, shopPhone);
-      const url = `https://wa.me/91${selectedOrder.contact_no.replace(/\D/g, "").slice(-10)}?text=${encodeURIComponent(msg)}`;
+      const safeMsg = unescape(encodeURIComponent(msg));
+      const url = `https://wa.me/91${selectedOrder.contact_no.replace(/\D/g, "").slice(-10)}?text=${encodeURIComponent(safeMsg)}`;
       window.open(url, "_blank");
       logNotification.mutate({
         order_id: selectedOrder.id,

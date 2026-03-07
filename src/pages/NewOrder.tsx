@@ -58,6 +58,7 @@ export default function NewOrder() {
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [files, setFiles] = useState<File[]>([]);
   const [emailTouched, setEmailTouched] = useState(false);
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const prevCustomerRef = useRef<string | null>(null);
 
   const { data: existingCustomer } = useCustomerByContact(form.contact_no);
@@ -109,6 +110,17 @@ export default function NewOrder() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    const errors: Record<string, string> = {};
+    if (!form.customer_name?.trim()) errors.customer_name = "Customer name is required";
+    if (!form.contact_no?.trim()) errors.contact_no = "Contact number is required";
+    if (!form.product_type?.trim()) errors.product_type = "Product type is required";
+    if (!form.delivery_date) errors.delivery_date = "Delivery date is required";
+    if (!form.quantity || Number(form.quantity) < 1) errors.quantity = "Quantity must be at least 1";
+    if (Object.keys(errors).length > 0) {
+      setFormErrors(errors);
+      return;
+    }
+    setFormErrors({});
     try {
       const order = await createOrder.mutateAsync({
         ...form,
@@ -196,6 +208,7 @@ export default function NewOrder() {
                       required
                       placeholder="9876543210"
                     />
+                    {formErrors.contact_no && <p className="text-xs text-destructive mt-1">{formErrors.contact_no}</p>}
                     {existingCustomer && (
                       <Badge variant="secondary" className="mt-1 gap-1 bg-status-delivered/10 text-status-delivered">
                         <UserCheck className="h-3 w-3" /> Returning Customer ({existingCustomer.total_orders} orders)
@@ -205,6 +218,7 @@ export default function NewOrder() {
                   <div>
                     <Label>Customer Name *</Label>
                     <Input value={form.customer_name} onChange={(e) => update("customer_name", e.target.value)} required />
+                    {formErrors.customer_name && <p className="text-xs text-destructive mt-1">{formErrors.customer_name}</p>}
                   </div>
                   <div>
                     <Label>Email</Label>
@@ -213,6 +227,7 @@ export default function NewOrder() {
                       value={form.email}
                       onChange={(e) => update("email", e.target.value)}
                       onBlur={() => { if (form.email.length > 0) setEmailTouched(true); else setEmailTouched(false); }}
+                      autoComplete="off"
                     />
                     {emailInvalid && <p className="text-xs text-destructive mt-1">Invalid email format</p>}
                   </div>
@@ -246,6 +261,7 @@ export default function NewOrder() {
                         {productTypes.map((p) => <SelectItem key={p.id} value={p.name}>{p.name}</SelectItem>)}
                       </SelectContent>
                     </Select>
+                    {formErrors.product_type && <p className="text-xs text-destructive mt-1">{formErrors.product_type}</p>}
                     <p className="text-xs text-muted-foreground mt-1">Defaults loaded from product type</p>
                   </div>
                   <div>
@@ -257,6 +273,7 @@ export default function NewOrder() {
                       onChange={(e) => update("quantity", e.target.value)}
                       placeholder="e.g. 100"
                     />
+                    {formErrors.quantity && <p className="text-xs text-destructive mt-1">{formErrors.quantity}</p>}
                   </div>
                   <div>
                     <Label>Size</Label>
@@ -400,6 +417,7 @@ export default function NewOrder() {
                       min={form.order_date}
                       required
                     />
+                    {formErrors.delivery_date && <p className="text-xs text-destructive mt-1">{formErrors.delivery_date}</p>}
                     <p className="text-xs text-muted-foreground mt-1">Must be same or after order date</p>
                   </div>
                   <div>

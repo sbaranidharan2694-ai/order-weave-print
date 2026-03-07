@@ -56,7 +56,7 @@ export function AppLayout({ children }: AppLayoutProps) {
                 <span className="font-bold text-lg text-primary tracking-tight">SUPER</span>
                 <span className="font-bold text-lg text-secondary tracking-tight">PRINTERS</span>
                 <span className="text-[10px] font-medium text-muted-foreground ml-1 hidden sm:inline">OMS</span>
-                <span className="text-[9px] text-muted-foreground/80 ml-1 hidden md:inline" title="Deployment build">2025-03-07</span>
+                <span className="text-[9px] text-muted-foreground/80 ml-1 hidden md:inline" title="Deployment build">{new Date().getFullYear()}</span>
               </div>
             </div>
             <div className="flex items-center gap-2">
