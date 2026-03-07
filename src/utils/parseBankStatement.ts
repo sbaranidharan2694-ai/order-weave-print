@@ -110,7 +110,8 @@ export function parseBankStatement(rawText: string): BankStatementData {
   const closingBalance = cbMatch ? toNum(cbMatch[1]) : 0;
 
   const transactions: Transaction[] = [];
-  const dateRe = /^(\d{1,2}\s+[A-Z]{3}\s+\d{4})\s+(.*)/;
+  // Match "20  FEB  2026" or "20-Feb-2026" at start of line
+  const dateRe = /^(\d{1,2}\s+[A-Za-z]{3}\s+\d{4}|\d{1,2}-[A-Za-z]{3}-\d{4})\s+(.*)/;
   const balRe = /INR\s+([\d,]+\.\d{2})\s*Cr/i;
   const amtRe = /\b(\d{1,3}(?:,\d{3})*\.\d{2})\b/g;
 
@@ -129,7 +130,8 @@ export function parseBankStatement(rawText: string): BankStatementData {
 
     while (j < lines.length) {
       const next = lines[j];
-      if (next.match(/^\d{1,2}\s+[A-Z]{3}\s+\d{4}\s/) || next.startsWith("End of"))
+      const isNextDateLine = /^\d{1,2}\s+[A-Za-z]{3}\s+\d{4}\s|^\d{1,2}-[A-Za-z]{3}-\d{4}\s/.test(next);
+      if (isNextDateLine || next.toLowerCase().includes("end of statement"))
         break;
       detailParts.push(next);
       j++;
@@ -165,21 +167,22 @@ export function parseBankStatement(rawText: string): BankStatementData {
       .replace(/\s+/g, " ")
       .trim();
 
-    if (balance > 0 || debit > 0 || credit > 0) {
-      transactions.push({
-        date,
-        details,
-        refNo,
-        debit,
-        credit,
-        balance,
-        type: isDebit ? "debit" : "credit",
-        counterparty: categorise(detailFull),
-      });
-    }
+    // Push every transaction found — no filter that could drop valid rows
+    transactions.push({
+      date,
+      details,
+      refNo,
+      debit,
+      credit,
+      balance,
+      type: isDebit ? "debit" : "credit",
+      counterparty: categorise(detailFull),
+    });
 
     i = j;
   }
+
+  console.log(`[parser] Found ${transactions.length} transactions for ${accountHolder}`);
 
   return {
     docType: "bank_statement",

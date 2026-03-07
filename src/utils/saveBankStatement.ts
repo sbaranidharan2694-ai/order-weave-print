@@ -37,6 +37,10 @@ export async function saveBankStatementToDb(
   parsed: any,
   fileName = "statement.pdf"
 ): Promise<{ statementId: string; isNew: boolean; savedCount: number }> {
+  console.log("PARSED TRANSACTIONS COUNT:", parsed.transactions?.length);
+  console.log("FIRST TX:", parsed.transactions?.[0]);
+  console.log("LAST TX:", parsed.transactions?.[parsed.transactions?.length - 1]);
+
   const accountNumber = s(parsed.accountNumber);
   const periodStart = s(parsed.periodFrom ?? parsed.period_start ?? parsed.periodStart ?? "");
   const periodEnd = s(parsed.periodTo ?? parsed.period_end ?? parsed.periodEnd ?? "");
