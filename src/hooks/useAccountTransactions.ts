@@ -9,10 +9,14 @@ export interface StatementRow {
   period: string;
   total_credits: number;
   total_debits: number;
+  opening_balance?: number;
   closing_balance: number;
   transaction_count: number;
   file_name: string;
   created_at: string;
+  pdf_stored?: boolean;
+  pdf_file_size?: number;
+  last_validated?: string | null;
 }
 
 export interface Transaction {
@@ -63,7 +67,7 @@ export function useAccountTransactions(accountIdentifier: string) {
       // ── 1. Load ALL statements for this account (explicit limit to avoid API default cap) ──
       const { data: stmtRows, error: stmtErr } = await supabase
         .from("bank_statements")
-        .select("id, account_number, period_start, period_end, period, total_credits, total_debits, closing_balance, transaction_count, file_name, created_at")
+        .select("id, account_number, period_start, period_end, period, total_credits, total_debits, opening_balance, closing_balance, transaction_count, file_name, created_at, pdf_stored, pdf_file_size, last_validated")
         .or(`account_number.eq.${accountIdentifier},account_key.eq.${accountIdentifier}`)
         .order("period_start", { ascending: true })
         .limit(500);
@@ -103,12 +107,13 @@ export function useAccountTransactions(accountIdentifier: string) {
 
       const totalCredits = stmts.reduce((s, r) => s + (Number(r.total_credits) ?? 0), 0);
       const totalDebits = stmts.reduce((s, r) => s + (Number(r.total_debits) ?? 0), 0);
+      const transactionCountFromMetadata = stmts.reduce((s, r) => s + (Number(r.transaction_count) ?? 0), 0);
 
       setSummary({
         totalCredits,
         totalDebits,
         netFlow: totalCredits - totalDebits,
-        transactionCount: txns.length,
+        transactionCount: transactionCountFromMetadata,
         statementCount: stmts.length,
       });
     } catch (err) {

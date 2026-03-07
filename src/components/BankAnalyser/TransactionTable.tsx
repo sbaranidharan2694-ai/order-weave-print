@@ -104,39 +104,34 @@ export function TransactionTable({
 
       {viewMode === "byDate" && (
         <div className="overflow-x-auto rounded-xl border">
-          <table className="w-full text-sm">
+          <table className="w-full text-sm min-w-[900px]" style={{ tableLayout: "fixed" }}>
             <thead className="bg-muted/50">
               <tr className="text-muted-foreground">
-                {["Date", "Details", "Party", "Type", "RefNo", "Debit", "Credit", "Balance"].map(
-                  (h) => (
-                    <th
-                      key={h}
-                      className={cn(
-                        "px-4 py-3 text-xs font-semibold uppercase tracking-wide",
-                        ["Debit", "Credit", "Balance"].includes(h) ? "text-right" : "text-left"
-                      )}
-                    >
-                      {h}
-                    </th>
-                  )
-                )}
+                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-left w-[110px] min-w-[110px]">Date</th>
+                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-left w-[200px] min-w-[200px]">Details</th>
+                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-left w-[140px] min-w-[140px]">Party</th>
+                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-left w-[100px] min-w-[100px]">Type</th>
+                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-left w-[130px] min-w-[130px]">RefNo</th>
+                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-right w-[90px] min-w-[90px]">Debit</th>
+                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-right w-[90px] min-w-[90px]">Credit</th>
+                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-right w-[110px] min-w-[110px]">Balance</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
               {filtered.map((tx, i) => (
                 <tr key={tx.id || i} className="hover:bg-muted/30 transition-colors">
-                  <td className="px-4 py-2.5 text-xs text-muted-foreground whitespace-nowrap">
+                  <td className="px-4 py-2.5 text-xs text-muted-foreground whitespace-nowrap w-[110px] min-w-[110px]">
                     {tx.date}
                   </td>
-                  <td className="px-4 py-2.5 text-xs max-w-xs">
+                  <td className="px-4 py-2.5 text-xs w-[200px] min-w-[200px] overflow-hidden">
                     <span className="truncate block" title={tx.details ?? ""}>
                       {tx.details ?? "—"}
                     </span>
                   </td>
-                  <td className="px-4 py-2.5 text-xs whitespace-nowrap">
+                  <td className="px-4 py-2.5 text-xs whitespace-nowrap w-[140px] min-w-[140px]">
                     {tx.counterparty || extractParty(tx.details ?? "")}
                   </td>
-                  <td className="px-4 py-2.5">
+                  <td className="px-4 py-2.5 w-[100px] min-w-[100px]">
                     <span
                       className={cn(
                         "text-xs px-2 py-0.5 rounded-full font-medium",
@@ -148,16 +143,16 @@ export function TransactionTable({
                       {tx.type ?? "Other"}
                     </span>
                   </td>
-                  <td className="px-4 py-2.5 text-xs font-mono text-muted-foreground">
+                  <td className="px-4 py-2.5 text-xs font-mono text-muted-foreground w-[130px] min-w-[130px] truncate" title={tx.ref_no ?? ""}>
                     {tx.ref_no ?? "—"}
                   </td>
-                  <td className="px-4 py-2.5 text-xs text-right font-medium text-destructive">
+                  <td className="px-4 py-2.5 text-xs text-right font-medium text-destructive w-[90px] min-w-[90px]">
                     {fmt(tx.debit ?? 0)}
                   </td>
-                  <td className="px-4 py-2.5 text-xs text-right font-medium text-green-600 dark:text-green-400">
+                  <td className="px-4 py-2.5 text-xs text-right font-medium text-green-600 dark:text-green-400 w-[90px] min-w-[90px]">
                     {fmt(tx.credit ?? 0)}
                   </td>
-                  <td className="px-4 py-2.5 text-xs text-right">
+                  <td className="px-4 py-2.5 text-xs text-right w-[110px] min-w-[110px] whitespace-nowrap" title={`₹${(tx.balance ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`}>
                     ₹{(tx.balance ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                   </td>
                 </tr>
@@ -165,10 +160,7 @@ export function TransactionTable({
             </tbody>
             <tfoot className="bg-muted/50 border-t-2">
               <tr>
-                <td
-                  colSpan={5}
-                  className="px-4 py-3 text-xs font-bold text-muted-foreground"
-                >
+                <td colSpan={5} className="px-4 py-3 text-xs font-bold text-muted-foreground">
                   TOTAL — {filtered.length} transactions
                 </td>
                 <td className="px-4 py-3 text-xs text-right font-bold text-destructive">

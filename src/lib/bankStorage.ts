@@ -250,6 +250,36 @@ export async function saveStatement(stmt: BankStatement): Promise<void> {
   if (error) throw new Error(getErrorMessage(error));
 }
 
+/** Update statement PDF flags (after storing PDF in bucket). */
+export async function updateStatementPdf(statementId: string, pdfStored: boolean, pdfFileSize: number): Promise<void> {
+  if (!isSupabaseConfigured) return;
+  const { error } = await supabase
+    .from("bank_statements")
+    .update({ pdf_stored: pdfStored, pdf_file_size: pdfFileSize })
+    .eq("id", statementId);
+  if (error) throw new Error(getErrorMessage(error));
+}
+
+/** Update statement transaction count. */
+export async function updateStatementTransactionCount(statementId: string, transactionCount: number): Promise<void> {
+  if (!isSupabaseConfigured) return;
+  const { error } = await supabase
+    .from("bank_statements")
+    .update({ transaction_count: transactionCount })
+    .eq("id", statementId);
+  if (error) throw new Error(getErrorMessage(error));
+}
+
+/** Update statement last_validated timestamp. */
+export async function updateStatementLastValidated(statementId: string, lastValidated: string | null): Promise<void> {
+  if (!isSupabaseConfigured) return;
+  const { error } = await supabase
+    .from("bank_statements")
+    .update({ last_validated: lastValidated })
+    .eq("id", statementId);
+  if (error) throw new Error(getErrorMessage(error));
+}
+
 /** Save transaction to Supabase only. Throws if not configured or table missing. */
 export async function saveTransaction(txn: BankTransaction): Promise<void> {
   if (!isSupabaseConfigured) throw new Error("Supabase not configured. Connect Supabase in Lovable or add .env.");
