@@ -1,26 +1,48 @@
 import * as pdfjsLib from "pdfjs-dist";
 
-// Must use CDN worker — local import breaks Vite
+// CDN worker — required for Vite, do NOT use local import
 pdfjsLib.GlobalWorkerOptions.workerSrc =
   "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs";
 
+export interface ExtractResult {
+  text: string;
+  pageCount: number;
+  isPasswordProtected: boolean;
+}
+
 export async function extractTextFromPdf(
-  source: File | string | ArrayBuffer
-): Promise<{ text: string; pageCount: number }> {
+  source: File | ArrayBuffer | Blob | string,
+  password?: string
+): Promise<ExtractResult> {
   let data: ArrayBuffer;
 
-  if (source instanceof File) {
+  if (source instanceof File || source instanceof Blob) {
     data = await source.arrayBuffer();
   } else if (typeof source === "string") {
     const res = await fetch(source);
-    if (!res.ok)
-      throw new Error(`Failed to fetch PDF from storage: ${res.status}`);
+    if (!res.ok) throw new Error(`Failed to fetch PDF: ${res.status}`);
     data = await res.arrayBuffer();
   } else {
     data = source;
   }
 
-  const pdf = await pdfjsLib.getDocument({ data }).promise;
+  const loadParams: Record<string, unknown> = { data };
+  if (password != null && String(password).trim() !== "") {
+    loadParams.password = String(password).trim();
+  }
+
+  let pdf: pdfjsLib.PDFDocumentProxy;
+
+  try {
+    pdf = await pdfjsLib.getDocument(loadParams).promise;
+  } catch (err: unknown) {
+    const errName = (err as { name?: string })?.name;
+    if (errName === "PasswordException" || /password|no password/i.test(String((err as Error)?.message ?? ""))) {
+      throw new Error("PASSWORD_REQUIRED");
+    }
+    throw err;
+  }
+
   const pageTexts: string[] = [];
 
   for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
@@ -33,13 +55,13 @@ export async function extractTextFromPdf(
 
     for (const item of textContent.items) {
       if ("str" in item) {
-        const typedItem = item as { str: string; transform: number[] };
-        const y = typedItem.transform[5];
+        const ti = item as { str: string; transform: number[] };
+        const y = ti.transform[5];
         if (lastY !== null && Math.abs(y - lastY) > 2) {
           if (currentLine.trim()) lines.push(currentLine.trim());
           currentLine = "";
         }
-        currentLine += typedItem.str + " ";
+        currentLine += ti.str + " ";
         lastY = y;
       }
     }
@@ -50,5 +72,6 @@ export async function extractTextFromPdf(
   return {
     text: pageTexts.join("\n\n"),
     pageCount: pdf.numPages,
+    isPasswordProtected: !!password,
   };
 }

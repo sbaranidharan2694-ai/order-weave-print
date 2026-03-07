@@ -45,7 +45,8 @@ import { SharedDataBanner } from "@/components/SharedDataBanner";
 import { friendlyDbError } from "@/lib/utils";
 import { parseDocument, type BankStatementData } from "@/utils/parseDocument";
 import { extractTextFromPdf } from "@/utils/extractPdfText";
-import { parseBankStatement } from "@/utils/parseBankStatement";
+import { parseBankStatement, getTabForAccount } from "@/utils/parseBankStatement";
+import { PasswordModal } from "@/components/BankAnalyser/PasswordModal";
 import type { BankStatement, BankTransaction } from "@/lib/bankStorage";
 
 /** Detect account key from parsed bank statement accountNumber or accountHolder. */
@@ -531,6 +532,37 @@ export default function BankAnalyser() {
     return stmt?.accountKey === key;
   }), [allTransactions, statements]);
 
+  const handleOverviewSave = useCallback(async (accountKey: string, data: BankStatementData, file: File) => {
+    const finalStmtId = btoa(accountKey + file.name + file.size).replace(/[^a-zA-Z0-9]/g, "").substring(0, 40);
+    const existing = await getStatement(finalStmtId);
+    if (existing) {
+      toast.error("This statement was already uploaded.");
+      return;
+    }
+    const { statement: newStmt, transactions: txns } = mapBankStatementDataToStatementAndTransactions(data, finalStmtId, accountKey, file.name);
+    const allStmts = await loadStatements();
+    const periodDup = allStmts.find(s => s.accountKey === accountKey && s.periodStart === newStmt.periodStart && s.periodEnd === newStmt.periodEnd && newStmt.periodStart && newStmt.periodEnd);
+    if (periodDup) {
+      toast.error(`Period already exists (${periodDup.fileName}).`);
+      return;
+    }
+    for (const txn of txns) {
+      const exists = await hasTransaction(finalStmtId, txn.id);
+      if (!exists) await saveTransaction(txn);
+    }
+    newStmt.transactionCount = txns.length;
+    await saveStatement(newStmt);
+    const saved = await pdfStorage.save(finalStmtId, file);
+    if (saved) {
+      newStmt.pdfStored = true;
+      newStmt.pdfFileSize = file.size;
+      await saveStatement(newStmt);
+    }
+    setActiveTab(accountKey);
+    await refreshData({ silent: true });
+    toast.success(`Saved to ${ACCOUNTS.find(a => a.key === accountKey)?.label ?? accountKey}`);
+  }, []);
+
   if (loading) {
     return (
       <div className="space-y-6">
@@ -578,7 +610,14 @@ export default function BankAnalyser() {
 
         {/* OVERVIEW TAB */}
         <TabsContent value="overview">
-          <OverviewTab statements={statements} allTransactions={allTransactions} accountTxns={accountTxns} />
+          <OverviewTab
+            statements={statements}
+            allTransactions={allTransactions}
+            accountTxns={accountTxns}
+            setActiveTab={setActiveTab}
+            onSaveParsedStatement={handleOverviewSave}
+            refreshData={refreshData}
+          />
         </TabsContent>
 
         {/* ACCOUNT TABS */}
@@ -624,7 +663,106 @@ function parseTxnDateToMonthYear(dateStr: string): { month: number; year: number
   return null;
 }
 
-function OverviewTab({ statements, allTransactions, accountTxns }) {
+type OverviewUploadEntry = {
+  id: string;
+  file: File;
+  name: string;
+  status: "pending" | "password_required" | "parsing" | "done" | "error";
+  error?: string;
+  data?: BankStatementData;
+  assignedTab?: string;
+};
+
+function OverviewTab({
+  statements,
+  allTransactions,
+  accountTxns,
+  setActiveTab,
+  onSaveParsedStatement,
+  refreshData,
+}: {
+  statements: Array<Record<string, unknown>>;
+  allTransactions: Array<Record<string, unknown>>;
+  accountTxns: (key: string) => Array<Record<string, unknown>>;
+  setActiveTab: (tab: string) => void;
+  onSaveParsedStatement: (accountKey: string, data: BankStatementData, file: File) => Promise<void>;
+  refreshData: (opts?: { silent?: boolean }) => Promise<void>;
+}) {
+  const [uploads, setUploads] = useState<OverviewUploadEntry[]>([]);
+  const [passwordModal, setPasswordModal] = useState<{ entry: OverviewUploadEntry; attempt: number } | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const parseFile = useCallback(async (entry: OverviewUploadEntry, password?: string) => {
+    setUploads(prev => prev.map(u => u.id === entry.id ? { ...u, status: "parsing" as const } : u));
+    try {
+      const { text } = await extractTextFromPdf(entry.file, password);
+      if (!text || text.trim().length < 30) {
+        throw new Error("No text extracted — PDF may be image/scanned only");
+      }
+      const parsed = parseBankStatement(text);
+      const assignedTab = getTabForAccount(parsed.accountNumber ?? "");
+      if (!assignedTab) {
+        throw new Error(`Unknown account: ${parsed.accountNumber ?? "—"}. Add to ACCOUNT_TAB_MAP if needed.`);
+      }
+      setUploads(prev => prev.map(u => u.id === entry.id ? { ...u, status: "done", data: parsed, assignedTab } : u));
+      toast.success(`${parsed.accountHolder} — ${parsed.transactions.length} txns | ₹${parsed.closingBalance.toLocaleString("en-IN")} closing`);
+      await onSaveParsedStatement(assignedTab, parsed, entry.file);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg === "PASSWORD_REQUIRED") {
+        setUploads(prev => prev.map(u => u.id === entry.id ? { ...u, status: "password_required" as const } : u));
+        setPasswordModal({ entry, attempt: 1 });
+        return;
+      }
+      setUploads(prev => prev.map(u => u.id === entry.id ? { ...u, status: "error" as const, error: msg } : u));
+      toast.error(msg);
+    }
+  }, [onSaveParsedStatement]);
+
+  const handlePasswordSubmit = useCallback(async (password: string) => {
+    if (!passwordModal) return;
+    const { entry, attempt } = passwordModal;
+    setPasswordModal(null);
+    setUploads(prev => prev.map(u => u.id === entry.id ? { ...u, status: "parsing" as const } : u));
+    try {
+      const { text } = await extractTextFromPdf(entry.file, password);
+      if (!text || text.trim().length < 30) throw new Error("No text extracted");
+      const parsed = parseBankStatement(text);
+      const assignedTab = getTabForAccount(parsed.accountNumber ?? "");
+      if (!assignedTab) throw new Error(`Unknown account: ${parsed.accountNumber ?? "—"}`);
+      setUploads(prev => prev.map(u => u.id === entry.id ? { ...u, status: "done", data: parsed, assignedTab } : u));
+      toast.success(`${parsed.transactions.length} transactions saved`);
+      await onSaveParsedStatement(assignedTab, parsed, entry.file);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg === "PASSWORD_REQUIRED" || /password/i.test(msg)) {
+        setPasswordModal({ entry, attempt: attempt + 1 });
+        setUploads(prev => prev.map(u => u.id === entry.id ? { ...u, status: "password_required" as const, error: "Wrong password" } : u));
+        toast.error("Wrong password — try again");
+      } else {
+        setUploads(prev => prev.map(u => u.id === entry.id ? { ...u, status: "error" as const, error: msg } : u));
+        toast.error(msg);
+      }
+    }
+  }, [passwordModal, onSaveParsedStatement]);
+
+  const handleFileDrop = useCallback((files: FileList | File[]) => {
+    const fileArray = Array.from(files).filter(f => f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf"));
+    if (!fileArray.length) {
+      toast.error("Please upload PDF files only");
+      return;
+    }
+    const newEntries: OverviewUploadEntry[] = fileArray.map(f => ({
+      id: `${Date.now()}_${f.name}_${f.size}`,
+      file: f,
+      name: f.name,
+      status: "pending" as const,
+    }));
+    setUploads(prev => [...prev, ...newEntries]);
+    newEntries.forEach(entry => parseFile(entry));
+  }, [parseFile]);
+
   const now = new Date();
   const currentMonth = now.getMonth() + 1;
   const currentYear = now.getFullYear();
@@ -653,12 +791,111 @@ function OverviewTab({ statements, allTransactions, accountTxns }) {
     <div className="space-y-6 mt-4">
       <p className="text-sm text-muted-foreground">🏦 Bank Analyser › Overview — This Month</p>
 
+      {/* Password modal */}
+      <PasswordModal
+        open={!!passwordModal}
+        fileName={passwordModal?.entry.name ?? ""}
+        onSubmit={handlePasswordSubmit}
+        onCancel={() => {
+          setPasswordModal(null);
+          if (passwordModal) {
+            setUploads(prev => prev.map(u => u.id === passwordModal.entry.id ? { ...u, status: "error" as const, error: "Cancelled" } : u));
+          }
+        }}
+        error={passwordModal && passwordModal.attempt > 1 ? "Wrong password" : undefined}
+      />
+
+      {/* Drop zone — upload in Overview, auto-routes to account tab */}
+      <div
+        onDragOver={e => { e.preventDefault(); setIsDragging(true); }}
+        onDragLeave={() => setIsDragging(false)}
+        onDrop={e => { e.preventDefault(); setIsDragging(false); handleFileDrop(e.dataTransfer.files); }}
+        onClick={() => inputRef.current?.click()}
+        className={cn(
+          "border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors",
+          isDragging ? "border-primary bg-primary/5" : "border-muted-foreground/25 bg-muted/30 hover:bg-muted/50"
+        )}
+      >
+        <input
+          ref={inputRef}
+          type="file"
+          accept=".pdf"
+          multiple
+          className="hidden"
+          onChange={e => { const f = e.target.files; if (f?.length) handleFileDrop(f); e.target.value = ""; }}
+        />
+        <div className="text-3xl mb-2">📂</div>
+        <p className="text-sm font-medium text-foreground">
+          {isDragging ? "Drop PDFs here" : "Click or drag & drop bank statement PDFs"}
+        </p>
+        <p className="text-xs text-muted-foreground mt-1">
+          Password-protected CSB Bank PDFs supported · Auto-routes to correct account tab
+        </p>
+      </div>
+
+      {/* Upload results */}
+      {uploads.length > 0 && (
+        <div className="space-y-3">
+          {uploads.map(u => (
+            <Card key={u.id} className="rounded-xl">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span className="text-xl shrink-0">
+                      {u.status === "done" ? "✅" : u.status === "error" ? "❌" : u.status === "parsing" ? "⏳" : u.status === "password_required" ? "🔒" : "📄"}
+                    </span>
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium truncate">{u.name}</p>
+                      {u.data && (
+                        <p className="text-xs text-muted-foreground">
+                          {u.data.accountHolder} · {u.data.accountNumber} → <span className="font-medium text-primary">{u.assignedTab ?? ""}</span>
+                        </p>
+                      )}
+                      {u.error && <p className="text-xs text-destructive">{u.error}</p>}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {u.status === "parsing" && <span className="text-xs text-muted-foreground animate-pulse">Parsing…</span>}
+                    {u.status === "password_required" && (
+                      <Button size="sm" variant="outline" onClick={() => setPasswordModal({ entry: u, attempt: 1 })}>
+                        Enter password
+                      </Button>
+                    )}
+                    {u.status === "done" && u.data && (
+                      <div className="text-right">
+                        <p className="text-xs font-bold text-green-600">₹{u.data.closingBalance.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</p>
+                        <p className="text-xs text-muted-foreground">{u.data.transactions.length} txns</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+                {u.status === "done" && u.data && (
+                  <div className="grid grid-cols-4 gap-2 mt-3 pt-3 border-t">
+                    {[
+                      { label: "Opening", value: u.data.openingBalance },
+                      { label: "Credits", value: u.data.totalCredits, cls: "text-green-600" },
+                      { label: "Debits", value: u.data.totalDebits, cls: "text-red-600" },
+                      { label: "Closing", value: u.data.closingBalance, cls: "text-blue-600" },
+                    ].map(({ label, value, cls }) => (
+                      <div key={label} className="text-center">
+                        <p className="text-xs text-muted-foreground">{label}</p>
+                        <p className={cn("text-xs font-bold", cls)}>₹{value.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+
       {statements.length === 0 ? (
         <Card className="rounded-2xl shadow-sm">
           <CardContent className="p-12 text-center">
             <FileText className="h-12 w-12 text-muted-foreground mx-auto mb-4 opacity-50" />
             <h3 className="text-lg font-semibold text-foreground mb-1">No Statements Yet</h3>
-            <p className="text-muted-foreground text-sm">Select an account tab to upload CSB bank statement PDFs</p>
+            <p className="text-muted-foreground text-sm">Upload PDFs above or select an account tab to upload CSB bank statement PDFs</p>
           </CardContent>
         </Card>
       ) : (

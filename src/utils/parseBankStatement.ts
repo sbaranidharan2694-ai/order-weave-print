@@ -13,7 +13,7 @@ export interface BankStatementData {
   docType?: "bank_statement";
   accountHolder: string;
   accountNumber: string;
-  accountType: string;
+  accountType: "SAVING" | "CURRENT" | string;
   bankName: string;
   branch: string;
   ifsc: string;
@@ -24,11 +24,39 @@ export interface BankStatementData {
   totalDebits: number;
   closingBalance: number;
   transactions: Transaction[];
+  rawText?: string;
+}
+
+/** Account number → tab value (matches BankAnalyser ACCOUNTS[].key) */
+export const ACCOUNT_TAB_MAP: Record<string, string> = {
+  "0244020077280": "superprinters",
+  "0244020080155": "superscreens",
+  "0244011477662": "revathy",
+};
+
+export const ACCOUNT_LABEL_MAP: Record<string, string> = {
+  "0244020077280": "Super Printers",
+  "0244020080155": "Super Screens",
+  "0244011477662": "Revathy B.",
+};
+
+export function getTabForAccount(accountNumber: string): string {
+  const normalized = (accountNumber ?? "").replace(/\s/g, "");
+  if (ACCOUNT_TAB_MAP[normalized]) return ACCOUNT_TAB_MAP[normalized];
+  for (const [num, tab] of Object.entries(ACCOUNT_TAB_MAP)) {
+    if (normalized.includes(num)) return tab;
+  }
+  return "";
+}
+
+export function getLabelForAccount(accountNumber: string): string {
+  const normalized = (accountNumber ?? "").replace(/\s/g, "");
+  return ACCOUNT_LABEL_MAP[normalized] ?? `Unknown (${accountNumber || "—"})`;
 }
 
 function toNum(s: string): number {
   if (!s) return 0;
-  return parseFloat(s.replace(/[INRCr\s,]/g, "")) || 0;
+  return parseFloat(s.replace(/[^0-9.]/g, "")) || 0;
 }
 
 function categorise(detail: string): string {
@@ -36,10 +64,10 @@ function categorise(detail: string): string {
   if (d.includes("GOOGLE") || d.includes("IMPS")) return "Digital Receipt";
   if (d.includes("UPI/CR")) return "UPI Receipt";
   if (d.includes("UPI/DR")) return "UPI Payment";
-  if (d.includes("NEFT") && d.includes("CR")) return "NEFT Receipt";
+  if (d.includes("NEFT") && (d.includes("CR") || d.includes("CREDIT"))) return "NEFT Receipt";
   if (d.includes("ATW") || d.includes("ATM")) return "ATM Withdrawal";
   if (d.includes("CHQ") || d.includes("CLEARING")) return "Cheque";
-  if (d.includes("SWIGGY")) return "Food";
+  if (d.includes("SWIGGY") || d.includes("ZOMATO")) return "Food";
   return "Other";
 }
 
@@ -101,10 +129,7 @@ export function parseBankStatement(rawText: string): BankStatementData {
 
     while (j < lines.length) {
       const next = lines[j];
-      if (
-        next.match(/^\d{1,2}\s+[A-Z]{3}\s+\d{4}\s/) ||
-        next.includes("End of statement")
-      )
+      if (next.match(/^\d{1,2}\s+[A-Z]{3}\s+\d{4}\s/) || next.startsWith("End of"))
         break;
       detailParts.push(next);
       j++;
@@ -119,10 +144,8 @@ export function parseBankStatement(rawText: string): BankStatementData {
       .map((x) => toNum(x[1]))
       .filter((a) => a > 0 && Math.abs(a - balance) > 0.01);
 
-    const isDebit = /UPI\/DR|ATW\s+using|Chq\s+Paid|Issuer\s+ATM|DEBIT/i.test(
-      detailFull
-    );
-    const isCredit = /UPI\/CR|NEFT\s+Cr--|IMPS--|IMPS\s+Cr/i.test(detailFull);
+    const isDebit = /UPI\/DR|ATW\s+using|Chq\s+Paid|Issuer\s+ATM|DR\b/i.test(detailFull);
+    const isCredit = /UPI\/CR|NEFT\s+Cr--|IMPS--|NEFT\s+Cr\b/i.test(detailFull);
 
     const txAmount =
       amounts.length > 0
@@ -173,5 +196,6 @@ export function parseBankStatement(rawText: string): BankStatementData {
     totalDebits,
     closingBalance,
     transactions,
+    rawText,
   };
 }
