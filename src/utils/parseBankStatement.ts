@@ -73,7 +73,7 @@ function categorise(detail: string): string {
 }
 
 export function parseBankStatement(rawText: string): BankStatementData {
-  // Split into lines, remove blanks
+  // Split into lines, remove blanks (CSB Bank format)
   const lines = rawText
     .split("\n")
     .map((l) => l.trim())
