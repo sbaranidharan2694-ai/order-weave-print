@@ -1,6 +1,6 @@
 import * as pdfjsLib from "pdfjs-dist";
 
-// CDN worker — required for Vite, do NOT use local import
+// Worker version MUST match pdfjs-dist version (e.g. 4.4.168) to avoid "API version does not match Worker version" error.
 pdfjsLib.GlobalWorkerOptions.workerSrc =
   "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs";
 
@@ -50,22 +50,36 @@ export async function extractTextFromPdf(
     const textContent = await page.getTextContent();
 
     let lastY: number | null = null;
+    let lastXEnd: number | null = null;
     const lines: string[] = [];
     let currentLine = "";
 
     for (const item of textContent.items) {
       if ("str" in item) {
         const ti = item as { str: string; transform: number[] };
-        const y = ti.transform[5];
+        const transform = ti.transform;
+        const x = transform[4];
+        const y = transform[5];
+        const scaleX = transform[0];
+        const width = (ti.str.length * (scaleX || 12)) || 0;
+        const xEnd = x + width;
+
         if (lastY !== null && Math.abs(y - lastY) > 2) {
-          if (currentLine.trim()) lines.push(currentLine.trim());
+          if (currentLine.trim()) lines.push(fixMidWordSpaces(currentLine.trim()));
           currentLine = "";
+          lastXEnd = null;
         }
-        currentLine += ti.str + " ";
+        const gap = lastXEnd != null ? x - lastXEnd : 2;
+        if (gap < 2 && currentLine.length > 0) {
+          currentLine += ti.str;
+        } else {
+          currentLine += (currentLine.length > 0 ? " " : "") + ti.str;
+        }
         lastY = y;
+        lastXEnd = xEnd;
       }
     }
-    if (currentLine.trim()) lines.push(currentLine.trim());
+    if (currentLine.trim()) lines.push(fixMidWordSpaces(currentLine.trim()));
     pageTexts.push(lines.join("\n"));
   }
 
@@ -74,4 +88,9 @@ export async function extractTextFromPdf(
     pageCount: pdf.numPages,
     isPasswordProtected: !!password,
   };
+}
+
+/** Fix ALL CAPS words split mid-word (e.g. "PA CKAGINGS" -> "PACKAGINGS"). */
+function fixMidWordSpaces(line: string): string {
+  return line.replace(/\b([A-Z]{2})\s+([A-Z]{2,})\b/g, "$1$2");
 }

@@ -32,6 +32,7 @@ import {
   loadTransactions,
   saveStatement,
   saveTransaction,
+  saveTransactionsBatch,
   deleteStatement as deleteStatementStorage,
   loadCustomLookup,
   saveCustomLookup,
@@ -582,16 +583,19 @@ export default function BankAnalyser() {
     const finalStmtId = btoa(accountKey + file.name + file.size).replace(/[^a-zA-Z0-9]/g, "").substring(0, 40);
     const { statement: newStmt, transactions: txns } = mapBankStatementDataToStatementAndTransactions(data, finalStmtId, accountKey, file.name);
     newStmt.transactionCount = txns.length;
+    newStmt.accountNumber = data.accountNumber ?? (ACCOUNTS.find(a => a.key === accountKey) as { accountNumber?: string } | undefined)?.accountNumber ?? "";
     await saveStatement(newStmt);
-    for (const txn of txns) {
-      const exists = await hasTransaction(finalStmtId, txn.id);
-      if (!exists) await saveTransaction(txn);
+    try {
+      await saveTransactionsBatch(txns);
+    } catch (err) {
+      toast.error(toErrorMessage(err));
+      throw err;
     }
     const saved = await pdfStorage.save(finalStmtId, file);
     if (saved) await updateStatementPdf(finalStmtId, true, file.size);
     setActiveTab(accountKey);
     await refreshData({ silent: true });
-    toast.success(`Saved to ${ACCOUNTS.find(a => a.key === accountKey)?.label ?? accountKey}`);
+    toast.success(`Saved to ${ACCOUNTS.find(a => a.key === accountKey)?.label ?? accountKey} — ${txns.length} transactions`);
   }, []);
 
   const handleOverviewSave = useCallback(async (accountKey: string, data: BankStatementData, file: File) => {
@@ -665,7 +669,8 @@ export default function BankAnalyser() {
         <TabsList className="bg-muted w-full justify-start overflow-x-auto flex-nowrap">
           <TabsTrigger value="overview" className="gap-1"><Home className="h-3.5 w-3.5" />Overview</TabsTrigger>
           {ACCOUNTS.map(a => (
-            <TabsTrigger key={a.key} value={a.key} className="gap-1">
+            <TabsTrigger key={a.key} value={a.key} className="gap-1" title={`${a.label} — CSB Bank ••••${(a as { accountNumber?: string }).accountNumber?.slice(-4) ?? ""}`}>
+              <span className="inline-block w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: a.color }} aria-hidden />
               <span>{a.icon}</span>
               <span className="hidden sm:inline">{a.label}</span>
               <span className="sm:hidden">{a.shortLabel}</span>
@@ -1005,7 +1010,9 @@ function OverviewTab({
                       </p>
                     </div>
                   </div>
-                  <p className="text-xs text-muted-foreground mt-1 text-center">{a.txnCount ?? 0} transactions</p>
+                  <p className="text-xs text-muted-foreground mt-1 text-center">
+                    {(a.txnCount ?? 0) === 0 ? "No statements uploaded yet" : `${a.txnCount ?? 0} transactions`}
+                  </p>
                 </CardContent>
               </Card>
             ))}
@@ -1064,6 +1071,7 @@ function AccountTab({ account, onRefresh, customLookup, onUpdateLookup }) {
         totalCredits: s.total_credits ?? 0,
         totalDebits: s.total_debits ?? 0,
         openingBalance: s.opening_balance ?? 0,
+        closingBalance: s.closing_balance ?? 0,
         pdfStored: s.pdf_stored ?? false,
         pdfFileSize: s.pdf_file_size ?? 0,
         lastValidated: s.last_validated ?? null,
@@ -1109,6 +1117,7 @@ function AccountTab({ account, onRefresh, customLookup, onUpdateLookup }) {
   const [validating, setValidating] = useState(false);
   const [dateRangeFrom, setDateRangeFrom] = useState("");
   const [dateRangeTo, setDateRangeTo] = useState("");
+  const [exportCsvLoading, setExportCsvLoading] = useState(false);
 
   const filtered = useMemo(() => {
     const now = new Date();
@@ -1254,22 +1263,20 @@ function AccountTab({ account, onRefresh, customLookup, onUpdateLookup }) {
 
         // Insert parent statement FIRST so FK constraint on bank_transactions is satisfied
         newStmt.transactionCount = txns.length;
+        newStmt.accountNumber = data.accountNumber ?? "";
         await saveStatement(newStmt);
 
-        let saved = 0, skipped = 0;
-        for (let ti = 0; ti < txns.length; ti++) {
-          const txn = txns[ti];
-          const exists = await hasTransaction(finalStmtId, txn.id);
-          if (exists) { skipped++; continue; }
-          await saveTransaction(txn);
-          saved++;
-          if (ti % 20 === 0) {
-            setQueue(prev => prev.map((p, i) => i === qi ? { ...p, progress: `Saving transactions ${ti + 1}/${txns.length}` } : p));
-          }
+        setQueue(prev => prev.map((p, i) => i === qi ? { ...p, progress: `Saving ${txns.length} transactions…` } : p));
+        try {
+          await saveTransactionsBatch(txns);
+        } catch (err) {
+          const msg = toErrorMessage(err);
+          toast.error(msg);
+          setQueue(prev => prev.map((p, i) => i === qi ? { ...p, status: "error", error: msg } : p));
+          continue;
         }
-        if (saved !== txns.length) {
-          await updateStatementTransactionCount(finalStmtId, saved);
-        }
+        const saved = txns.length;
+        const skipped = 0;
 
         if (item.file.size <= 50 * 1024 * 1024) {
           setQueue(prev => prev.map((p, i) => i === qi ? { ...p, progress: "Saving PDF…" } : p));
@@ -1373,31 +1380,36 @@ function AccountTab({ account, onRefresh, customLookup, onUpdateLookup }) {
     const iso = new Date().toISOString();
     let allPassed = true;
     const results: string[] = [];
-    for (const s of statements) {
-      const stmtTxns = transactions.filter(t => t.statementId === s.id);
-      const sumCredits = stmtTxns.reduce((a, t) => a + (Number(t.credit) || 0), 0);
-      const sumDebits = stmtTxns.reduce((a, t) => a + (Number(t.debit) || 0), 0);
-      const opening = Number(s.openingBalance) || 0;
-      const expectedClosing = opening + sumCredits - sumDebits;
-      const actualClosing = Number(s.closingBalance) || 0;
-      const diff = Math.abs(expectedClosing - actualClosing);
-      const passed = diff < 0.01;
-      if (passed) {
-        await updateStatementLastValidated(s.id, iso);
-        results.push(`✅ ${s.periodStart || s.fileName}: Opening ₹${opening.toLocaleString("en-IN", { minimumFractionDigits: 2 })} → Closing ₹${actualClosing.toLocaleString("en-IN", { minimumFractionDigits: 2 })}. ${stmtTxns.length} transactions reconciled.`);
-      } else {
-        allPassed = false;
-        results.push(`❌ ${s.periodStart || s.fileName}: Expected closing ₹${expectedClosing.toLocaleString("en-IN", { minimumFractionDigits: 2 })}, actual ₹${actualClosing.toLocaleString("en-IN", { minimumFractionDigits: 2 })}. Difference: ₹${diff.toLocaleString("en-IN", { minimumFractionDigits: 2 })}.`);
+    try {
+      for (const s of statements) {
+        const stmtTxns = transactions.filter(t => t.statementId === s.id);
+        const sumCredits = stmtTxns.reduce((a, t) => a + (Number(t.credit) || 0), 0);
+        const sumDebits = stmtTxns.reduce((a, t) => a + (Number(t.debit) || 0), 0);
+        const opening = Number(s.openingBalance) || 0;
+        const expectedClosing = opening + sumCredits - sumDebits;
+        const actualClosing = Number(s.closingBalance) || 0;
+        const diff = Math.abs(expectedClosing - actualClosing);
+        const passed = diff < 0.01;
+        if (passed) {
+          await updateStatementLastValidated(s.id, iso);
+          results.push(`✅ ${s.periodStart || s.fileName}: Opening ₹${opening.toLocaleString("en-IN", { minimumFractionDigits: 2 })} → Closing ₹${actualClosing.toLocaleString("en-IN", { minimumFractionDigits: 2 })}. ${stmtTxns.length} transactions reconciled.`);
+        } else {
+          allPassed = false;
+          results.push(`❌ ${s.periodStart || s.fileName}: Expected closing ₹${expectedClosing.toLocaleString("en-IN", { minimumFractionDigits: 2 })}, actual ₹${actualClosing.toLocaleString("en-IN", { minimumFractionDigits: 2 })}. Difference: ₹${diff.toLocaleString("en-IN", { minimumFractionDigits: 2 })}.`);
+        }
       }
+      if (allPassed && results.length > 0) {
+        toast.success(results[0].replace("✅ ", "Validation passed: "));
+      } else if (!allPassed) {
+        toast.error(results.find(r => r.startsWith("❌"))?.replace("❌ ", "Validation failed: ") ?? "Validation failed");
+      }
+    } catch (err) {
+      toast.error(toErrorMessage(err));
+    } finally {
+      setValidating(false);
+      await refetch();
+      await onRefresh();
     }
-    if (allPassed && results.length > 0) {
-      toast.success(results[0].replace("✅ ", "Validation passed: "));
-    } else if (!allPassed) {
-      toast.error(results.find(r => r.startsWith("❌"))?.replace("❌ ", "Validation failed: ") ?? "Validation failed");
-    }
-    setValidating(false);
-    await refetch();
-    await onRefresh();
   };
 
   const toggleParty = (name: string) => {
@@ -1450,10 +1462,15 @@ function AccountTab({ account, onRefresh, customLookup, onUpdateLookup }) {
     });
   }, [hookTransactions, dateRangeFrom, dateRangeTo]);
 
-  const exportFullCsv = () => {
-    const header = ["Date", "Details", "Party", "Type", "RefNo", "Debit", "Credit", "Balance"];
-    const rows = transactionsToShow.map(t => [t.date, t.details ?? "", t.counterparty ?? "", t.type ?? "", t.ref_no ?? "", (t.debit ?? 0).toFixed(2), (t.credit ?? 0).toFixed(2), (t.balance ?? 0).toFixed(2)]);
-    downloadCsv([header, ...rows], `${acctLabel}_transactions.csv`);
+  const exportFullCsv = async () => {
+    setExportCsvLoading(true);
+    try {
+      const header = ["Date", "Details", "Party", "Type", "RefNo", "Debit", "Credit", "Balance"];
+      const rows = hookTransactions.map(t => [t.date, t.details ?? "", t.counterparty ?? "", t.type ?? "", t.ref_no ?? "", (t.debit ?? 0).toFixed(2), (t.credit ?? 0).toFixed(2), (t.balance ?? 0).toFixed(2)]);
+      downloadCsv([header, ...rows], `${acctLabel}_transactions.csv`);
+    } finally {
+      setExportCsvLoading(false);
+    }
   };
 
   const handleSaveCustomName = async (rawText, customName) => {
@@ -1512,6 +1529,7 @@ function AccountTab({ account, onRefresh, customLookup, onUpdateLookup }) {
               onClick={() => fileInputRef.current?.click()}
               className="border-2 border-dashed rounded-xl p-8 text-center cursor-pointer hover:bg-muted/30 transition-all"
               style={{ borderColor: account.color + "80" }}
+              title={`Upload CSB Bank statements for ${account.label}`}
             >
               <Upload className="h-8 w-8 mx-auto mb-2" style={{ color: account.color }} />
               <p className="text-foreground font-semibold text-sm">Drop up to 5 CSB Bank PDFs · or click to browse</p>
@@ -1588,16 +1606,22 @@ function AccountTab({ account, onRefresh, customLookup, onUpdateLookup }) {
                             <Button variant="ghost" size="sm" className="h-6 px-1" onClick={() => handleDownloadPDF(s)} title="Download">
                               <Download className="h-3 w-3" />
                             </Button>
-                            <Button
-                              variant="default"
-                              size="sm"
-                              className="h-6 px-2 text-xs"
-                              disabled={isParsingPreview}
-                              onClick={() => handleParsePdf(s.id)}
-                              title="Parse PDF"
-                            >
-                              {isParsingPreview ? "Parsing…" : "Parse PDF"}
-                            </Button>
+                            {(s.transactionCount ?? 0) > 0 ? (
+                              <span className="text-xs text-green-600 inline-flex items-center gap-1" title="Parsed">
+                                <span>✅</span> Parsed ({s.transactionCount} txns)
+                              </span>
+                            ) : (
+                              <Button
+                                variant="default"
+                                size="sm"
+                                className="h-6 px-2 text-xs"
+                                disabled={isParsingPreview}
+                                onClick={() => handleParsePdf(s.id)}
+                                title="Parse PDF"
+                              >
+                                {isParsingPreview ? "Parsing…" : "Parse PDF"}
+                              </Button>
+                            )}
                           </div>
                         ) : "—"}
                       </td>
@@ -1605,7 +1629,7 @@ function AccountTab({ account, onRefresh, customLookup, onUpdateLookup }) {
                         {s.lastValidated ? (
                           <span className="inline-flex items-center gap-1">
                             <span className="text-green-600" title="Validation passed">✅</span>
-                            {new Date(s.lastValidated).toLocaleDateString()}
+                            {new Date(s.lastValidated).toLocaleString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}
                           </span>
                         ) : (
                           <span className="text-muted-foreground">Never</span>
@@ -1716,6 +1740,7 @@ function AccountTab({ account, onRefresh, customLookup, onUpdateLookup }) {
                 value={dateRangeFrom}
                 onChange={e => setDateRangeFrom(e.target.value)}
                 placeholder="From"
+                title="From date"
               />
               <Input
                 type="date"
@@ -1723,25 +1748,34 @@ function AccountTab({ account, onRefresh, customLookup, onUpdateLookup }) {
                 value={dateRangeTo}
                 onChange={e => setDateRangeTo(e.target.value)}
                 placeholder="To"
+                title="To date"
               />
               {(dateRangeFrom || dateRangeTo) && (
-                <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => { setDateRangeFrom(""); setDateRangeTo(""); }}>
-                  Clear
-                </Button>
+                <>
+                  <span className="px-1.5 py-0.5 rounded bg-primary/20 text-primary text-xs font-medium">Filtered</span>
+                  <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => { setDateRangeFrom(""); setDateRangeTo(""); }}>
+                    Clear
+                  </Button>
+                </>
               )}
             </div>
             <div className="flex gap-2">
-              <Button variant="outline" size="sm" onClick={exportFullCsv}>
-                Export CSV (transactions)
+              <Button variant="outline" size="sm" onClick={exportFullCsv} disabled={exportCsvLoading}>
+                {exportCsvLoading ? "Exporting…" : `Export CSV (${hookTransactions.length} transactions)`}
               </Button>
               {sortedParties?.length > 0 && (
-                <Button variant="outline" size="sm" onClick={exportSummaryCsv}>
+                <Button variant="outline" size="sm" onClick={exportSummaryCsv} disabled={exportCsvLoading}>
                   Export CSV (summary)
                 </Button>
               )}
             </div>
           </div>
-          <TransactionTable transactions={transactionsToShow} defaultView="byDate" />
+          <TransactionTable
+            transactions={transactionsToShow}
+            defaultView="byDate"
+            isDateFiltered={!!(dateRangeFrom || dateRangeTo)}
+            totalUnfiltered={hookTransactions.length}
+          />
         </>
       )}
       {hookTransactions.length === 0 && (
@@ -2238,13 +2272,17 @@ function ReportsTab({ statements, allTransactions }) {
         <Card className="rounded-2xl shadow-sm">
           <CardHeader className="pb-2"><CardTitle className="text-sm">Top 10 Debits</CardTitle></CardHeader>
           <CardContent className="p-0">
-            <table className="w-full text-xs">
-              <tbody className="divide-y divide-border/50">
-                {topDebits.map((p, i) => (
-                  <tr key={p.name}><td className="px-3 py-1.5">{i + 1}. {p.name}</td><td className="px-3 py-1.5 text-right text-destructive font-medium">{fmt(p.debits)}</td></tr>
-                ))}
-              </tbody>
-            </table>
+            {topDebits.length === 0 ? (
+              <p className="px-3 py-4 text-xs text-muted-foreground text-center">No debit transactions found.</p>
+            ) : (
+              <table className="w-full text-xs">
+                <tbody className="divide-y divide-border/50">
+                  {topDebits.map((p, i) => (
+                    <tr key={p.name}><td className="px-3 py-1.5">{i + 1}. {p.name}</td><td className="px-3 py-1.5 text-right text-destructive font-medium">{fmt(p.debits)}</td></tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </CardContent>
         </Card>
       </div>

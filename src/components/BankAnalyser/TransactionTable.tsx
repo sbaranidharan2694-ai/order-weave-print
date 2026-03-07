@@ -24,11 +24,16 @@ const fmt = (n: number) =>
 interface TransactionTableProps {
   transactions: Transaction[];
   defaultView?: "byDate" | "byParty";
+  /** When true, show "Showing X of Y (filtered)" */
+  isDateFiltered?: boolean;
+  totalUnfiltered?: number;
 }
 
 export function TransactionTable({
   transactions,
   defaultView = "byDate",
+  isDateFiltered = false,
+  totalUnfiltered,
 }: TransactionTableProps) {
   const [viewMode, setViewMode] = useState<"byDate" | "byParty">(defaultView);
   const [expandedParties, setExpandedParties] = useState<Set<string>>(new Set());
@@ -98,7 +103,9 @@ export function TransactionTable({
           className="max-w-xs h-8 text-sm"
         />
         <span className="text-xs text-muted-foreground">
-          {filtered.length} of {transactions.length} transactions
+          {isDateFiltered && totalUnfiltered != null
+            ? `Showing ${filtered.length} of ${totalUnfiltered} transactions (filtered)`
+            : `${filtered.length} of ${transactions.length} transactions`}
         </span>
       </div>
 
@@ -114,7 +121,7 @@ export function TransactionTable({
                 <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-left w-[130px] min-w-[130px]">RefNo</th>
                 <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-right w-[90px] min-w-[90px]">Debit</th>
                 <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-right w-[90px] min-w-[90px]">Credit</th>
-                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-right w-[110px] min-w-[110px]">Balance</th>
+                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-right w-[120px] min-w-[120px] whitespace-nowrap">Balance</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
@@ -152,7 +159,7 @@ export function TransactionTable({
                   <td className="px-4 py-2.5 text-xs text-right font-medium text-green-600 dark:text-green-400 w-[90px] min-w-[90px]">
                     {fmt(tx.credit ?? 0)}
                   </td>
-                  <td className="px-4 py-2.5 text-xs text-right w-[110px] min-w-[110px] whitespace-nowrap" title={`₹${(tx.balance ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`}>
+                  <td className="px-4 py-2.5 text-xs text-right w-[120px] min-w-[120px] whitespace-nowrap" title={`₹${(tx.balance ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`}>
                     ₹{(tx.balance ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                   </td>
                 </tr>

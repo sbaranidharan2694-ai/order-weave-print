@@ -288,6 +288,15 @@ export async function saveTransaction(txn: BankTransaction): Promise<void> {
   if (error) throw new Error(getErrorMessage(error));
 }
 
+/** Insert all transactions in one batch. Throws if not configured or any insert fails. */
+export async function saveTransactionsBatch(txns: BankTransaction[]): Promise<void> {
+  if (!isSupabaseConfigured) throw new Error("Supabase not configured. Connect Supabase in Lovable or add .env.");
+  if (txns.length === 0) return;
+  const rows = txns.map(transactionToRow);
+  const { error } = await supabase.from("bank_transactions").insert(rows);
+  if (error) throw new Error(getErrorMessage(error));
+}
+
 /** Delete statement and its transactions. No-op if not configured. */
 export async function deleteStatement(id: string): Promise<void> {
   if (!isSupabaseConfigured) return;
