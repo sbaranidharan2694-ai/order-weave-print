@@ -18,13 +18,14 @@ export interface StatementRow {
   id: string;
   period_start: string | null;
   period_end: string | null;
+  period: string | null;
   total_credits: number;
   total_debits: number;
   closing_balance: number;
+  transaction_count: number;
+  created_at: string | null;
   file_name?: string | null;
-  created_at?: string;
-  uploaded_at?: string;
-  transaction_count?: number;
+  uploaded_at?: string | null;
   pdf_stored?: boolean;
   pdf_file_size?: number;
 }
@@ -64,7 +65,7 @@ export function useAccountTransactions(accountIdentifier: string) {
       // ── 1. Load ALL statements for this account (explicit limit to avoid API default cap) ──
       const { data: stmtRows, error: stmtErr } = await supabase
         .from("bank_statements")
-        .select("id, period_start, period_end, total_credits, total_debits, closing_balance, file_name, created_at, uploaded_at, transaction_count, pdf_stored, pdf_file_size")
+        .select("id, period_start, period_end, period, total_credits, total_debits, closing_balance, transaction_count, created_at, file_name, uploaded_at, pdf_stored, pdf_file_size")
         .or(`account_number.eq.${accountIdentifier},account_key.eq.${accountIdentifier}`)
         .order("period_start", { ascending: true })
         .limit(500);

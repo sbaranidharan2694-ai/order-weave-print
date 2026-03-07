@@ -37,8 +37,8 @@ const PROMPTS: Record<string, string> = {
   "bank_name": "",
   "branch": "",
   "ifsc": "",
-  "period_from": "",
-  "period_to": "",
+  "period_start": "",
+  "period_end": "",
   "opening_balance": 0,
   "total_credits": 0,
   "total_debits": 0,
@@ -107,8 +107,8 @@ export type ClaudeBankStatementResponse = {
   bank_name?: string;
   branch?: string;
   ifsc?: string;
-  period_from?: string;
-  period_to?: string;
+  period_start?: string;
+  period_end?: string;
   opening_balance?: number;
   total_credits?: number;
   total_debits?: number;
