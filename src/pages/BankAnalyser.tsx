@@ -547,14 +547,14 @@ export default function BankAnalyser() {
     const finalStmtId = btoa(accountKey + file.name + file.size).replace(/[^a-zA-Z0-9]/g, "").substring(0, 40);
     const existing = await getStatement(finalStmtId);
     if (existing) {
-      toast.error("This statement was already uploaded.");
+      toast.warning("Already imported — this statement was uploaded earlier. Skipped.");
       return;
     }
     const { statement: newStmt, transactions: txns } = mapBankStatementDataToStatementAndTransactions(data, finalStmtId, accountKey, file.name);
     const allStmts = await loadStatements();
     const periodDup = allStmts.find(s => s.accountKey === accountKey && s.periodStart === newStmt.periodStart && s.periodEnd === newStmt.periodEnd && newStmt.periodStart && newStmt.periodEnd);
     if (periodDup) {
-      toast.error(`Period already exists (${periodDup.fileName}).`);
+      toast.warning(`Already imported: ${data.accountHolder} ${newStmt.periodStart || ""} – ${newStmt.periodEnd || ""}. Skipped.`);
       return;
     }
     // Insert parent statement FIRST so FK constraint on bank_transactions is satisfied
@@ -788,22 +788,25 @@ function OverviewTab({
   const totals = ACCOUNTS.map(a => {
     const txns = accountTxns(a.key);
     const monthTxns = txns.filter(isThisMonth);
+    const totalCredits = txns.reduce((s, t) => s + (Number(t.credit) || 0), 0);
+    const totalDebits = txns.reduce((s, t) => s + (Number(t.debit) || 0), 0);
     return {
       ...a,
       credits: monthTxns.reduce((s, t) => s + (Number(t.credit) || 0), 0),
       debits: monthTxns.reduce((s, t) => s + (Number(t.debit) || 0), 0),
       count: monthTxns.length,
-      totalCredits: txns.reduce((s, t) => s + (Number(t.credit) || 0), 0),
-      totalDebits: txns.reduce((s, t) => s + (Number(t.debit) || 0), 0),
+      totalCredits,
+      totalDebits,
+      txnCount: txns.length,
     };
   });
 
-  const grandCredits = totals.reduce((s, t) => s + t.credits, 0);
-  const grandDebits = totals.reduce((s, t) => s + t.debits, 0);
+  const grandCredits = totals.reduce((s, t) => s + t.totalCredits, 0);
+  const grandDebits = totals.reduce((s, t) => s + t.totalDebits, 0);
 
   return (
     <div className="space-y-6 mt-4">
-      <p className="text-sm text-muted-foreground">🏦 Bank Analyser › Overview — This Month</p>
+      <p className="text-sm text-muted-foreground">🏦 Bank Analyser › Overview — All statements</p>
 
       {/* Password modal */}
       <PasswordModal
@@ -929,19 +932,20 @@ function OverviewTab({
                   <div className="grid grid-cols-3 gap-2 text-center">
                     <div>
                       <p className="text-xs text-muted-foreground">Credits</p>
-                      <p className="text-sm font-bold text-success">{fmt(a.credits)}</p>
+                      <p className="text-sm font-bold text-success">{fmt(a.totalCredits)}</p>
                     </div>
                     <div>
                       <p className="text-xs text-muted-foreground">Debits</p>
-                      <p className="text-sm font-bold text-destructive">{fmt(a.debits)}</p>
+                      <p className="text-sm font-bold text-destructive">{fmt(a.totalDebits)}</p>
                     </div>
                     <div>
                       <p className="text-xs text-muted-foreground">Net</p>
-                      <p className={cn("text-sm font-bold", a.credits - a.debits >= 0 ? "text-success" : "text-destructive")}>
-                        {fmt(a.credits - a.debits)}
+                      <p className={cn("text-sm font-bold", a.totalCredits - a.totalDebits >= 0 ? "text-success" : "text-destructive")}>
+                        {fmt(a.totalCredits - a.totalDebits)}
                       </p>
                     </div>
                   </div>
+                  <p className="text-xs text-muted-foreground mt-1 text-center">{a.txnCount ?? 0} transactions</p>
                 </CardContent>
               </Card>
             ))}
@@ -985,7 +989,7 @@ function OverviewTab({
 function AccountTab({ account, statements, transactions, onRefresh, customLookup, onUpdateLookup }) {
   const [queue, setQueue] = useState([]);
   const [processing, setProcessing] = useState(false);
-  const [viewMode, setViewMode] = useState("party");
+  const [viewMode, setViewMode] = useState("date");
   const [typeFilter, setTypeFilter] = useState("All");
   const [searchQuery, setSearchQuery] = useState("");
   const [sortBy, setSortBy] = useState("credits");
@@ -1033,6 +1037,9 @@ function AccountTab({ account, statements, transactions, onRefresh, customLookup
     });
   }, [transactions, typeFilter, searchQuery, dateFilter]);
 
+  const summaryTotalCredits = transactions.reduce((s, t) => s + (Number(t.credit) || 0), 0);
+  const summaryTotalDebits = transactions.reduce((s, t) => s + (Number(t.debit) || 0), 0);
+  const summaryNetFlow = summaryTotalCredits - summaryTotalDebits;
   const totalCredits = filtered.reduce((s, t) => s + t.credit, 0);
   const totalDebits = filtered.reduce((s, t) => s + t.debit, 0);
   const netFlow = totalCredits - totalDebits;
@@ -1104,7 +1111,7 @@ function AccountTab({ account, statements, transactions, onRefresh, customLookup
           .replace(/[^a-zA-Z0-9]/g, "").substring(0, 40);
         const existing = await getStatement(stmtId);
         if (existing) {
-          setQueue(prev => prev.map((p, i) => i === qi ? { ...p, status: "blocked", error: `Already uploaded on ${new Date(existing.uploadedAt).toLocaleDateString()}` } : p));
+          setQueue(prev => prev.map((p, i) => i === qi ? { ...p, status: "blocked", error: `Already imported (uploaded ${new Date(existing.uploadedAt).toLocaleDateString()}). Skipped.` } : p));
           continue;
         }
 
@@ -1124,7 +1131,7 @@ function AccountTab({ account, statements, transactions, onRefresh, customLookup
           .replace(/[^a-zA-Z0-9]/g, "").substring(0, 40);
         const existing2 = await getStatement(finalStmtId);
         if (existing2) {
-          setQueue(prev => prev.map((p, i) => i === qi ? { ...p, status: "blocked", error: `Already uploaded on ${new Date(existing2.uploadedAt).toLocaleDateString()}` } : p));
+          setQueue(prev => prev.map((p, i) => i === qi ? { ...p, status: "blocked", error: `Already imported (uploaded ${new Date(existing2.uploadedAt).toLocaleDateString()}). Skipped.` } : p));
           continue;
         }
         const { statement: newStmt, transactions: txns } = mapBankStatementDataToStatementAndTransactions(data, finalStmtId, finalAccount, item.file.name);
@@ -1139,7 +1146,7 @@ function AccountTab({ account, statements, transactions, onRefresh, customLookup
           s.accountKey === finalAccount && s.periodStart === newStmt.periodStart && s.periodEnd === newStmt.periodEnd && newStmt.periodStart && newStmt.periodEnd
         );
         if (periodDup) {
-          setQueue(prev => prev.map((p, i) => i === qi ? { ...p, status: "blocked", error: `Period already exists (${periodDup.fileName})` } : p));
+          setQueue(prev => prev.map((p, i) => i === qi ? { ...p, status: "blocked", error: `Already imported: ${periodDup.periodStart || ""} – ${periodDup.periodEnd || ""}. Skipped.` } : p));
           continue;
         }
 
@@ -1387,6 +1394,8 @@ function AccountTab({ account, statements, transactions, onRefresh, customLookup
                   <tr className="text-muted-foreground">
                     <th className="px-3 py-2 text-left font-medium">File</th>
                     <th className="px-3 py-2 text-left font-medium">Uploaded</th>
+                    <th className="px-3 py-2 text-left font-medium">From</th>
+                    <th className="px-3 py-2 text-left font-medium">To</th>
                     <th className="px-3 py-2 text-right font-medium">Txns</th>
                     <th className="px-3 py-2 text-right font-medium">Credits</th>
                     <th className="px-3 py-2 text-right font-medium">Debits</th>
@@ -1400,6 +1409,8 @@ function AccountTab({ account, statements, transactions, onRefresh, customLookup
                     <tr key={s.id} className="hover:bg-muted/30">
                       <td className="px-3 py-2 font-mono truncate max-w-[150px]">{s.fileName}</td>
                       <td className="px-3 py-2">{new Date(s.uploadedAt).toLocaleDateString()}</td>
+                      <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">{s.periodStart || "—"}</td>
+                      <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">{s.periodEnd || "—"}</td>
                       <td className="px-3 py-2 text-right">{s.transactionCount}</td>
                       <td className="px-3 py-2 text-right text-success">{fmt(s.totalCredits)}</td>
                       <td className="px-3 py-2 text-right text-destructive">{fmt(s.totalDebits)}</td>
@@ -1522,32 +1533,32 @@ function AccountTab({ account, statements, transactions, onRefresh, customLookup
         </DialogContent>
       </Dialog>
 
-      {/* ── KPI CARDS ── */}
+      {/* ── KPI CARDS (from all transactions for this account, not filtered view) ── */}
       {hasData && (
         <>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <Card className="rounded-2xl shadow-sm">
               <CardContent className="p-3">
                 <p className="text-xs text-muted-foreground uppercase tracking-wide">Credits</p>
-                <p className="text-lg font-bold text-success mt-1">{fmt(totalCredits)}</p>
+                <p className="text-lg font-bold text-success mt-1">{fmt(summaryTotalCredits)}</p>
               </CardContent>
             </Card>
             <Card className="rounded-2xl shadow-sm">
               <CardContent className="p-3">
                 <p className="text-xs text-muted-foreground uppercase tracking-wide">Debits</p>
-                <p className="text-lg font-bold text-destructive mt-1">{fmt(totalDebits)}</p>
+                <p className="text-lg font-bold text-destructive mt-1">{fmt(summaryTotalDebits)}</p>
               </CardContent>
             </Card>
             <Card className="rounded-2xl shadow-sm">
               <CardContent className="p-3">
                 <p className="text-xs text-muted-foreground uppercase tracking-wide">Net Flow</p>
-                <p className={cn("text-lg font-bold mt-1", netFlow >= 0 ? "text-success" : "text-destructive")}>{netFlow >= 0 ? "+" : ""}{fmt(netFlow)}</p>
+                <p className={cn("text-lg font-bold mt-1", summaryNetFlow >= 0 ? "text-success" : "text-destructive")}>{summaryNetFlow >= 0 ? "+" : ""}{fmt(summaryNetFlow)}</p>
               </CardContent>
             </Card>
             <Card className="rounded-2xl shadow-sm">
               <CardContent className="p-3">
                 <p className="text-xs text-muted-foreground uppercase tracking-wide">Transactions</p>
-                <p className="text-lg font-bold text-primary mt-1">{filtered.length}</p>
+                <p className="text-lg font-bold text-primary mt-1">{transactions.length}</p>
               </CardContent>
             </Card>
           </div>
