@@ -114,3 +114,21 @@ All database migrations run **automatically** when you push to GitHub. You never
 
 4. **Deploy**  
    In Lovable: **Share → Publish**. The app is built and served by Lovable; no other deployment platform is used.
+
+---
+
+## If the live site doesn't update after pushing to GitHub
+
+GitHub has the latest code; Lovable must **pull** it and **rebuild**. Do this:
+
+1. **Confirm repo link**  
+   In Lovable, ensure the project is linked to **this** repo: `sbaranidharan2694-ai/superprintersoms` (branch: `main`).
+
+2. **Pull / sync from GitHub**  
+   In Lovable’s project, use **Sync from GitHub**, **Pull**, or **Import from GitHub** (or the equivalent in your Lovable UI) so Lovable’s copy of the code matches GitHub’s `main` branch.
+
+3. **Redeploy**  
+   Use **Share → Publish** (or **Deploy** / **Redeploy**) so Lovable builds and deploys the updated code.
+
+4. **Verify**  
+   Open the live URL (e.g. `https://superprintersoms.lovable.app`), do a **hard refresh** (Ctrl+Shift+R or Cmd+Shift+R). The header should show a small build date (e.g. **2025-03-07**) when the latest deploy is active.
