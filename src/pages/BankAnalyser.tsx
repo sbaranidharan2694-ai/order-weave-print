@@ -43,6 +43,76 @@ import {
 import { useStorageMode } from "@/hooks/useStorageMode";
 import { SharedDataBanner } from "@/components/SharedDataBanner";
 import { friendlyDbError } from "@/lib/utils";
+import {
+  parseDocumentWithClaude,
+  type ClaudeBankStatementResponse,
+} from "@/lib/parseDocumentWithClaude";
+import type { BankStatement, BankTransaction } from "@/lib/bankStorage";
+
+const MAX_CLAUDE_FILE_BYTES = 4 * 1024 * 1024; // 4MB for Claude API
+
+/** Detect account key from Claude bank_statement account_number or account_holder. */
+function detectAccountFromClaudeBank(claude: ClaudeBankStatementResponse): string | null {
+  const num = (claude.account_number ?? "").replace(/\s/g, "");
+  const holder = (claude.account_holder ?? "").toUpperCase();
+  if (num.includes("0244020080155") || holder.includes("SUPER SCREENS")) return "superscreens";
+  if (num.includes("0244011477662") || holder.includes("REVATHY")) return "revathy";
+  if (holder.includes("SUPER PRINTERS")) return "superprinters";
+  return null;
+}
+
+/** Map Claude bank_statement response to our statement + transactions. */
+function mapClaudeBankToStatementAndTransactions(
+  claude: ClaudeBankStatementResponse,
+  statementId: string,
+  accountKey: string,
+  fileName: string
+): { statement: BankStatement; transactions: BankTransaction[] } {
+  const txns = (claude.transactions ?? []).map((t, idx) => {
+    const refNo = t.ref_no ?? "";
+    const date = t.date ?? "";
+    const debit = Number(t.debit) || 0;
+    const credit = Number(t.credit) || 0;
+    const txnId = btoa(statementId + refNo + date + String(debit || credit))
+      .replace(/[^a-zA-Z0-9]/g, "")
+      .substring(0, 40);
+    return {
+      id: txnId,
+      statementId,
+      date,
+      details: t.details ?? "",
+      refNo,
+      debit,
+      credit,
+      balance: Number(t.balance) || 0,
+      type: "OTHER",
+      counterparty: "",
+    };
+  });
+  const periodFrom = claude.period_from ?? "";
+  const periodTo = claude.period_to ?? "";
+  const period = periodFrom && periodTo ? `${periodFrom} to ${periodTo}` : "";
+  const statement: BankStatement = {
+    id: statementId,
+    accountKey,
+    fileName,
+    uploadedAt: new Date().toISOString(),
+    period,
+    periodStart: periodFrom,
+    periodEnd: periodTo,
+    accountNumber: claude.account_number ?? "",
+    openingBalance: Number(claude.opening_balance) || 0,
+    closingBalance: Number(claude.closing_balance) || 0,
+    totalCredits: Number(claude.total_credits) || 0,
+    totalDebits: Number(claude.total_debits) || 0,
+    transactionCount: txns.length,
+    pdfStored: false,
+    pdfFileSize: 0,
+    pdfChunks: 0,
+    lastValidated: null,
+  };
+  return { statement, transactions: txns };
+}
 
 /* ═══════════ PDF.js CDN (v4.4.168, .mjs) ═══════════ */
 const PDFJS_CDN = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168";
@@ -808,6 +878,65 @@ function AccountTab({ account, statements, transactions, onRefresh, customLookup
         if (existing) {
           setQueue(prev => prev.map((p, i) => i === qi ? { ...p, status: "blocked", error: `Already uploaded on ${new Date(existing.uploadedAt).toLocaleDateString()}` } : p));
           continue;
+        }
+
+        // Optional: try Claude API first for bank statement (≤4MB)
+        if (item.file.size <= MAX_CLAUDE_FILE_BYTES) {
+          try {
+            setQueue(prev => prev.map((p, i) => i === qi ? { ...p, progress: "Parsing with Claude…" } : p));
+            const raw = await parseDocumentWithClaude(item.file, "bank_statement") as ClaudeBankStatementResponse;
+            const detected = detectAccountFromClaudeBank(raw);
+            const finalAccount = detected || item.account;
+            const finalStmtId = btoa(finalAccount + item.file.name + item.file.size)
+              .replace(/[^a-zA-Z0-9]/g, "").substring(0, 40);
+            const existing2 = await getStatement(finalStmtId);
+            if (existing2) {
+              setQueue(prev => prev.map((p, i) => i === qi ? { ...p, status: "blocked", error: `Already uploaded on ${new Date(existing2.uploadedAt).toLocaleDateString()}` } : p));
+              continue;
+            }
+            const { statement: newStmt, transactions: claudeTxns } = mapClaudeBankToStatementAndTransactions(raw, finalStmtId, finalAccount, item.file.name);
+            if (claudeTxns.length === 0) throw new Error("No transactions in response");
+
+            const allStmts = await loadStatements();
+            const periodDup = allStmts.find(s =>
+              s.accountKey === finalAccount && s.periodStart === newStmt.periodStart && s.periodEnd === newStmt.periodEnd && newStmt.periodStart && newStmt.periodEnd
+            );
+            if (periodDup) {
+              setQueue(prev => prev.map((p, i) => i === qi ? { ...p, status: "blocked", error: `Period already exists (${periodDup.fileName})` } : p));
+              continue;
+            }
+
+            let saved = 0, skipped = 0;
+            for (const txn of claudeTxns) {
+              const exists = await hasTransaction(finalStmtId, txn.id);
+              if (exists) { skipped++; continue; }
+              await saveTransaction(txn);
+              saved++;
+            }
+            newStmt.transactionCount = saved;
+            await saveStatement(newStmt);
+
+            if (item.file.size <= 50 * 1024 * 1024) {
+              setQueue(prev => prev.map((p, i) => i === qi ? { ...p, progress: "Saving PDF…" } : p));
+              try {
+                const pdfSaved = await savePDF(finalStmtId, item.file, (msg) => {
+                  setQueue(prev => prev.map((p, i) => i === qi ? { ...p, progress: msg } : p));
+                });
+                if (pdfSaved) {
+                  newStmt.pdfStored = true;
+                  newStmt.pdfFileSize = item.file.size;
+                  await saveStatement(newStmt);
+                }
+              } catch (_) { /* PDF save optional */ }
+            }
+
+            setQueue(prev => prev.map((p, i) => i === qi ? { ...p, status: "done", saved, skipped } : p));
+            await new Promise((r) => setTimeout(r, 200));
+            await onRefresh();
+            continue;
+          } catch (claudeErr) {
+            // Fall through to local PDF.js parsing (no toast here to avoid double error)
+          }
         }
 
         // Load PDF with streaming

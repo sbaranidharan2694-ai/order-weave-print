@@ -15,6 +15,12 @@ import { Upload, Loader2, FileText, Trash2, CheckCircle2, X, PlusCircle } from "
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { format } from "date-fns";
+import {
+  parseDocumentWithClaude,
+  type ClaudePurchaseOrderResponse,
+} from "@/lib/parseDocumentWithClaude";
+
+const MAX_PO_FILE_BYTES = 4 * 1024 * 1024; // 4MB for Claude API
 
 type ParsedLineItem = {
   description: string;
@@ -50,22 +56,42 @@ type ParsedPO = {
   line_items: ParsedLineItem[];
 };
 
-async function extractPDFText(file: File): Promise<string> {
-  const pdfjsLib = await import("pdfjs-dist");
-  pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-    "pdfjs-dist/build/pdf.worker.min.mjs",
-    import.meta.url
-  ).href;
-
-  const arrayBuffer = await file.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-  let text = "";
-  for (let i = 1; i <= pdf.numPages; i++) {
-    const page = await pdf.getPage(i);
-    const content = await page.getTextContent();
-    text += content.items.map((item: any) => item.str).join(" ") + "\n";
-  }
-  return text;
+/** Map Claude API purchase_order response to ParsedPO shape used by ImportPO. */
+function mapClaudePOToParsedPO(claude: ClaudePurchaseOrderResponse): ParsedPO {
+  const buyer = claude.buyer ?? {};
+  const vendor = claude.vendor ?? {};
+  const items = claude.items ?? [];
+  const grandTotal = Number(claude.grand_total) || 0;
+  return {
+    po_number: claude.po_number ?? "",
+    po_date: claude.po_date ?? null,
+    vendor_name: buyer.name ?? vendor.name ?? "",
+    contact_no: null,
+    contact_person: claude.order_handled_by ?? null,
+    gstin: buyer.gst ?? null,
+    delivery_address: buyer.address ?? vendor.address ?? null,
+    delivery_date: items[0]?.delivery_date ?? null,
+    payment_terms: claude.payment_terms ?? null,
+    currency: "INR",
+    total_amount: grandTotal,
+    tax_amount: 0,
+    base_amount: grandTotal,
+    cgst_percent: items[0]?.cgst_pct ?? 0,
+    cgst_amount: 0,
+    sgst_percent: items[0]?.sgst_pct ?? 0,
+    sgst_amount: 0,
+    igst_percent: 0,
+    igst_amount: 0,
+    line_items: items.map((i) => ({
+      description: i.description ?? "",
+      hsn_code: i.hsn ?? "",
+      qty: Number(i.qty) || 0,
+      uom: i.uom ?? "NOS",
+      unit_price: Number(i.rate) || 0,
+      amount: Number(i.total_value) || 0,
+      suggested_product_type: "Other",
+    })),
+  };
 }
 
 export default function ImportPO() {
@@ -99,24 +125,42 @@ export default function ImportPO() {
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
-    if (f && f.type === "application/pdf" && f.size <= 10 * 1024 * 1024) {
+    if (!f) return;
+    if (f.size > MAX_PO_FILE_BYTES) {
+      toast.error(
+        `File too large: ${(f.size / 1024 / 1024).toFixed(1)}MB. Max 4MB for parsing.`
+      );
+      return;
+    }
+    const valid =
+      f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf");
+    if (valid) {
       setFile(f);
       setParsed(null);
       setLineItems([]);
     } else {
-      toast.error("Please select a PDF file under 10MB");
+      toast.error("Please select a PDF file.");
     }
   };
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     const f = e.dataTransfer.files[0];
-    if (f && f.type === "application/pdf" && f.size <= 10 * 1024 * 1024) {
+    if (!f) return;
+    if (f.size > MAX_PO_FILE_BYTES) {
+      toast.error(
+        `File too large: ${(f.size / 1024 / 1024).toFixed(1)}MB. Max 4MB for parsing.`
+      );
+      return;
+    }
+    const valid =
+      f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf");
+    if (valid) {
       setFile(f);
       setParsed(null);
       setLineItems([]);
     } else {
-      toast.error("Please drop a PDF file under 10MB");
+      toast.error("Please drop a PDF file.");
     }
   }, []);
 
@@ -124,21 +168,8 @@ export default function ImportPO() {
     if (!file) return;
     setParsing(true);
     try {
-      const pdfText = await extractPDFText(file);
-      if (!pdfText.trim()) {
-        toast.error("Could not extract text from PDF. The file may be scanned/image-based.");
-        setParsing(false);
-        return;
-      }
-
-      const { data, error } = await supabase.functions.invoke("parse-po", {
-        body: { pdfText },
-      });
-
-      if (error) throw error;
-      if (data?.error) throw new Error(data.error);
-
-      const poData = data.data as ParsedPO;
+      const raw = await parseDocumentWithClaude(file, "purchase_order");
+      const poData = mapClaudePOToParsedPO(raw as ClaudePurchaseOrderResponse);
       setParsed(poData);
 
       const mappedItems = (poData.line_items || []).map((item) => {
@@ -155,8 +186,9 @@ export default function ImportPO() {
       });
       setLineItems(mappedItems);
       toast.success("PO parsed successfully!");
-    } catch (err: any) {
-      toast.error("Parsing failed: " + err.message);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      toast.error("Parsing failed: " + msg);
     } finally {
       setParsing(false);
     }
@@ -393,11 +425,11 @@ export default function ImportPO() {
                 >
                   <Upload className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
                   <p className="text-lg font-medium text-foreground">Drag PDF purchase order or click to browse</p>
-                  <p className="text-sm text-muted-foreground mt-1">Accepts .pdf files up to 10MB</p>
+                  <p className="text-sm text-muted-foreground mt-1">Accepts .pdf up to 4MB (parsed via Claude)</p>
                   <input
                     id="po-file-input"
                     type="file"
-                    accept=".pdf"
+                    accept=".pdf,application/pdf"
                     className="hidden"
                     onChange={handleFileChange}
                   />
