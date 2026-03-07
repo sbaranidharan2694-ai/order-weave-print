@@ -47,6 +47,9 @@ import { parseDocument, type BankStatementData } from "@/utils/parseDocument";
 import { extractTextFromPdf } from "@/utils/extractPdfText";
 import { parseBankStatement, getTabForAccount } from "@/utils/parseBankStatement";
 import { PasswordModal } from "@/components/BankAnalyser/PasswordModal";
+import { SummaryCards } from "@/components/BankAnalyser/SummaryCards";
+import { TransactionTable } from "@/components/BankAnalyser/TransactionTable";
+import { useAccountTransactions } from "@/hooks/useAccountTransactions";
 import type { BankStatement, BankTransaction } from "@/lib/bankStorage";
 
 /** Always get a readable string from any thrown/Supabase error (avoids [object Object]). */
@@ -126,9 +129,9 @@ function mapBankStatementDataToStatementAndTransactions(
 
 /* ═══════════ ACCOUNTS ═══════════ */
 const ACCOUNTS = [
-  { key: "superprinters", label: "Super Printers", shortLabel: "S.Printers", color: "#1B2B4B", icon: "🖨️" },
-  { key: "superscreens", label: "Super Screens", shortLabel: "S.Screens", color: "#F4A100", icon: "🪟", accountNo: "0244020080155" },
-  { key: "revathy", label: "Revathy B.", shortLabel: "Revathy", color: "#16A34A", icon: "👤", accountNo: "0244011477662" },
+  { key: "superprinters", label: "Super Printers", shortLabel: "S.Printers", color: "#1B2B4B", icon: "🖨️", accountNumber: "0244020077280" },
+  { key: "superscreens", label: "Super Screens", shortLabel: "S.Screens", color: "#F4A100", icon: "🪟", accountNumber: "0244020080155" },
+  { key: "revathy", label: "Revathy B.", shortLabel: "Revathy", color: "#16A34A", icon: "👤", accountNumber: "0244011477662" },
 ];
 
 function detectAccount(text) {
@@ -637,8 +640,6 @@ export default function BankAnalyser() {
           <TabsContent key={account.key} value={account.key}>
             <AccountTab
               account={account}
-              statements={statements.filter(s => s.accountKey === account.key)}
-              transactions={accountTxns(account.key)}
               onRefresh={async () => refreshData({ silent: true })}
               customLookup={customLookup}
               onUpdateLookup={async (l) => { await saveCustomLookup(l); setCustomLookup(l); }}
@@ -986,10 +987,53 @@ function OverviewTab({
 }
 
 /* ═══════════ ACCOUNT TAB ═══════════ */
-function AccountTab({ account, statements, transactions, onRefresh, customLookup, onUpdateLookup }) {
+function AccountTab({ account, onRefresh, customLookup, onUpdateLookup }) {
+  const { statements: hookStatements, transactions: hookTransactions, summary, loading: hookLoading, error: hookError, refetch } = useAccountTransactions(account.key);
+
+  const statements = useMemo(
+    () =>
+      hookStatements.map((s) => ({
+        id: s.id,
+        fileName: s.file_name ?? "Statement",
+        uploadedAt: s.uploaded_at ?? s.created_at ?? "",
+        periodStart: s.period_start ?? "",
+        periodEnd: s.period_end ?? "",
+        transactionCount: s.transaction_count ?? 0,
+        totalCredits: s.total_credits ?? 0,
+        totalDebits: s.total_debits ?? 0,
+        pdfStored: s.pdf_stored ?? false,
+        pdfFileSize: s.pdf_file_size ?? 0,
+        lastValidated: null as string | null,
+      })),
+    [hookStatements]
+  );
+
   const [queue, setQueue] = useState([]);
   const [processing, setProcessing] = useState(false);
-  const [viewMode, setViewMode] = useState("date");
+  const [deleteConfirm, setDeleteConfirm] = useState(null);
+  const [parsedPreview, setParsedPreview] = useState<{ statementId: string; data: BankStatementData } | null>(null);
+  const [isParsingPreview, setIsParsingPreview] = useState(false);
+
+  const fileInputRef = useRef(null);
+  const dropRef = useRef(null);
+
+  const transactions = useMemo(
+    () =>
+      hookTransactions.map((t) => ({
+        id: t.id,
+        statementId: t.statement_id,
+        date: t.date,
+        details: t.details ?? "",
+        refNo: t.ref_no ?? "",
+        debit: t.debit ?? 0,
+        credit: t.credit ?? 0,
+        balance: t.balance ?? 0,
+        type: t.type ?? "OTHER",
+        counterparty: t.counterparty ?? "",
+      })),
+    [hookTransactions]
+  );
+
   const [typeFilter, setTypeFilter] = useState("All");
   const [searchQuery, setSearchQuery] = useState("");
   const [sortBy, setSortBy] = useState("credits");
@@ -998,16 +1042,9 @@ function AccountTab({ account, statements, transactions, onRefresh, customLookup
   const [showUnparsed, setShowUnparsed] = useState(false);
   const [dateFilter, setDateFilter] = useState("all");
   const [datePage, setDatePage] = useState(0);
-  const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [unparsedModal, setUnparsedModal] = useState(false);
   const [validating, setValidating] = useState(false);
-  const [parsedPreview, setParsedPreview] = useState<{ statementId: string; data: BankStatementData } | null>(null);
-  const [isParsingPreview, setIsParsingPreview] = useState(false);
 
-  const fileInputRef = useRef(null);
-  const dropRef = useRef(null);
-
-  // Filtered transactions
   const filtered = useMemo(() => {
     const now = new Date();
     return transactions.filter(t => {
@@ -1186,6 +1223,7 @@ function AccountTab({ account, statements, transactions, onRefresh, customLookup
 
         setQueue(prev => prev.map((p, i) => i === qi ? { ...p, status: "done", saved, skipped } : p));
         await new Promise((r) => setTimeout(r, 200));
+        await refetch();
         await onRefresh();
       } catch (e: unknown) {
         console.error("Bank Analyser processQueue error:", e);
@@ -1213,6 +1251,7 @@ function AccountTab({ account, statements, transactions, onRefresh, customLookup
       await deleteStatement(id);
       setDeleteConfirm(null);
       toast.success("Statement deleted");
+      await refetch();
       await onRefresh();
     } catch (e: unknown) {
       const msg = toErrorMessage(e);
@@ -1336,6 +1375,26 @@ function AccountTab({ account, statements, transactions, onRefresh, customLookup
   const datePageSize = 50;
   const pagedTxns = filtered.slice(datePage * datePageSize, (datePage + 1) * datePageSize);
   const totalPages = Math.ceil(filtered.length / datePageSize);
+
+  if (hookLoading && hookStatements.length === 0) {
+    return (
+      <div className="space-y-4 mt-4">
+        <p className="text-sm text-muted-foreground">🏦 Bank Analyser › {account.icon} {account.label}</p>
+        <div className="flex items-center justify-center py-12 text-muted-foreground">Loading transactions…</div>
+      </div>
+    );
+  }
+
+  if (hookError) {
+    return (
+      <div className="space-y-4 mt-4">
+        <p className="text-sm text-muted-foreground">🏦 Bank Analyser › {account.icon} {account.label}</p>
+        <div className="rounded-xl border border-destructive/50 bg-destructive/10 p-6 text-center text-destructive">
+          Error: {hookError}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4 mt-4">
@@ -1533,202 +1592,17 @@ function AccountTab({ account, statements, transactions, onRefresh, customLookup
         </DialogContent>
       </Dialog>
 
-      {/* ── KPI CARDS (from all transactions for this account, not filtered view) ── */}
-      {hasData && (
-        <>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <Card className="rounded-2xl shadow-sm">
-              <CardContent className="p-3">
-                <p className="text-xs text-muted-foreground uppercase tracking-wide">Credits</p>
-                <p className="text-lg font-bold text-success mt-1">{fmt(summaryTotalCredits)}</p>
-              </CardContent>
-            </Card>
-            <Card className="rounded-2xl shadow-sm">
-              <CardContent className="p-3">
-                <p className="text-xs text-muted-foreground uppercase tracking-wide">Debits</p>
-                <p className="text-lg font-bold text-destructive mt-1">{fmt(summaryTotalDebits)}</p>
-              </CardContent>
-            </Card>
-            <Card className="rounded-2xl shadow-sm">
-              <CardContent className="p-3">
-                <p className="text-xs text-muted-foreground uppercase tracking-wide">Net Flow</p>
-                <p className={cn("text-lg font-bold mt-1", summaryNetFlow >= 0 ? "text-success" : "text-destructive")}>{summaryNetFlow >= 0 ? "+" : ""}{fmt(summaryNetFlow)}</p>
-              </CardContent>
-            </Card>
-            <Card className="rounded-2xl shadow-sm">
-              <CardContent className="p-3">
-                <p className="text-xs text-muted-foreground uppercase tracking-wide">Transactions</p>
-                <p className="text-lg font-bold text-primary mt-1">{transactions.length}</p>
-              </CardContent>
-            </Card>
-          </div>
+      {/* ── Summary + Transactions (from useAccountTransactions: .in(statement_id) + .limit(2000)) ── */}
+      <SummaryCards summary={summary} />
+      {hookTransactions.length === 0 ? (
+        <div className="text-center text-muted-foreground py-12 rounded-xl border border-dashed">
+          No transactions yet. Upload a PDF above.
+        </div>
+      ) : (
+        <TransactionTable transactions={hookTransactions} defaultView="byDate" />
+      )}
 
-          {/* ── FILTER BAR ── */}
-          <div className="flex flex-wrap items-center gap-1.5 print:hidden">
-            {typeChips.map(c => (
-              <button key={c} onClick={() => setTypeFilter(c)}
-                className={cn("px-2.5 py-1 rounded-full text-xs font-medium transition-colors",
-                  typeFilter === c ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/80"
-                )}>
-                {c}
-              </button>
-            ))}
-          </div>
-          <div className="flex flex-wrap items-center gap-1.5 print:hidden">
-            {dateChips.map(c => (
-              <button key={c.key} onClick={() => setDateFilter(c.key)}
-                className={cn("px-2.5 py-1 rounded-full text-xs font-medium transition-colors",
-                  dateFilter === c.key ? "bg-secondary text-secondary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/80"
-                )}>
-                {c.label}
-              </button>
-            ))}
-            <div className="relative ml-auto">
-              <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-              <Input value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
-                placeholder="Search party..." className="pl-8 w-44 h-7 text-xs" />
-            </div>
-          </div>
-
-          {/* ── VIEW TOGGLE + EXPORTS ── */}
-          <div className="flex items-center gap-2 print:hidden">
-            <button onClick={() => setViewMode("party")}
-              className={cn("flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium transition",
-                viewMode === "party" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted")}>
-              <Users className="h-3.5 w-3.5" />By Party
-            </button>
-            <button onClick={() => { setViewMode("date"); setDatePage(0); }}
-              className={cn("flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium transition",
-                viewMode === "date" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted")}>
-              <Calendar className="h-3.5 w-3.5" />By Date
-            </button>
-            {viewMode === "party" && (
-              <Select value={sortBy} onValueChange={setSortBy}>
-                <SelectTrigger className="w-32 h-7 ml-auto text-xs"><ArrowUpDown className="h-3 w-3 mr-1" /><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="credits">Sort: Credits</SelectItem>
-                  <SelectItem value="debits">Sort: Debits</SelectItem>
-                  <SelectItem value="count">Sort: Count</SelectItem>
-                  <SelectItem value="name">Sort: Name</SelectItem>
-                </SelectContent>
-              </Select>
-            )}
-            <div className="flex gap-1 ml-auto">
-              <Button variant="outline" size="sm" className="h-7 text-xs" onClick={exportSummaryCsv}><Download className="h-3 w-3 mr-1" />Summary</Button>
-              <Button variant="outline" size="sm" className="h-7 text-xs" onClick={exportFullCsv}><Download className="h-3 w-3 mr-1" />Full</Button>
-              <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => window.print()}><Printer className="h-3 w-3 mr-1" />Print</Button>
-            </div>
-          </div>
-
-          {/* ── MAIN TABLE ── */}
-          <Card className="rounded-2xl shadow-sm overflow-hidden">
-            {viewMode === "party" ? (
-              <div className="divide-y divide-border">
-                {sortedParties.map((p, idx) => (
-                  <div key={p.name} className={cn(borderColor[p.kind])}>
-                    <button onClick={() => toggleParty(p.name)}
-                      className="w-full flex items-center gap-2 px-3 py-2.5 text-left hover:bg-muted/50 transition-colors">
-                      <span className="text-xs text-muted-foreground w-5 shrink-0">{idx + 1}</span>
-                      <div className="flex-1 min-w-0">
-                        <p className="font-medium text-sm text-foreground truncate">{p.name}</p>
-                        <div className="flex items-center gap-1 mt-0.5">
-                          {p.types.map((t: string) => (
-                            <span key={t} className={cn("h-1.5 w-1.5 rounded-full", typeDot[t as keyof typeof typeDot] || "bg-muted-foreground")} title={typeLabels[t as keyof typeof typeLabels] || t} />
-                          ))}
-                          <span className="text-xs text-muted-foreground ml-1">{p.count}</span>
-                        </div>
-                      </div>
-                      <div className="text-right shrink-0">
-                        {p.credits > 0 && <p className="text-xs text-success">{fmt(p.credits)}</p>}
-                        {p.debits > 0 && <p className="text-xs text-destructive">{fmt(p.debits)}</p>}
-                      </div>
-                      <span className="text-xs text-muted-foreground shrink-0 hidden md:block w-28 text-right">{p.dateRange}</span>
-                      <ChevronDown className={cn("h-3.5 w-3.5 text-muted-foreground transition-transform shrink-0", expandedParties.has(p.name) && "rotate-180")} />
-                    </button>
-                    {expandedParties.has(p.name) && (
-                      <div className="bg-muted/30 border-t border-border">
-                        <div className="overflow-x-auto">
-                          <table className="w-full text-xs">
-                            <thead><tr className="text-muted-foreground">
-                              <th className="px-3 py-1.5 text-left font-medium">Date</th>
-                              <th className="px-3 py-1.5 text-left font-medium">Details</th>
-                              <th className="px-3 py-1.5 text-left font-medium">RefNo</th>
-                              <th className="px-3 py-1.5 text-right font-medium">Debit</th>
-                              <th className="px-3 py-1.5 text-right font-medium">Credit</th>
-                              <th className="px-3 py-1.5 text-right font-medium">Balance</th>
-                            </tr></thead>
-                            <tbody className="divide-y divide-border/50">
-                              {p.txns.map(t => (
-                                <tr key={t.id} className="hover:bg-muted/50">
-                                  <td className="px-3 py-1 whitespace-nowrap">{t.date}</td>
-                                  <td className="px-3 py-1 max-w-[280px] truncate" title={t.details}>{t.details.substring(0, 45)}</td>
-                                  <td className="px-3 py-1 font-mono">{t.refNo}</td>
-                                  <td className="px-3 py-1 text-right text-destructive">{t.debit > 0 ? fmt(t.debit) : ""}{t.debit > 10000 ? " ⭐" : ""}</td>
-                                  <td className="px-3 py-1 text-right text-success">{t.credit > 0 ? fmt(t.credit) : ""}{t.credit > 10000 ? " ⭐" : ""}</td>
-                                  <td className="px-3 py-1 text-right">{fmt(t.balance)}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ))}
-                {sortedParties.length === 0 && (
-                  <div className="p-8 text-center text-muted-foreground">No transactions match your filters</div>
-                )}
-              </div>
-            ) : (
-              <div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead className="bg-muted/50 sticky top-0">
-                      <tr className="text-muted-foreground">
-                        <th className="px-3 py-2.5 text-left font-medium text-xs">Date</th>
-                        <th className="px-3 py-2.5 text-left font-medium text-xs">Party</th>
-                        <th className="px-3 py-2.5 text-left font-medium text-xs">Type</th>
-                        <th className="px-3 py-2.5 text-left font-medium text-xs">RefNo</th>
-                        <th className="px-3 py-2.5 text-right font-medium text-xs">Debit</th>
-                        <th className="px-3 py-2.5 text-right font-medium text-xs">Credit</th>
-                        <th className="px-3 py-2.5 text-right font-medium text-xs">Balance</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border">
-                      {pagedTxns.map((t, i) => (
-                        <tr key={t.id} className={cn(i % 2 === 0 ? "bg-card" : "bg-muted/20", "hover:bg-muted/50")}>
-                          <td className="px-3 py-2 whitespace-nowrap text-xs">{t.date}</td>
-                          <td className="px-3 py-2 font-medium text-xs">{t.counterparty}</td>
-                          <td className="px-3 py-2">
-                            <span className="inline-flex items-center gap-1 text-xs">
-                              <span className={cn("h-1.5 w-1.5 rounded-full", typeDot[t.type] || "bg-muted-foreground")} />
-                              {typeLabels[t.type] || t.type}
-                            </span>
-                          </td>
-                          <td className="px-3 py-2 font-mono text-xs">{t.refNo}</td>
-                          <td className="px-3 py-2 text-right text-destructive text-xs">{t.debit > 0 ? fmt(t.debit) : ""}{t.debit > 10000 ? " ⭐" : ""}</td>
-                          <td className="px-3 py-2 text-right text-success text-xs">{t.credit > 0 ? fmt(t.credit) : ""}{t.credit > 10000 ? " ⭐" : ""}</td>
-                          <td className="px-3 py-2 text-right text-xs">{fmt(t.balance)}</td>
-                        </tr>
-                      ))}
-                      {pagedTxns.length === 0 && (
-                        <tr><td colSpan={7} className="p-8 text-center text-muted-foreground text-xs">No transactions match filters</td></tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-                {totalPages > 1 && (
-                  <div className="flex items-center justify-center gap-2 p-3 border-t">
-                    <Button variant="outline" size="sm" disabled={datePage === 0} onClick={() => setDatePage(p => p - 1)}>Prev</Button>
-                    <span className="text-xs text-muted-foreground">Page {datePage + 1} of {totalPages}</span>
-                    <Button variant="outline" size="sm" disabled={datePage >= totalPages - 1} onClick={() => setDatePage(p => p + 1)}>Next</Button>
-                  </div>
-                )}
-              </div>
-            )}
-          </Card>
-
-          {/* ── SMART PANELS ── */}
+      {/* ── SMART PANELS ── */}
           <div className="space-y-2 print:hidden">
             {unparsedTxns.length > 0 && (
               <Collapsible open={showUnparsed} onOpenChange={setShowUnparsed}>
@@ -1788,11 +1662,9 @@ function AccountTab({ account, statements, transactions, onRefresh, customLookup
             {/* Compare panel for 2+ statements */}
             {statements.length >= 2 && <ComparePanel statements={statements} />}
           </div>
-        </>
-      )}
 
       {/* EMPTY STATE */}
-      {!hasData && statements.length === 0 && queue.length === 0 && (
+      {hookTransactions.length === 0 && statements.length === 0 && queue.length === 0 && (
         <Card className="rounded-2xl shadow-sm">
           <CardContent className="p-10 text-center">
             <FileText className="h-10 w-10 text-muted-foreground mx-auto mb-3 opacity-50" />

@@ -230,7 +230,8 @@ export async function loadTransactions(statementId: string): Promise<BankTransac
     const { data, error } = await supabase
       .from("bank_transactions")
       .select("*")
-      .eq("statement_id", statementId);
+      .eq("statement_id", statementId)
+      .limit(2000);
     if (error) {
       if (isTableMissingError(error)) return [];
       throw new Error(getErrorMessage(error));
