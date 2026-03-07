@@ -134,7 +134,7 @@ export function TransactionTable({
                     </span>
                   </td>
                   <td className="px-4 py-2.5 text-xs whitespace-nowrap">
-                    {tx.counterparty ?? extractParty(tx.details ?? "")}
+                    {tx.counterparty || extractParty(tx.details ?? "")}
                   </td>
                   <td className="px-4 py-2.5">
                     <span

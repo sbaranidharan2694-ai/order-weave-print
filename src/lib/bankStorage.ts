@@ -246,7 +246,7 @@ export async function loadTransactions(statementId: string): Promise<BankTransac
 export async function saveStatement(stmt: BankStatement): Promise<void> {
   if (!isSupabaseConfigured) throw new Error("Supabase not configured. Connect Supabase in Lovable or add .env.");
   const row = statementToRow(stmt);
-  const { error } = await supabase.from("bank_statements").upsert(row, { onConflict: "id" });
+  const { error } = await supabase.from("bank_statements").insert(row);
   if (error) throw new Error(getErrorMessage(error));
 }
 
@@ -254,7 +254,7 @@ export async function saveStatement(stmt: BankStatement): Promise<void> {
 export async function saveTransaction(txn: BankTransaction): Promise<void> {
   if (!isSupabaseConfigured) throw new Error("Supabase not configured. Connect Supabase in Lovable or add .env.");
   const row = transactionToRow(txn);
-  const { error } = await supabase.from("bank_transactions").upsert(row, { onConflict: "id,statement_id" });
+  const { error } = await supabase.from("bank_transactions").insert(row);
   if (error) throw new Error(getErrorMessage(error));
 }
 

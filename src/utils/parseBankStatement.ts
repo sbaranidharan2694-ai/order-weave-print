@@ -6,7 +6,7 @@ export interface Transaction {
   credit: number;
   balance: number;
   type: "debit" | "credit";
-  category: string;
+  counterparty: string;
 }
 
 export interface BankStatementData {
@@ -174,7 +174,7 @@ export function parseBankStatement(rawText: string): BankStatementData {
         credit,
         balance,
         type: isDebit ? "debit" : "credit",
-        category: categorise(detailFull),
+        counterparty: categorise(detailFull),
       });
     }
 

@@ -89,8 +89,7 @@ function mapBankStatementDataToStatementAndTransactions(
     const txnId = btoa(statementId + refNo + date + String(debit || credit))
       .replace(/[^a-zA-Z0-9]/g, "")
       .substring(0, 40);
-    const category = (t as { category?: string }).category ?? "";
-    const counterpartyVal = (t as { counterparty?: string }).counterparty ?? (category || extractParty(t.details ?? ""));
+    const counterpartyVal = (t as { counterparty?: string }).counterparty ?? extractParty(t.details ?? "");
     return {
       id: txnId,
       statementId,
@@ -100,7 +99,7 @@ function mapBankStatementDataToStatementAndTransactions(
       debit,
       credit,
       balance: Number(t.balance) || 0,
-      type: category || "OTHER",
+      type: (t as { type?: string }).type ?? "OTHER",
       counterparty: counterpartyVal,
     };
   });
@@ -1002,6 +1001,7 @@ function AccountTab({ account, onRefresh, customLookup, onUpdateLookup }) {
         uploadedAt: s.uploaded_at ?? s.created_at ?? "",
         periodStart: s.period_start ?? "",
         periodEnd: s.period_end ?? "",
+        period: s.period ?? (s.period_start && s.period_end ? `${s.period_start} – ${s.period_end}` : ""),
         transactionCount: s.transaction_count ?? 0,
         totalCredits: s.total_credits ?? 0,
         totalDebits: s.total_debits ?? 0,
@@ -1570,7 +1570,7 @@ function AccountTab({ account, onRefresh, customLookup, onUpdateLookup }) {
                       <tr key={idx} className="hover:bg-muted/30">
                         <td className="p-2 whitespace-nowrap">{tx.date}</td>
                         <td className="p-2 max-w-[200px] truncate" title={tx.details}>{tx.details}</td>
-                        <td className="p-2"><span className="bg-muted px-1.5 py-0.5 rounded text-xs">{(tx as { counterparty?: string }).counterparty ?? tx.category ?? extractParty(tx.details ?? "")}</span></td>
+                        <td className="p-2"><span className="bg-muted px-1.5 py-0.5 rounded text-xs">{tx.counterparty}</span></td>
                         <td className="p-2 text-right text-red-600">{tx.debit > 0 ? `₹${tx.debit.toLocaleString("en-IN", { minimumFractionDigits: 2 })}` : "—"}</td>
                         <td className="p-2 text-right text-green-600">{tx.credit > 0 ? `₹${tx.credit.toLocaleString("en-IN", { minimumFractionDigits: 2 })}` : "—"}</td>
                         <td className="p-2 text-right">₹{tx.balance.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>

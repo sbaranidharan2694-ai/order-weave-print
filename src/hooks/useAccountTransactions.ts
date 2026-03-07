@@ -1,34 +1,31 @@
 import { useEffect, useState, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 
-export interface Transaction {
-  id: string;
-  statement_id: string;
-  date: string;
-  details: string | null;
-  ref_no: string | null;
-  debit: number;
-  credit: number;
-  balance: number;
-  type: string | null;
-  counterparty: string | null;
-  created_at?: string;
-}
-
 export interface StatementRow {
   id: string;
-  period_start: string | null;
-  period_end: string | null;
-  period: string | null;
+  account_number: string;
+  period_start: string;
+  period_end: string;
+  period: string;
   total_credits: number;
   total_debits: number;
   closing_balance: number;
   transaction_count: number;
-  created_at: string | null;
-  file_name?: string | null;
-  uploaded_at?: string | null;
-  pdf_stored?: boolean;
-  pdf_file_size?: number;
+  file_name: string;
+  created_at: string;
+}
+
+export interface Transaction {
+  id: string;
+  statement_id: string;
+  date: string;
+  details: string;
+  ref_no: string;
+  debit: number;
+  credit: number;
+  balance: number;
+  type: string;
+  counterparty: string;
 }
 
 export interface AccountSummary {
@@ -66,7 +63,7 @@ export function useAccountTransactions(accountIdentifier: string) {
       // ── 1. Load ALL statements for this account (explicit limit to avoid API default cap) ──
       const { data: stmtRows, error: stmtErr } = await supabase
         .from("bank_statements")
-        .select("id, period_start, period_end, period, total_credits, total_debits, closing_balance, transaction_count, created_at, file_name, uploaded_at, pdf_stored, pdf_file_size")
+        .select("id, account_number, period_start, period_end, period, total_credits, total_debits, closing_balance, transaction_count, file_name, created_at")
         .or(`account_number.eq.${accountIdentifier},account_key.eq.${accountIdentifier}`)
         .order("period_start", { ascending: true })
         .limit(500);
@@ -94,7 +91,7 @@ export function useAccountTransactions(accountIdentifier: string) {
       // ── 2. Load ALL transactions for ALL statements (never .eq — always .in + .limit(2000)) ──
       const { data: txRows, error: txErr } = await supabase
         .from("bank_transactions")
-        .select("id, statement_id, date, details, ref_no, debit, credit, balance, type, counterparty, created_at")
+        .select("id, statement_id, date, details, ref_no, debit, credit, balance, type, counterparty")
         .in("statement_id", statementIds)
         .order("date", { ascending: false })
         .limit(2000);
