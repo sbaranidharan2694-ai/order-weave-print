@@ -8,6 +8,18 @@ import type { Database } from "@/integrations/supabase/types";
 
 const BANK_PDF_BUCKET = "bank-pdfs";
 
+/** Supabase/PostgrestError can be a plain object; always throw Error with readable message. */
+function getErrorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (err != null && typeof err === "object") {
+    const o = err as { message?: string; details?: string; hint?: string };
+    if (typeof o.message === "string" && o.message) return o.message;
+    if (typeof o.details === "string" && o.details) return o.details;
+    if (typeof o.hint === "string" && o.hint) return o.hint;
+  }
+  return typeof err === "string" ? err : JSON.stringify(err);
+}
+
 export type BankStatement = {
   id: string;
   accountKey: string;
@@ -153,7 +165,7 @@ export async function loadStatements(): Promise<BankStatement[]> {
       .order("uploaded_at", { ascending: false });
     if (error) {
       if (isTableMissingError(error)) return [];
-      throw error;
+      throw new Error(getErrorMessage(error));
     }
     return (data ?? []).map(rowToStatement);
   } catch {
@@ -168,7 +180,7 @@ export async function getStatement(id: string): Promise<BankStatement | null> {
     const { data, error } = await supabase.from("bank_statements").select("*").eq("id", id).maybeSingle();
     if (error) {
       if (isTableMissingError(error)) return null;
-      throw error;
+      throw new Error(getErrorMessage(error));
     }
     return data ? rowToStatement(data) : null;
   } catch {
@@ -188,7 +200,7 @@ export async function hasTransaction(statementId: string, txnId: string): Promis
       .maybeSingle();
     if (error) {
       if (isTableMissingError(error)) return false;
-      throw error;
+      throw new Error(getErrorMessage(error));
     }
     return !!data;
   } catch {
@@ -205,7 +217,7 @@ export async function deleteTransaction(statementId: string, txnId: string): Pro
       .delete()
       .eq("statement_id", statementId)
       .eq("id", txnId);
-    if (error) throw error;
+    if (error) throw new Error(getErrorMessage(error));
   } catch {
     /* noop when table missing or not configured */
   }
@@ -221,7 +233,7 @@ export async function loadTransactions(statementId: string): Promise<BankTransac
       .eq("statement_id", statementId);
     if (error) {
       if (isTableMissingError(error)) return [];
-      throw error;
+      throw new Error(getErrorMessage(error));
     }
     return (data ?? []).map(rowToTransaction);
   } catch {
@@ -234,7 +246,7 @@ export async function saveStatement(stmt: BankStatement): Promise<void> {
   if (!isSupabaseConfigured) throw new Error("Supabase not configured. Connect Supabase in Lovable or add .env.");
   const row = statementToRow(stmt);
   const { error } = await supabase.from("bank_statements").upsert(row, { onConflict: "id" });
-  if (error) throw error;
+  if (error) throw new Error(getErrorMessage(error));
 }
 
 /** Save transaction to Supabase only. Throws if not configured or table missing. */
@@ -242,7 +254,7 @@ export async function saveTransaction(txn: BankTransaction): Promise<void> {
   if (!isSupabaseConfigured) throw new Error("Supabase not configured. Connect Supabase in Lovable or add .env.");
   const row = transactionToRow(txn);
   const { error } = await supabase.from("bank_transactions").upsert(row, { onConflict: "id,statement_id" });
-  if (error) throw error;
+  if (error) throw new Error(getErrorMessage(error));
 }
 
 /** Delete statement and its transactions. No-op if not configured. */
@@ -251,7 +263,7 @@ export async function deleteStatement(id: string): Promise<void> {
   try {
     await supabase.from("bank_transactions").delete().eq("statement_id", id);
     const { error } = await supabase.from("bank_statements").delete().eq("id", id);
-    if (error) throw error;
+    if (error) throw new Error(getErrorMessage(error));
   } catch {
     /* noop when table missing or not configured */
   }
@@ -268,7 +280,7 @@ export async function loadCustomLookup(): Promise<Record<string, string>> {
       .maybeSingle();
     if (error) {
       if (isTableMissingError(error)) return {};
-      throw error;
+      throw new Error(getErrorMessage(error));
     }
     const raw = data?.lookup;
     if (raw && typeof raw === "object" && !Array.isArray(raw)) return raw as Record<string, string>;
@@ -289,14 +301,14 @@ export async function saveCustomLookup(lookup: Record<string, string>): Promise<
     },
     { onConflict: "id" },
   );
-  if (error) throw error;
+  if (error) throw new Error(getErrorMessage(error));
 }
 
 /** PDF in Supabase Storage (bucket: bank-pdfs). Key = statementId.pdf */
 export async function savePdfToStorage(statementId: string, file: File): Promise<void> {
   const path = `${statementId}.pdf`;
   const { error } = await supabase.storage.from(BANK_PDF_BUCKET).upload(path, file, { upsert: true });
-  if (error) throw error;
+  if (error) throw new Error(getErrorMessage(error));
 }
 
 /** Download PDF from Supabase Storage; returns blob or null if missing */

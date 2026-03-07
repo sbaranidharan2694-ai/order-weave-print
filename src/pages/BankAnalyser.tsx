@@ -49,6 +49,17 @@ import { parseBankStatement, getTabForAccount } from "@/utils/parseBankStatement
 import { PasswordModal } from "@/components/BankAnalyser/PasswordModal";
 import type { BankStatement, BankTransaction } from "@/lib/bankStorage";
 
+/** Always get a readable string from any thrown/Supabase error (avoids [object Object]). */
+function toErrorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (err != null && typeof err === "object") {
+    const o = err as { message?: string; details?: string };
+    if (typeof o.message === "string" && o.message) return o.message;
+    if (typeof o.details === "string" && o.details) return o.details;
+  }
+  return typeof err === "string" ? err : JSON.stringify(err);
+}
+
 /** Detect account key from parsed bank statement accountNumber or accountHolder. */
 function detectAccountFromBankStatementData(data: BankStatementData): string | null {
   const num = (data.accountNumber ?? "").replace(/\s/g, "");
@@ -708,8 +719,9 @@ function OverviewTab({
       setUploads(prev => prev.map(u => u.id === entry.id ? { ...u, status: "done", data: parsed, assignedTab } : u));
       toast.success(`${parsed.accountHolder} — ${parsed.transactions.length} txns | ₹${parsed.closingBalance.toLocaleString("en-IN")} closing`);
       await onSaveParsedStatement(assignedTab, parsed, entry.file);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+    } catch (err: unknown) {
+      console.error("Bank Analyser Overview parse/save error:", err);
+      const msg = toErrorMessage(err);
       if (msg === "PASSWORD_REQUIRED") {
         setUploads(prev => prev.map(u => u.id === entry.id ? { ...u, status: "password_required" as const } : u));
         setPasswordModal({ entry, attempt: 1 });
@@ -734,8 +746,9 @@ function OverviewTab({
       setUploads(prev => prev.map(u => u.id === entry.id ? { ...u, status: "done", data: parsed, assignedTab } : u));
       toast.success(`${parsed.transactions.length} transactions saved`);
       await onSaveParsedStatement(assignedTab, parsed, entry.file);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+    } catch (err: unknown) {
+      console.error("Bank Analyser Overview password submit error:", err);
+      const msg = toErrorMessage(err);
       if (msg === "PASSWORD_REQUIRED" || /password/i.test(msg)) {
         setPasswordModal({ entry, attempt: attempt + 1 });
         setUploads(prev => prev.map(u => u.id === entry.id ? { ...u, status: "password_required" as const, error: "Wrong password" } : u));
@@ -851,7 +864,11 @@ function OverviewTab({
                           {u.data.accountHolder} · {u.data.accountNumber} → <span className="font-medium text-primary">{u.assignedTab ?? ""}</span>
                         </p>
                       )}
-                      {u.error && <p className="text-xs text-destructive">{u.error}</p>}
+                      {u.error != null && (
+                        <p className="text-xs text-destructive">
+                          {typeof u.error === "string" ? u.error : toErrorMessage(u.error)}
+                        </p>
+                      )}
                     </div>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
@@ -1094,8 +1111,9 @@ function AccountTab({ account, statements, transactions, onRefresh, customLookup
         setQueue(prev => prev.map((p, i) => i === qi ? { ...p, progress: "Parsing PDF…" } : p));
         const result = await parseDocument(item.file, "bank_statement");
         if (!result.success || !result.data) {
-          setQueue(prev => prev.map((p, i) => i === qi ? { ...p, status: "error", error: result.error ?? "Parsing failed" } : p));
-          toast.error(result.error ?? "Parsing failed");
+          const errStr = typeof result.error === "string" ? result.error : toErrorMessage(result.error ?? "Parsing failed");
+          setQueue(prev => prev.map((p, i) => i === qi ? { ...p, status: "error", error: errStr } : p));
+          toast.error(errStr);
           continue;
         }
         const data = result.data as BankStatementData;
@@ -1155,11 +1173,12 @@ function AccountTab({ account, statements, transactions, onRefresh, customLookup
         setQueue(prev => prev.map((p, i) => i === qi ? { ...p, status: "done", saved, skipped } : p));
         await new Promise((r) => setTimeout(r, 200));
         await onRefresh();
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        console.error(e);
-        setQueue(prev => prev.map((p, i) => i === qi ? { ...p, status: "error", error: friendlyDbError(msg) || "Failed" } : p));
-        toast.error(friendlyDbError(msg));
+      } catch (e: unknown) {
+        console.error("Bank Analyser processQueue error:", e);
+        const msg = toErrorMessage(e);
+        const friendly = friendlyDbError(msg) || "Failed";
+        setQueue(prev => prev.map((p, i) => i === qi ? { ...p, status: "error", error: friendly } : p));
+        toast.error(friendly);
       }
     }
     setProcessing(false);
@@ -1181,8 +1200,8 @@ function AccountTab({ account, statements, transactions, onRefresh, customLookup
       setDeleteConfirm(null);
       toast.success("Statement deleted");
       await onRefresh();
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+    } catch (e: unknown) {
+      const msg = toErrorMessage(e);
       toast.error(friendlyDbError(msg));
     }
   };
@@ -1225,10 +1244,10 @@ function AccountTab({ account, statements, transactions, onRefresh, customLookup
         `Parsed: ${data.transactions.length} transactions | Closing ₹${data.closingBalance.toLocaleString("en-IN", { minimumFractionDigits: 2 })}`,
         { id: "parse-pdf" }
       );
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Parse failed";
-      toast.error(msg, { id: "parse-pdf" });
-      console.error("PDF parse error:", err);
+    } catch (err: unknown) {
+      console.error("Bank Analyser Parse PDF error:", err);
+      const msg = toErrorMessage(err);
+      toast.error(msg || "Parse failed", { id: "parse-pdf" });
     } finally {
       setIsParsingPreview(false);
     }
@@ -1823,7 +1842,11 @@ function QueuePanel({ queue, setQueue, account, onDone, processing }) {
             {statusBadge(q.status)}
             {q.status === "processing" && <span className="text-xs text-muted-foreground">{q.progress}</span>}
             {q.status === "done" && <span className="text-xs text-success">✅ {q.saved} saved {q.skipped > 0 ? `${q.skipped} skipped` : ""}</span>}
-            {(q.status === "error" || q.status === "blocked") && <span className="text-xs text-destructive truncate max-w-[200px]">{q.error}</span>}
+            {(q.status === "error" || q.status === "blocked") && (
+              <span className="text-xs text-destructive truncate max-w-[200px]">
+                {typeof q.error === "string" ? q.error : (q.error != null ? toErrorMessage(q.error) : "Unknown error")}
+              </span>
+            )}
           </div>
         ))}
       </div>
