@@ -1,25 +1,19 @@
-# Welcome to your Lovable project
+# Super Printers OMS — Lovable
 
-## Project info
+This project is built and deployed **only on [Lovable](https://lovable.dev)**. All configuration and deployment steps assume Lovable.
 
 **URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
 
 ## Running on Lovable
 
-When you **import this repo into Lovable** and run or deploy from there:
-
-1. **Supabase (Lovable or manual)**  
-   - **Lovable:** In Project Settings → Integrations → Supabase, click **Connect Supabase** and link your project. Lovable injects the URL and anon key automatically; you don’t need to copy a client ID or set env vars.  
-   - **Manual / local:** Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` (or `VITE_SUPABASE_PUBLISHABLE_KEY`) in a `.env` file or in Lovable’s Environment variables. Get them from [Supabase Dashboard](https://supabase.com/dashboard) → your project → **Settings → API**.  
-   The app supports both Lovable’s automated injection and these env var names.
+1. **Connect Supabase**  
+   In Lovable: **Project → Settings → Integrations → Supabase** → **Connect Supabase** and link your project. Lovable injects `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` at build time; no env vars to copy.
 
 2. **Build & deploy**  
-   Lovable uses `npm run build` and serves the output. No code changes needed.
+   Lovable runs `npm run build` and serves the app. Deploy via **Share → Publish**.
 
-3. **All data in the database (no browser storage)**  
-   **Bank Analyser** and **Attendance** store everything in Supabase (tables + Storage bucket for PDFs). Nothing is kept in browser localStorage. Run the **automatic migrations** (see below) so the app can read/write; otherwise those pages show an empty state and a banner. Once migrations have run, all users see the same data and you can check results anytime from any device.
-
-All features (OMS, Bank Analyser, Attendance, etc.) work the same when run from Lovable or locally.
+3. **Data in Supabase**  
+   Bank Analyser, Attendance, and Payroll store everything in Supabase (no browser storage). Add the **GitHub Actions** secrets (see below) so migrations run on push; then all users see the same data.
 
 ## How can I edit this code?
 
@@ -33,31 +27,7 @@ Changes made via Lovable will be committed automatically to this repo.
 
 **Use your preferred IDE**
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
-
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
-
-Follow these steps:
-
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Configure environment variables.
-# Copy .env.example to .env and set your Supabase credentials:
-#   VITE_SUPABASE_URL=your-project-url
-#   VITE_SUPABASE_PUBLISHABLE_KEY=your-anon-key
-# Without these, the app will throw a clear error on load.
-
-# Step 5: Start the development server with auto-reloading and an instant preview.
-npm run dev
-```
+Clone this repo, make changes, and push. Pushed changes sync to Lovable. For local dev you need Node.js and npm; use the same env var names Lovable uses (`VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`) in a `.env` file if you want to run `npm run dev` locally.
 
 **Edit a file directly in GitHub**
 
@@ -131,25 +101,16 @@ All database migrations run **automatically** when you push to GitHub. You never
 
 ---
 
-## Import this repo into Lovable
-
-The code is built to work with Lovable. Use this flow:
+## Import and deploy on Lovable
 
 1. **Import the repo**  
-   In Lovable: connect your GitHub account and import this repository (or push the code to a repo Lovable can access, then import it).
+   In Lovable: connect GitHub and import this repository.
 
 2. **Connect Supabase**  
-   In Lovable: **Project → Settings → Integrations → Supabase** → click **Connect Supabase** and link your Supabase project.  
-   Lovable will inject `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` (or equivalent) at build time. You do **not** need to copy a client ID or create env vars manually if you use this integration.  
-   If you prefer to set env vars yourself: **Project → Settings → Environment variables** and add `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` (or `VITE_SUPABASE_ANON_KEY`).
+   In Lovable: **Project → Settings → Integrations → Supabase** → **Connect Supabase**. Lovable injects the required env vars at build time.
 
-3. **Migrations (one-time per repo)**  
-   In your **GitHub** repo: **Settings → Secrets and variables → Actions** → add:
-   - `SUPABASE_ACCESS_TOKEN` (from Supabase → Account → Access Tokens)
-   - `SUPABASE_PROJECT_REF` (from your Supabase project → Settings → General)  
-   Then push to the `main` branch (or run **Actions → Supabase migrations → Run workflow**). All migrations (Bank, Attendance, Payroll) run automatically.
+3. **Migrations**  
+   In **GitHub**: **Settings → Secrets and variables → Actions** → add `SUPABASE_ACCESS_TOKEN` and `SUPABASE_PROJECT_REF`. Push to `main` (or run the workflow) so migrations run.
 
-4. **Build and deploy**  
-   In Lovable: **Share → Publish**. Lovable runs `npm run build` and serves the app. No code changes needed.
-
-**Compatibility:** The app uses standard Vite + React, `import.meta.env` for config, and works with Lovable’s Supabase integration. PDF.js is loaded from a CDN. All data is stored in Supabase (no browser-only storage).
+4. **Deploy**  
+   In Lovable: **Share → Publish**. The app is built and served by Lovable; no other deployment platform is used.

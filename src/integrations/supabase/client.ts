@@ -4,7 +4,7 @@ import type { Database } from './types';
 
 const env = import.meta.env as Record<string, string | undefined>;
 
-// Support both manual .env and Lovable's automated Supabase (injects URL + anon key when Supabase is connected)
+// Lovable: injects VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY when Supabase is connected. Local dev: same var names in .env.
 const SUPABASE_URL = env.VITE_SUPABASE_URL ?? env.SUPABASE_URL ?? "";
 const SUPABASE_KEY =
   env.VITE_SUPABASE_PUBLISHABLE_KEY ??
@@ -12,7 +12,7 @@ const SUPABASE_KEY =
   env.SUPABASE_ANON_KEY ??
   "";
 
-/** True if Supabase is configured (works with Lovable auto-setup or manual .env) */
+/** True if Supabase is configured (Lovable injects these when Supabase is connected) */
 export const isSupabaseConfigured = Boolean(
   SUPABASE_URL && SUPABASE_KEY && !SUPABASE_URL.includes("placeholder") && SUPABASE_KEY !== "placeholder"
 );
