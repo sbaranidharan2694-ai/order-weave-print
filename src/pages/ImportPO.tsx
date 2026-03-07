@@ -15,12 +15,10 @@ import { Upload, Loader2, FileText, Trash2, CheckCircle2, X, PlusCircle } from "
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { format } from "date-fns";
-import {
-  parseDocumentWithClaude,
-  type ClaudePurchaseOrderResponse,
-} from "@/lib/parseDocumentWithClaude";
+import { parseDocument } from "@/utils/parseDocument";
+import type { ClaudePurchaseOrderResponse } from "@/lib/parseDocumentWithClaude";
 
-const MAX_PO_FILE_BYTES = 4 * 1024 * 1024; // 4MB for Claude API
+const MAX_PO_FILE_BYTES = 4 * 1024 * 1024; // 4MB for Edge Function limit
 
 type ParsedLineItem = {
   description: string;
@@ -168,8 +166,14 @@ export default function ImportPO() {
     if (!file) return;
     setParsing(true);
     try {
-      const raw = await parseDocumentWithClaude(file, "purchase_order");
-      const poData = mapClaudePOToParsedPO(raw as ClaudePurchaseOrderResponse);
+      const result = await parseDocument(file, "purchase_order");
+      if (!result.success) {
+        toast.error(result.error ?? "Parsing failed");
+        return;
+      }
+      const poData = mapClaudePOToParsedPO(
+        (result.data ?? {}) as ClaudePurchaseOrderResponse
+      );
       setParsed(poData);
 
       const mappedItems = (poData.line_items || []).map((item) => {
@@ -429,7 +433,7 @@ export default function ImportPO() {
                   <input
                     id="po-file-input"
                     type="file"
-                    accept=".pdf,application/pdf"
+                    accept=".pdf,application/pdf,image/png,image/jpeg,image/webp"
                     className="hidden"
                     onChange={handleFileChange}
                   />

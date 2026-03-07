@@ -43,10 +43,8 @@ import {
 import { useStorageMode } from "@/hooks/useStorageMode";
 import { SharedDataBanner } from "@/components/SharedDataBanner";
 import { friendlyDbError } from "@/lib/utils";
-import {
-  parseDocumentWithClaude,
-  type ClaudeBankStatementResponse,
-} from "@/lib/parseDocumentWithClaude";
+import { parseDocument } from "@/utils/parseDocument";
+import type { ClaudeBankStatementResponse } from "@/lib/parseDocumentWithClaude";
 import type { BankStatement, BankTransaction } from "@/lib/bankStorage";
 
 const MAX_CLAUDE_FILE_BYTES = 4 * 1024 * 1024; // 4MB for Claude API
@@ -880,11 +878,13 @@ function AccountTab({ account, statements, transactions, onRefresh, customLookup
           continue;
         }
 
-        // Optional: try Claude API first for bank statement (≤4MB)
+        // Optional: try Edge Function (Claude) first for bank statement (≤4MB)
         if (item.file.size <= MAX_CLAUDE_FILE_BYTES) {
           try {
             setQueue(prev => prev.map((p, i) => i === qi ? { ...p, progress: "Parsing with Claude…" } : p));
-            const raw = await parseDocumentWithClaude(item.file, "bank_statement") as ClaudeBankStatementResponse;
+            const result = await parseDocument(item.file, "bank_statement");
+            if (!result.success || !result.data) throw new Error(result.error ?? "No data");
+            const raw = result.data as ClaudeBankStatementResponse;
             const detected = detectAccountFromClaudeBank(raw);
             const finalAccount = detected || item.account;
             const finalStmtId = btoa(finalAccount + item.file.name + item.file.size)
