@@ -38,11 +38,11 @@ export interface AccountSummary {
 }
 
 /**
- * Fetches all statements for an account (by account_key) then ALL transactions
- * for those statements in one query with .in("statement_id", allStatementIds)
- * and .limit(2000) to avoid Supabase default row cap.
+ * Fetches ALL statements for an account, then ALL transactions for those statements.
+ * Uses .in("statement_id", statementIds) and .limit(2000) — never .eq("statement_id", singleId).
+ * If your Supabase Dashboard → Settings → API has "Max Rows" &lt; 2000, increase it (e.g. 1000+).
  */
-export function useAccountTransactions(accountKey: string) {
+export function useAccountTransactions(accountIdentifier: string) {
   const [statements, setStatements] = useState<StatementRow[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [summary, setSummary] = useState<AccountSummary>({
@@ -56,18 +56,20 @@ export function useAccountTransactions(accountKey: string) {
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    if (!accountKey) return;
+    if (!accountIdentifier) return;
     setLoading(true);
     setError(null);
 
     try {
+      // ── 1. Load ALL statements for this account (explicit limit to avoid API default cap) ──
       const { data: stmtRows, error: stmtErr } = await supabase
         .from("bank_statements")
         .select("id, period_start, period_end, total_credits, total_debits, closing_balance, file_name, created_at, uploaded_at, transaction_count, pdf_stored, pdf_file_size")
-        .eq("account_key", accountKey)
-        .order("period_start", { ascending: true });
+        .or(`account_number.eq.${accountIdentifier},account_key.eq.${accountIdentifier}`)
+        .order("period_start", { ascending: true })
+        .limit(500);
 
-      if (stmtErr) throw new Error(`Statements load failed: ${stmtErr.message}`);
+      if (stmtErr) throw new Error(`Statements: ${stmtErr.message}`);
 
       const stmts = (stmtRows ?? []) as StatementRow[];
       setStatements(stmts);
@@ -85,16 +87,17 @@ export function useAccountTransactions(accountKey: string) {
         return;
       }
 
-      const allStatementIds = stmts.map((s) => s.id);
+      const statementIds = stmts.map((s) => s.id);
 
+      // ── 2. Load ALL transactions for ALL statements (never .eq — always .in + .limit(2000)) ──
       const { data: txRows, error: txErr } = await supabase
         .from("bank_transactions")
         .select("*")
-        .in("statement_id", allStatementIds)
+        .in("statement_id", statementIds)
         .order("date", { ascending: false })
         .limit(2000);
 
-      if (txErr) throw new Error(`Transactions load failed: ${txErr.message}`);
+      if (txErr) throw new Error(`Transactions: ${txErr.message}`);
 
       const txns = (txRows ?? []) as Transaction[];
       setTransactions(txns);
@@ -112,11 +115,11 @@ export function useAccountTransactions(accountKey: string) {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setError(msg);
-      console.error(`[useAccountTransactions] ${accountKey}:`, msg);
+      console.error(`[useAccountTransactions][${accountIdentifier}]`, msg);
     } finally {
       setLoading(false);
     }
-  }, [accountKey]);
+  }, [accountIdentifier]);
 
   useEffect(() => {
     load();

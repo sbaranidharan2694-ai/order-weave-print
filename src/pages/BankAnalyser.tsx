@@ -988,7 +988,9 @@ function OverviewTab({
 
 /* ═══════════ ACCOUNT TAB ═══════════ */
 function AccountTab({ account, onRefresh, customLookup, onUpdateLookup }) {
-  const { statements: hookStatements, transactions: hookTransactions, summary, loading: hookLoading, error: hookError, refetch } = useAccountTransactions(account.key);
+  const { statements: hookStatements, transactions: hookTransactions, summary, loading: hookLoading, error: hookError, refetch } = useAccountTransactions(
+    (account as { accountNumber?: string }).accountNumber ?? account.key
+  );
 
   const statements = useMemo(
     () =>
