@@ -76,6 +76,22 @@ function AuthGate() {
   const { user, loading } = useAuth();
 
   if (loading) return <PageLoader />;
+
+  // Allow reset-password route without auth
+  const isResetPassword = window.location.pathname === "/reset-password";
+  if (isResetPassword) {
+    return (
+      <BrowserRouter>
+        <Suspense fallback={<PageLoader />}>
+          <Routes>
+            <Route path="/reset-password" element={<ResetPassword />} />
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+        </Suspense>
+      </BrowserRouter>
+    );
+  }
+
   if (!user) return <Suspense fallback={<PageLoader />}><Login /></Suspense>;
 
   return (
