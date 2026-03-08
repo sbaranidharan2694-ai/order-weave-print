@@ -46,9 +46,10 @@ import {
   updateStatementLastValidated,
 } from "@/lib/bankStorage";
 import { friendlyDbError } from "@/lib/utils";
-import { parseDocument, type BankStatementData } from "@/utils/parseDocument";
+import { type BankStatementData } from "@/utils/parseBankStatement";
 import { extractTextFromPdf } from "@/utils/extractPdfText";
-import { parseBankStatement, getTabForAccount } from "@/utils/parseBankStatement";
+import { getTabForAccount } from "@/utils/parseBankStatement";
+import { parseBankStatementWithAI } from "@/utils/parseBankStatementAI";
 import { PasswordModal } from "@/components/BankAnalyser/PasswordModal";
 import { SummaryCards } from "@/components/BankAnalyser/SummaryCards";
 import { extractParty } from "@/utils/saveBankStatement";
@@ -797,11 +798,7 @@ function OverviewTab({
   const parseFile = useCallback(async (entry: OverviewUploadEntry, password?: string) => {
     setUploads(prev => prev.map(u => u.id === entry.id ? { ...u, status: "parsing" as const } : u));
     try {
-      const { text } = await extractTextFromPdf(entry.file, password);
-      if (!text || text.trim().length < 30) {
-        throw new Error("No text extracted — PDF may be image/scanned only");
-      }
-      const parsed = parseBankStatement(text);
+      const { data: parsed } = await parseBankStatementWithAI(entry.file, password);
       const assignedTab = getTabForAccount(parsed.accountNumber ?? "") || detectAccountFromBankStatementData(parsed);
       if (!assignedTab) {
         throw new Error(`Unknown account: ${parsed.accountNumber ?? "—"}. Add to ACCOUNT_TAB_MAP if needed.`);
@@ -831,9 +828,7 @@ function OverviewTab({
     setPasswordModal(null);
     setUploads(prev => prev.map(u => u.id === entry.id ? { ...u, status: "parsing" as const } : u));
     try {
-      const { text } = await extractTextFromPdf(entry.file, password);
-      if (!text || text.trim().length < 30) throw new Error("No text extracted");
-      const parsed = parseBankStatement(text);
+      const { data: parsed } = await parseBankStatementWithAI(entry.file, password);
       const assignedTab = getTabForAccount(parsed.accountNumber ?? "") || detectAccountFromBankStatementData(parsed);
       if (!assignedTab) throw new Error(`Unknown account: ${parsed.accountNumber ?? "—"}`);
       if (hasSummaryWithoutRows(parsed)) {
@@ -1140,12 +1135,11 @@ function AccountTab({ account, onRefresh, customLookup, onUpdateLookup }) {
       toast.loading(`Re-uploading ${target.fileName}…`, { id: `repair-${statementId}` });
 
       try {
-        const result = await parseDocument(file, "bank_statement");
-        if (!result.success || !result.data) {
-          throw new Error(typeof result.error === "string" ? result.error : "Failed to parse PDF");
+        const { data: parsed } = await parseBankStatementWithAI(file);
+        if (!parsed) {
+          throw new Error("Failed to parse PDF");
         }
 
-        const parsed = result.data as BankStatementData;
         const accountKey = account.key;
         const { transactions: txns } = mapBankStatementDataToStatementAndTransactions(parsed, statementId, accountKey, target.fileName);
 
@@ -1313,16 +1307,18 @@ function AccountTab({ account, onRefresh, customLookup, onUpdateLookup }) {
           continue;
         }
 
-        // Parse PDF in browser with PDF.js (no API keys)
-        setQueue(prev => prev.map((p, i) => i === qi ? { ...p, progress: "Parsing PDF…" } : p));
-        const result = await parseDocument(item.file, "bank_statement");
-        if (!result.success || !result.data) {
-          const errStr = typeof result.error === "string" ? result.error : toErrorMessage(result.error ?? "Parsing failed");
+        // Parse PDF with Gemini AI
+        setQueue(prev => prev.map((p, i) => i === qi ? { ...p, progress: "Parsing PDF with AI…" } : p));
+        let data: BankStatementData;
+        try {
+          const aiResult = await parseBankStatementWithAI(item.file);
+          data = aiResult.data;
+        } catch (parseErr) {
+          const errStr = toErrorMessage(parseErr);
           setQueue(prev => prev.map((p, i) => i === qi ? { ...p, status: "error", error: errStr } : p));
           toast.error(errStr);
           continue;
         }
-        const data = result.data as BankStatementData;
         const detected = detectAccountFromBankStatementData(data);
         const finalAccount = detected || item.account;
         const finalStmtId = btoa(finalAccount + item.file.name + item.file.size)
@@ -1453,14 +1449,8 @@ function AccountTab({ account, onRefresh, customLookup, onUpdateLookup }) {
         toast.error("PDF not found in storage");
         return;
       }
-      toast.loading("Extracting text from PDF…", { id: "parse-pdf" });
-      const { text, pageCount } = await extractTextFromPdf(url);
-      if (!text || text.trim().length < 30) {
-        toast.error("No text found in PDF — file may be image-based", { id: "parse-pdf" });
-        return;
-      }
-      toast.loading(`Parsing ${pageCount} page(s)…`, { id: "parse-pdf" });
-      const data = parseBankStatement(text);
+      toast.loading("Parsing PDF with AI…", { id: "parse-pdf" });
+      const { data, pageCount } = await parseBankStatementWithAI(url);
       setParsedPreview({ statementId, data });
       toast.success(
         `Parsed: ${data.transactions.length} transactions | Closing ₹${data.closingBalance.toLocaleString("en-IN", { minimumFractionDigits: 2 })}`,

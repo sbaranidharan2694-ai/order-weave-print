@@ -3,9 +3,68 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
+    "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
+
+const bankStatementPrompt = `You are a Bank Statement parser for Indian banks (especially CSB Bank / Catholic Syrian Bank).
+Extract ALL data from the bank statement text. Be extremely thorough — extract EVERY transaction row.
+
+CRITICAL RULES:
+1. Parse ALL transactions — do not skip any rows
+2. Dates: parse as YYYY-MM-DD. Handle formats: DD-MMM-YYYY, DD/MM/YYYY, DD-MMMYYYY (no separator), DDMONYYYY
+3. For each transaction, determine if it's a debit or credit based on the amount columns
+4. "counterparty" = extract the other party name from the transaction details (e.g., from NEFT/RTGS/UPI descriptions)
+5. Balance must be tracked — each row should have the running balance
+6. Extract account holder name, account number, branch, IFSC, period, opening/closing balances
+7. Total credits and total debits should be the sum of all credit and debit transactions respectively
+
+Return ONLY valid JSON with no markdown fences, no explanation:
+{
+  "doc_type": "bank_statement",
+  "account_holder": "",
+  "account_number": "",
+  "account_type": "",
+  "bank_name": "",
+  "branch": "",
+  "ifsc": "",
+  "period_from": "YYYY-MM-DD",
+  "period_to": "YYYY-MM-DD",
+  "opening_balance": 0,
+  "total_credits": 0,
+  "total_debits": 0,
+  "closing_balance": 0,
+  "transactions": [
+    {
+      "date": "YYYY-MM-DD",
+      "details": "",
+      "ref_no": "",
+      "debit": 0,
+      "credit": 0,
+      "balance": 0,
+      "counterparty": ""
+    }
+  ]
+}`;
+
+const purchaseOrderPrompt = `You are a Purchase Order parser for a printing press business in India.
+Extract ALL data from the purchase order text.
+
+Return ONLY valid JSON with no markdown fences, no explanation:
+{
+  "doc_type": "purchase_order",
+  "po_number": "",
+  "po_date": "YYYY-MM-DD",
+  "buyer": { "name": "", "gst": "", "pan": "", "address": "" },
+  "vendor": { "name": "", "code": "", "address": "" },
+  "items": [{ "sno": "", "description": "", "hsn": "", "uom": "", "qty": 0, "rate": 0, "delivery_date": "", "sgst_pct": 0, "cgst_pct": 0, "value_before_tax": 0, "total_value": 0 }],
+  "grand_total": 0,
+  "grand_total_words": "",
+  "payment_terms": "",
+  "delivery_terms": "",
+  "order_handled_by": "",
+  "order_handler_email": ""
+}`;
 
 serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
@@ -13,98 +72,91 @@ serve(async (req: Request) => {
   }
 
   try {
-    const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
-    if (!ANTHROPIC_API_KEY) {
-      throw new Error("ANTHROPIC_API_KEY not set in Supabase secrets");
+    const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
+    if (!GEMINI_API_KEY) {
+      throw new Error("GEMINI_API_KEY not set");
     }
 
     const body = await req.json();
-    const { fileBase64, fileName, parseMode = "auto" } = body;
+    const { pdfText, parseMode = "auto" } = body;
 
-    if (!fileBase64) {
-      throw new Error("fileBase64 is required in request body");
-    }
-
-    // Strip data URI prefix if present
-    const cleanBase64 = fileBase64.includes(",")
-      ? fileBase64.split(",")[1]
-      : fileBase64;
-
-    // Size guard — base64 length * 0.75 = approximate bytes
-    const approxBytes = cleanBase64.length * 0.75;
-    if (approxBytes > 4_500_000) {
+    if (!pdfText || typeof pdfText !== "string") {
       return new Response(
-        JSON.stringify({
-          error: `File too large (${(approxBytes / 1024 / 1024).toFixed(1)}MB). Maximum is 4MB.`,
-        }),
-        {
-          status: 413,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        }
+        JSON.stringify({ error: "pdfText is required" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    // Detect file type
-    const isPdf =
-      fileName?.toLowerCase().endsWith(".pdf") ||
-      (typeof fileBase64 === "string" && fileBase64.startsWith("data:application/pdf"));
-    const mediaType = isPdf ? "application/pdf" : "image/jpeg";
-    const contentBlockType = isPdf ? "document" : "image";
+    if (pdfText.length > 500_000) {
+      return new Response(
+        JSON.stringify({ error: "Text too large. Maximum 500KB allowed." }),
+        { status: 413, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
 
-    const prompt = getPrompt(parseMode);
+    // Detect document type
+    let mode = parseMode;
+    if (mode === "auto") {
+      const upper = pdfText.toUpperCase();
+      if (
+        upper.includes("STATEMENT OF ACCOUNT") ||
+        upper.includes("OPENING BALANCE") ||
+        upper.includes("CLOSING BALANCE") ||
+        upper.includes("TOTAL CREDITS")
+      ) {
+        mode = "bank_statement";
+      } else if (
+        upper.includes("PURCHASE ORDER") ||
+        upper.includes("PO NO") ||
+        upper.includes("VENDOR CODE")
+      ) {
+        mode = "purchase_order";
+      } else {
+        mode = "bank_statement"; // default
+      }
+    }
 
-    const anthropicResponse = await fetch(
-      "https://api.anthropic.com/v1/messages",
+    const prompt = mode === "bank_statement" ? bankStatementPrompt : purchaseOrderPrompt;
+
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
       {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": ANTHROPIC_API_KEY,
-          "anthropic-version": "2023-06-01",
-          "anthropic-beta": "pdfs-2024-09-25",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 4096,
-          messages: [
+          contents: [
             {
-              role: "user",
-              content: [
-                {
-                  type: contentBlockType,
-                  source: {
-                    type: "base64",
-                    media_type: mediaType,
-                    data: cleanBase64,
-                  },
-                },
-                {
-                  type: "text",
-                  text: prompt,
-                },
+              parts: [
+                { text: prompt + "\n\nParse this document:\n\n" + pdfText },
               ],
             },
           ],
+          generationConfig: {
+            temperature: 0.1,
+            maxOutputTokens: 8192,
+          },
         }),
       }
     );
 
-    if (!anthropicResponse.ok) {
-      const errBody = await anthropicResponse.json().catch(() => ({}));
-      const err = errBody as { error?: { message?: string } };
-      throw new Error(
-        `Anthropic API error ${anthropicResponse.status}: ${
-          err?.error?.message ?? JSON.stringify(errBody)
-        }`
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error("Gemini API error:", response.status, errText);
+      if (response.status === 429) {
+        return new Response(
+          JSON.stringify({ error: "Rate limit exceeded, please try again later." }),
+          { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      return new Response(
+        JSON.stringify({ error: "AI parsing failed" }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    const anthropicData = (await anthropicResponse.json()) as {
-      content?: Array<{ type?: string; text?: string }>;
-    };
+    const data = await response.json();
     const rawText =
-      anthropicData.content?.find((c: { type?: string }) => c.type === "text")
-        ?.text ?? "";
+      data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
 
     const cleanText = rawText
       .replace(/```json\s*/gi, "")
@@ -115,71 +167,21 @@ serve(async (req: Request) => {
     try {
       parsed = JSON.parse(cleanText);
     } catch {
-      throw new Error(
-        `Could not parse Claude response as JSON. Raw response: ${rawText.substring(0, 500)}`
-      );
+      console.error("Failed to parse Gemini response:", rawText.substring(0, 500));
+      throw new Error("Could not parse AI response as JSON");
     }
 
     return new Response(
       JSON.stringify({ success: true, data: parsed }),
-      {
-        status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
+      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (error: unknown) {
-    const message =
-      error instanceof Error ? error.message : "Unknown error";
-    console.error("Edge Function error:", message);
+    const message = error instanceof Error ? error.message : "Unknown error";
+    console.error("parse-document error:", message);
 
     return new Response(
       JSON.stringify({ success: false, error: "Document parsing failed. Please try again." }),
-      {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
 });
-
-function getPrompt(mode: string): string {
-  const prompts: Record<string, string> = {
-    purchase_order: `Extract all data from this Purchase Order PDF. Return ONLY valid JSON with no explanation, no markdown:
-{
-  "doc_type": "purchase_order",
-  "po_number": "",
-  "po_date": "",
-  "buyer": { "name": "", "gst": "", "pan": "", "address": "" },
-  "vendor": { "name": "", "code": "", "address": "" },
-  "items": [{ "sno": "", "description": "", "hsn": "", "uom": "", "qty": 0, "rate": 0, "delivery_date": "", "sgst_pct": 0, "cgst_pct": 0, "value_before_tax": 0, "total_value": 0 }],
-  "grand_total": 0,
-  "grand_total_words": "",
-  "payment_terms": "",
-  "delivery_terms": "",
-  "order_handled_by": "",
-  "order_handler_email": ""
-}`,
-
-    bank_statement: `Extract ALL data from this Bank Statement PDF. Return ONLY valid JSON with no explanation, no markdown:
-{
-  "doc_type": "bank_statement",
-  "account_holder": "",
-  "account_number": "",
-  "account_type": "",
-  "bank_name": "",
-  "branch": "",
-  "ifsc": "",
-  "period_from": "",
-  "period_to": "",
-  "opening_balance": 0,
-  "total_credits": 0,
-  "total_debits": 0,
-  "closing_balance": 0,
-  "transactions": [{ "date": "", "details": "", "ref_no": "", "debit": 0, "credit": 0, "balance": 0 }]
-}`,
-
-    auto: `Detect document type (purchase_order, bank_statement, invoice) and extract ALL data. Return ONLY valid JSON, no markdown, no explanation.`,
-  };
-
-  return prompts[mode] ?? prompts.auto;
-}
