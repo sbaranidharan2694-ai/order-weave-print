@@ -10,7 +10,6 @@ import { Loader2 } from "lucide-react";
 export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [isSignUp, setIsSignUp] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -21,19 +20,9 @@ export default function Login() {
     }
     setLoading(true);
     try {
-      if (isSignUp) {
-        const { error } = await supabase.auth.signUp({
-          email,
-          password,
-          options: { emailRedirectTo: window.location.origin },
-        });
-        if (error) throw error;
-        toast.success("Account created! You are now logged in.");
-      } else {
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) throw error;
-        toast.success("Welcome back!");
-      }
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) throw error;
+      toast.success("Welcome back!");
     } catch (err: any) {
       toast.error(err.message || "Authentication failed");
     } finally {
@@ -50,7 +39,7 @@ export default function Login() {
             Super Printers <span className="text-primary">OMS</span>
           </CardTitle>
           <p className="text-sm text-muted-foreground mt-1">
-            {isSignUp ? "Create your account" : "Sign in to continue"}
+            Sign in to continue
           </p>
         </CardHeader>
         <CardContent>
@@ -74,23 +63,16 @@ export default function Login() {
                 placeholder="••••••••"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                autoComplete={isSignUp ? "new-password" : "current-password"}
+                autoComplete="current-password"
               />
             </div>
             <Button type="submit" className="w-full" disabled={loading}>
               {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {isSignUp ? "Sign Up" : "Sign In"}
+              Sign In
             </Button>
           </form>
-          <p className="mt-4 text-center text-sm text-muted-foreground">
-            {isSignUp ? "Already have an account?" : "Don't have an account?"}{" "}
-            <button
-              type="button"
-              className="text-primary underline-offset-4 hover:underline font-medium"
-              onClick={() => setIsSignUp(!isSignUp)}
-            >
-              {isSignUp ? "Sign In" : "Sign Up"}
-            </button>
+          <p className="mt-4 text-center text-xs text-muted-foreground">
+            Contact your administrator for account access.
           </p>
         </CardContent>
       </Card>
