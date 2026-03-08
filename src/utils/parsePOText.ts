@@ -661,7 +661,8 @@ function tryGeneric(text: string): ParsedPOData | null {
     while ((m2 = numRe.exec(line)) !== null) nums.push(toNum(m2[1]));
     
     if (nums.length >= 3) {
-      // Try all triplets where qty * price ≈ total
+      // Find the best triplet where qty * price ≈ total (prefer largest qty)
+      let bestMatch: { qty: number; price: number; total: number } | null = null;
       for (let a = 0; a < nums.length - 2; a++) {
         for (let b = a + 1; b < nums.length - 1; b++) {
           for (let c = b + 1; c < nums.length; c++) {
@@ -669,21 +670,24 @@ function tryGeneric(text: string): ParsedPOData | null {
             const price = nums[b];
             const total = nums[c];
             if (qty > 0 && qty < 100000 && price > 0 && total > 0 && Math.abs(total - qty * price) < 1) {
-              const desc = line.replace(/[\d,]+(?:\.\d{1,2})?/g, " ").replace(/\s+/g, " ").trim().slice(0, 120);
-              if (desc.length > 2 && !/^(Total|Subtotal|Grand|Page|\d+)$/i.test(desc)) {
-                lineItems.push({
-                  ...emptyLineItem(),
-                  description: desc,
-                  qty,
-                  unit_price: price,
-                  base_amount: total,
-                  total_amount: total,
-                });
-                // Found a valid triplet, skip to next line
-                a = nums.length; b = nums.length; c = nums.length;
+              if (!bestMatch || qty > bestMatch.qty) {
+                bestMatch = { qty, price, total };
               }
             }
           }
+        }
+      }
+      if (bestMatch) {
+        const desc = line.replace(/[\d,]+(?:\.\d{1,2})?/g, " ").replace(/\s+/g, " ").trim().slice(0, 120);
+        if (desc.length > 2 && !/^(Total|Subtotal|Grand|Page|\d+)$/i.test(desc)) {
+          lineItems.push({
+            ...emptyLineItem(),
+            description: desc,
+            qty: bestMatch.qty,
+            unit_price: bestMatch.price,
+            base_amount: bestMatch.total,
+            total_amount: bestMatch.total,
+          });
         }
       }
     }
