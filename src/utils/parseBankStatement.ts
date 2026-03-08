@@ -129,7 +129,7 @@ function parseTabularTransactions(lines: string[]): Transaction[] {
 
     if (
       current.length > 0 &&
-      !/^(TRANS\s+DATE|VALUE\s+DATE|DEBITS?|CREDITS?|BALANCE|CSB\s+24x7|PAGE\s+\d+)/i.test(line)
+      !/^(TRANS\s+DATE|VALUE\s+DATE|DEBITS?|CREDITS?|BALANCE|CSB\s+24x7|PAGE\s+\d+|Date\s+Details|Ref\s+No|SUPER\s+PRINTERS|SUPER\s+SCREENS|REVATHY|PALLAVARAM|SARASWATHI|superprntrs)/i.test(line)
     ) {
       current.push(line);
     }
