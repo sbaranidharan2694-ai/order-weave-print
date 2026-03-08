@@ -70,8 +70,15 @@ function normalizeDate(raw: string | null | undefined): string | null {
   const s = raw.trim();
   if (!s) return null;
 
+  // DDMMYYYY (8 digits, no separators) e.g. 04032026
+  let m = s.match(/^(\d{2})(\d{2})(\d{4})$/);
+  if (m) {
+    const [, d, mon, y] = m;
+    return `${y}-${mon}-${d}`;
+  }
+
   // DD/MM/YYYY or DD-MM-YYYY
-  let m = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+  m = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
   if (m) {
     const [, d, mon, y] = m;
     return `${y}-${mon.padStart(2, "0")}-${d.padStart(2, "0")}`;
@@ -100,12 +107,6 @@ function normalizeDate(raw: string | null | undefined): string | null {
   return null;
 }
 
-function extractGstin(text: string): string | null {
-  const m = text.match(GSTIN_RE);
-  return m ? m[0] : null;
-}
-
-/** Extract all GSTINs from text */
 function extractAllGstins(text: string): string[] {
   const matches = text.match(new RegExp(GSTIN_RE.source, "g"));
   return matches || [];
@@ -144,96 +145,99 @@ const emptyLineItem = (): ParsedPOLineItem => ({
   suggested_product_type: "Other",
 });
 
-/** Extract trailing amounts from a string (right-to-left) */
-function extractTrailingAmounts(text: string): { amounts: number[]; beforeAmounts: string } {
-  const amounts: number[] = [];
-  let remaining = text.trimEnd();
-  
-  // Keep extracting numbers from the right
-  while (true) {
-    const m = remaining.match(/([\d,]+\.\d{2})\s*$/);
-    if (!m) break;
-    amounts.unshift(toNum(m[1]));
-    remaining = remaining.slice(0, m.index).trimEnd();
-  }
-  
-  // Also try integers at the end (like tax rates: 9, 0)
-  return { amounts, beforeAmounts: remaining };
+/** Lines that should NOT be parsed as line items */
+function isFooterLine(line: string): boolean {
+  return /^(Net\s+Value|Taxable|Total\s+Value|CGST|SGST|IGST|PAYMENT|For\s+GUINDY|GST\s+No|PAN\s+No|Vendor\s+(Code|GST)|TIN\s+No|Address|Manager|Page\s+\d|GOODS\s+INWARD)/i.test(line);
 }
 
 // ─── Guindy Machine Tools (LOC) ───────────────────────────────────────────
 
 function tryGuindy(text: string): ParsedPOData | null {
-  if (!/GUINDY MACHINE TOOLS|LOC\//i.test(text)) return null;
+  if (!/GUINDY MACHINE TOOLS|LOC[\s/]*\d{5,}/i.test(text)) return null;
 
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   const gstExtra = /GST\s+EXTRA|CGST[, ]*SGST[, ]*IGST\s+EXTRA/i.test(text);
 
-  // Extract PO number and date from "PO No & Date : LOC/252566 04/03/2026"
-  const poNoDateLine = firstMatch(text, /PO\s+No\s*&?\s*Date\s*[:\s]*(.+)/i);
+  // Extract PO number: LOC/252566 or LOC252566
   let poNumber = "";
   let poDateRaw = "";
+
+  // Try "PO No & Date : LOC/252566 04/03/2026" pattern
+  const poNoDateLine = firstMatch(text, /PO\s+No\s*&?\s*Date\s*[:\s]*(.+)/i);
   if (poNoDateLine) {
-    const locMatch = poNoDateLine.match(/(LOC\/?\s*\d+)/i);
+    const locMatch = poNoDateLine.match(/(LOC[\s/]*\d+)/i);
     poNumber = locMatch ? locMatch[1].replace(/\s/g, "") : "";
+    // Date with separators
     const dateMatch = poNoDateLine.match(/(\d{1,2}[/-]\d{1,2}[/-]\d{4})/);
-    poDateRaw = dateMatch ? dateMatch[1] : "";
+    if (dateMatch) {
+      poDateRaw = dateMatch[1];
+    } else {
+      // Date without separators: 8 digits DDMMYYYY
+      const dateMatch2 = poNoDateLine.match(/(\d{8})/);
+      if (dateMatch2) poDateRaw = dateMatch2[1];
+    }
   }
+
   if (!poNumber) {
-    const m = text.match(/(LOC\/?\s*\d+)/i);
+    const m = text.match(/(LOC[\s/]*\d+)/i);
     poNumber = m ? m[1].replace(/\s/g, "") : "";
   }
   if (!poDateRaw) {
     const m = text.match(/(\d{1,2}[/-]\d{1,2}[/-]\d{4})/);
-    poDateRaw = m ? m[1] : "";
+    if (m) poDateRaw = m[1];
+    else {
+      const m2 = text.match(/LOC[\s/]*\d+\s+(\d{8})/i);
+      if (m2) poDateRaw = m2[1];
+    }
   }
 
-  const deliveryDate = firstMatch(text, /Delivery\s+Date\s*[:\s]*(\d{1,2}[/-]\d{1,2}[/-]\d{4})/i);
-  const paymentTerms = firstMatch(text, /Payment\s+Terms\s*[:\s]*([^\n]+?)(?=\s*(?:Delivery|GST|$))/i);
+  // Delivery date: with or without separators
+  let deliveryDateRaw = firstMatch(text, /Delivery\s+Date\s*[:\s]*(\d{1,2}[/-]\d{1,2}[/-]\d{4})/i);
+  if (!deliveryDateRaw) {
+    deliveryDateRaw = firstMatch(text, /Delivery\s+Date\s*[:\s]*(\d{8})/i);
+  }
+
+  const paymentTerms = firstMatch(text, /Payment\s+Terms\s*[:\s]*([^\n]+?)(?=\s*(?:Delivery|GST|Vendor|$))/i);
   const preparedBy = firstMatch(text, /Prepared\s+by\s*[:\s]*([^\n]+)/i);
   const gstins = extractAllGstins(text);
-  const gstin = gstins.length > 0 ? gstins[0] : null;
+  // Last GSTIN in Guindy format is typically the buyer's (at the footer)
+  const buyerGstin = gstins.length > 0 ? gstins[gstins.length - 1] : null;
 
-  // Parse line items using UOM anchor pattern: QTY NOS PRICE AMOUNT
+  // Parse line items
   const lineItems: ParsedPOLineItem[] = [];
-  
-  // Find table start
+
   const tableStart = lines.findIndex((l) =>
     /Sl\.?\s*No|Item\s*(Number|Description)/i.test(l) && /Qty|Amount|Price/i.test(l)
   );
-  
+
   if (tableStart >= 0) {
     for (let i = tableStart + 1; i < lines.length; i++) {
       const line = lines[i];
-      // Stop at totals/footer
-      if (/^(Net\s+Value|Taxable|Total\s+Value|CGST|SGST|IGST|PAYMENT|For\s+GUINDY)/i.test(line)) break;
+      if (isFooterLine(line)) break;
       if (/^\d+\.\s/.test(line) && !/^\d+\s/.test(line)) break; // numbered notes like "1. CGST..."
-      
-      // Pattern: ... QTY NOS UNIT_PRICE AMOUNT ...
-      // e.g. "1 STA001221 251803 / CON FINAL INSPECTION TAG (BLUE COLOUR) 3000 NOS 1.50 4,500.00"
+
+      // Pattern: ... QTY NOS UNIT_PRICE AMOUNT
       const uomMatch = line.match(/(\d[\d,]*(?:\.\d+)?)\s+(NOS|EA|PCS|SET|KG|MTR|SETS|DOZ|BOX)\s+([\d,.]+)\s+([\d,]+\.\d{2})/i);
       if (uomMatch) {
         const qty = toNum(uomMatch[1]);
         const uom = uomMatch[2].toUpperCase();
         const unitPrice = toNum(uomMatch[3]);
         const amount = toNum(uomMatch[4]);
-        
+
         if (qty > 0 && amount > 0) {
-          // Extract description: everything before the qty
           const qtyIdx = line.indexOf(uomMatch[0]);
           let descPart = line.slice(0, qtyIdx).trim();
-          
-          // Remove leading serial number and item code
-          descPart = descPart.replace(/^\d+\s+/, ""); // remove "1 "
-          descPart = descPart.replace(/^[A-Z]{2,3}\d{3,}\s+/, ""); // remove "STA001221 "
-          descPart = descPart.replace(/^\d+\s*\/?\s*\w+\s+/, ""); // remove "251803 / CON "
-          // Try to keep just the description
-          const descClean = descPart.replace(/\d{5,}\s*\/?\s*\w{2,4}\s*/g, "").trim();
-          const description = descClean || descPart || "Item";
-          
-          // Extract item code
+
+          // Remove leading serial number
+          descPart = descPart.replace(/^\d+\s+/, "");
+          // Remove item code like STA001221
+          descPart = descPart.replace(/^[A-Z]{2,4}\d{3,}\s+/, "");
+          // Remove purchase req ref like "251803 / CON"
+          descPart = descPart.replace(/\d{5,}\s*\/?\s*[A-Z]{2,4}\s*/g, "").trim();
+          const description = descPart || "Item";
+
           const itemCodeMatch = line.match(/\b(STA\d+|[A-Z]{3}\d{5,})\b/);
-          
+
           lineItems.push({
             ...emptyLineItem(),
             description,
@@ -242,7 +246,7 @@ function tryGuindy(text: string): ParsedPOData | null {
             uom,
             unit_price: unitPrice,
             base_amount: amount,
-            total_amount: amount,
+            total_amount: amount, // GST is extra for Guindy
             suggested_product_type: mapHsnToProductType(""),
           });
         }
@@ -261,11 +265,11 @@ function tryGuindy(text: string): ParsedPOData | null {
     contact_no: null,
     contact_person: preparedBy,
     contact_email: null,
-    gstin,
+    gstin: buyerGstin,
     vendor_gstin: null,
     delivery_address: null,
     buyer_address: null,
-    delivery_date: normalizeDate(deliveryDate),
+    delivery_date: normalizeDate(deliveryDateRaw),
     payment_terms: paymentTerms,
     currency: "INR",
     gst_extra: gstExtra,
@@ -290,41 +294,57 @@ function tryFujitec(text: string): ParsedPOData | null {
 
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
 
-  const poNumber = firstMatch(text, /Purchase\s*(?:\/?\s*Job)?\s*Order\s+No\.?\s*[:\s]*([A-Z0-9-]+)/i)
-    || firstMatch(text, /Order\s+No\.?\s*[:\s]*([A-Z0-9-]+)/i);
-  const poDateRaw = firstMatch(text, /(?:^|\s)Date\s*[:\s]*(\d{1,2}[/-][A-Za-z]{3}[/-]?\d{4}|\d{1,2}[/-]\d{1,2}[/-]\d{4})/i);
-  const completionDate = firstMatch(text, /Completion\s+Date\s*[:\s]*([\d/-A-Za-z]+)/i)
-    || firstMatch(text, /Place\s+of\s+Completion\s+Date\s*[:\s]*([\d/-A-Za-z]+)/i);
+  // PO Number: "Purchase /Job Order No PO-FIN-M-26005326 (0)" or "Purchase Job Order No: PO-FIN-M-26005326"
+  const poNumber = firstMatch(text, /Purchase\s*[\s/]*Job\s*Order\s*No\.?\s*[:\s]*([A-Z0-9][\w-]+)/i)
+    || firstMatch(text, /Order\s+No\.?\s*[:\s]*([A-Z0-9][\w-]+)/i);
+
+  // Date: "Date : 24-Feb-2026"
+  const poDateRaw = firstMatch(text, /(?:^|\n)\s*Date\s*[:\s]+(\d{1,2}[/-][A-Za-z]{3}[/-]?\d{4})/im)
+    || firstMatch(text, /(?:^|\n)\s*Date\s*[:\s]+(\d{1,2}[/-]\d{1,2}[/-]\d{4})/im);
+
+  // Completion Date: "Place of Completion Date: 27-Feb-2026" or "Completion Date: ..."
+  const completionDate = firstMatch(text, /(?:Place\s+of\s+)?Completion\s+Date\s*[:\s]*([\d][\d/-A-Za-z]+\d{4})/i);
+
+  // Payment terms: "Terms of Payment in Days: 30"
   const paymentDays = firstMatch(text, /Terms\s+of\s+Payment\s+in\s+Days\s*[:\s]*(\d+)/i);
-  const vendorCode = firstMatch(text, /Vendor\s+Code\s*[:\s]*(\d+)/i);
-  
+
+  // Vendor name = PO Organization (buyer company), NOT the vendor
+  const vendorName = firstMatch(text, /PO\s+Organization\s*[:\s]*(.+?)(?=\s{2,}|$)/i) || "Fujitec India Pvt Ltd";
+
+  // Contact person from Approved By
+  const contactPerson = firstMatch(text, /Approved\s+By\s*[:\s]*([A-Za-z\s.]+?)(?=\s{2,}|$)/i);
+
   const gstins = extractAllGstins(text);
-  // First GSTIN is typically buyer (Fujitec), second is vendor
+  // First GSTIN is buyer (Fujitec), second is vendor
   const buyerGstin = gstins.length > 0 ? gstins[0] : null;
   const vendorGstin = gstins.length > 1 ? gstins[1] : null;
 
   const lineItems: ParsedPOLineItem[] = [];
-  
-  // Find table header
+
+  // Find table header row
   const tableStart = lines.findIndex((l) =>
     /Sr\s*No/i.test(l) && /Description|Qty|Unit\s*Price/i.test(l)
   );
-  
+
   if (tableStart >= 0) {
     for (let i = tableStart + 1; i < lines.length; i++) {
       const line = lines[i];
-      if (/^(Total|Grand|Subtotal|GST|Remarks|INR|Rupees|Chennai|Plot|Delivery|Terms)/i.test(line)) break;
+      // Stop at totals/footer/terms - exclude GST No, PAN No, Vendor lines
+      if (/^(Total|Grand|Subtotal|GST\s|Remarks|INR|Rupees|Chennai|Plot|Delivery|Terms|Prepared|Approved|PCD|Page|This\s+order)/i.test(line)) break;
+      if (/GST\s+No|PAN\s+No|Vendor\s+(Code|GST)/i.test(line)) continue;
       if (line.length < 5) continue;
-      
+
+      // Must start with a numeric Sr No
+      if (!/^\d+\s/.test(line)) continue;
+
       // Pattern: QTY UOM UNIT_PRICE TOTAL_PRICE [CGST_RATE CGST_AMT SGST_RATE SGST_AMT]
-      // e.g. "1 Safety inspection tag  24-02-2026  3000 Nos 3.50 10,500.00 9 945 9 945"
       const uomMatch = line.match(/(\d[\d,]*(?:\.\d+)?)\s+(Nos|NOS|EA|PCS|SET|KG|MTR)\s+([\d,.]+)\s+([\d,]+\.\d{2})/i);
       if (uomMatch) {
         const qty = toNum(uomMatch[1]);
         const uom = uomMatch[2].toUpperCase();
         const unitPrice = toNum(uomMatch[3]);
         const totalPrice = toNum(uomMatch[4]);
-        
+
         if (qty > 0 && totalPrice > 0) {
           // Extract description: between sr no and qty
           const qtyIdx = line.indexOf(uomMatch[0]);
@@ -333,14 +353,15 @@ function tryFujitec(text: string): ParsedPOData | null {
           descPart = descPart.replace(/^\d+\s+/, "");
           // Remove dates like 24-02-2026
           descPart = descPart.replace(/\d{1,2}[-/]\d{1,2}[-/]\d{2,4}/g, "").trim();
-          // Remove extra whitespace
+          // Remove part numbers
+          descPart = descPart.replace(/[A-Z]{2,3}-\d{3,}/g, "").trim();
           descPart = descPart.replace(/\s{2,}/g, " ").trim();
           const description = descPart || "Item";
-          
-          // Extract tax info from after total price
+
+          // Extract tax info after total price
           const afterTotal = line.slice(line.indexOf(uomMatch[4]) + uomMatch[4].length).trim();
           const taxNums = afterTotal.match(/(\d+)\s+([\d,]+(?:\.\d+)?)\s+(\d+)\s+([\d,]+(?:\.\d+)?)/);
-          
+
           let cgstPct = 0, cgstAmt = 0, sgstPct = 0, sgstAmt = 0;
           if (taxNums) {
             cgstPct = toNum(taxNums[1]);
@@ -348,7 +369,7 @@ function tryFujitec(text: string): ParsedPOData | null {
             sgstPct = toNum(taxNums[3]);
             sgstAmt = toNum(taxNums[4]);
           }
-          
+
           lineItems.push({
             ...emptyLineItem(),
             description,
@@ -360,7 +381,7 @@ function tryFujitec(text: string): ParsedPOData | null {
             cgst_amount: cgstAmt,
             sgst_percent: sgstPct,
             sgst_amount: sgstAmt,
-            total_amount: totalPrice,
+            total_amount: totalPrice + cgstAmt + sgstAmt,
             suggested_product_type: mapHsnToProductType(""),
           });
         }
@@ -368,24 +389,23 @@ function tryFujitec(text: string): ParsedPOData | null {
     }
   }
 
-  // Fallback: parse table rows without UOM markers (simple Qty / Unit Price / Amount)
+  // Fallback: parse without UOM markers using qty*price=total triplet
   if (lineItems.length === 0 && tableStart >= 0) {
     for (let i = tableStart + 1; i < lines.length; i++) {
       const line = lines[i];
-      if (/^(Total|Grand|Subtotal|GST|Remarks|INR|Rupees|Chennai|Plot|Delivery|Terms)/i.test(line)) break;
+      if (/^(Total|Grand|Subtotal|GST\s|Remarks|INR|Rupees|Chennai|Plot|Delivery|Terms|Prepared|Approved)/i.test(line)) break;
+      if (/GST\s+No|PAN\s+No|Vendor\s+(Code|GST)/i.test(line)) continue;
       if (line.length < 5) continue;
-      
-      // Extract all numbers from the line
+      if (!/^\d+\s/.test(line)) continue;
+
       const allNums: { val: number; idx: number }[] = [];
       const numRe = /(?<![.\d])([\d,]+(?:\.\d{1,2})?)(?![.\d])/g;
       let nm: RegExpExecArray | null;
       while ((nm = numRe.exec(line)) !== null) {
         allNums.push({ val: toNum(nm[1]), idx: nm.index });
       }
-      
+
       if (allNums.length >= 3) {
-        // Skip first number (likely Sr No), then find qty*price=amount triplet
-        // Try from index 1 onwards
         let found = false;
         for (let a = 1; a < allNums.length - 2 && !found; a++) {
           for (let b = a + 1; b < allNums.length - 1 && !found; b++) {
@@ -394,12 +414,10 @@ function tryFujitec(text: string): ParsedPOData | null {
               const price = allNums[b].val;
               const total = allNums[c].val;
               if (qty > 0 && qty < 100000 && price > 0 && total > 0 && Math.abs(total - qty * price) < 1) {
-                // Get description: text between sr no and qty
                 const descEnd = allNums[a].idx;
                 let desc = line.slice(0, descEnd).replace(/^\d+\s+/, "").trim();
                 desc = desc.replace(/\s{2,}/g, " ").trim();
                 if (desc.length > 1 && !/^(Total|Subtotal)$/i.test(desc)) {
-                  // Check for tax columns after total
                   let cgstPct = 0, cgstAmt = 0, sgstPct = 0, sgstAmt = 0;
                   if (c + 4 < allNums.length) {
                     cgstPct = allNums[c + 1].val;
@@ -417,7 +435,7 @@ function tryFujitec(text: string): ParsedPOData | null {
                     cgst_amount: cgstAmt,
                     sgst_percent: sgstPct,
                     sgst_amount: sgstAmt,
-                    total_amount: total,
+                    total_amount: total + cgstAmt + sgstAmt,
                     suggested_product_type: mapHsnToProductType(""),
                   });
                   found = true;
@@ -440,9 +458,9 @@ function tryFujitec(text: string): ParsedPOData | null {
   return {
     po_number: poNumber || "FUJITEC-PO",
     po_date: normalizeDate(poDateRaw),
-    vendor_name: "Fujitec India Pvt Ltd",
+    vendor_name: vendorName,
     contact_no: null,
-    contact_person: null,
+    contact_person: contactPerson,
     contact_email: null,
     gstin: buyerGstin,
     vendor_gstin: vendorGstin,
@@ -479,99 +497,135 @@ function tryContemporary(text: string): ParsedPOData | null {
   const paymentTerms = firstMatch(text, /Payment\s+terms?\s*[:\s]*([^\n]+?)(?=\s*(?:Currency|Contact|Delivery|GSTIN|$))/i);
   const contactPerson = firstMatch(text, /Contact\s+Person\s*[:\s]*([^\n]+?)(?=\s*(?:Contact\s+No|$))/i);
   const contactNo = firstMatch(text, /Contact\s+No\.?\s*[:\s]*([\d\s-+]{10,})/i);
-  
+
   const gstins = extractAllGstins(text);
-  // First is buyer (Contemporary), second is vendor (Super Printers)
   const buyerGstin = gstins.length > 0 ? gstins[0] : null;
   const vendorGstin = gstins.length > 1 ? gstins[1] : null;
 
-  // Extract remarks
   const remarksMatch = text.match(/Remarks\s*[:\s]*\n?(.*?)(?=\n\s*(?:Authorized|Origin|This is a computer|Printed))/is);
   const remarks = remarksMatch ? remarksMatch[1].trim().replace(/\n/g, " ") : null;
 
   const lineItems: ParsedPOLineItem[] = [];
-  
+
   // Find table header
   const tableStart = lines.findIndex((l) =>
     /S\.?\s*No/i.test(l) && /Description|HSN/i.test(l)
   );
-  
+
   if (tableStart >= 0) {
     for (let i = tableStart + 1; i < lines.length; i++) {
       const line = lines[i];
-      if (/^(SubTotal|Total|Base\s+Amount|Tax|Discount|Amount\s+in|Remarks|Origin|Authorized|Printed)/i.test(line)) break;
+      if (/^(SubTotal|Total|Base\s+Amount|Tax|Discount|Amount\s+in|Remarks|Origin|Authorized|Printed|CGST|SGST|IGST)/i.test(line)) break;
       if (line.length < 10) continue;
-      
-      // Strategy: Find NOS/EA UOM marker, then extract amounts after it
-      // Pattern: ... QTY ... UOM_MARKER UNIT_PRICE BASE_AMT CGST_RATE CGST_AMT SGST_RATE SGST_AMT IGST_RATE IGST_AMT
-      // Contemporary format: "1 NOS" is the UOM column (1 unit = 1 NOS)
-      
-      // Try to find the UOM marker pattern: "N NOS" or just "NOS"
-      const uomIdx = line.search(/\d\s+NOS\s+|NOS\s+[\d,.]/i);
+
+      // Must start with a numeric S.No
+      if (!/^\d+\s/.test(line)) continue;
+
+      // Contemporary format: "1  CUT BOARDS 295 X 205 MM  4820  2400.00  UNIT  1 NOS  3.50  8400.00  9.00  756.00  9.00  756.00  0.00  0.00"
+      // Or with "2 NOS": "1  WHITE BOARD 40 X 22CM  4819  4600.00  UNIT  2  NOS  4.95  22770.00  9.00  2049.30  9.00  2049.30  0.00  0.00"
+
+      // Find NOS marker position
+      const uomIdx = line.search(/\bNOS\b/i);
       if (uomIdx < 0) continue;
-      
-      // Find the part after UOM
-      const afterUomMatch = line.match(/(?:\d\s+)?NOS\s+([\d,.]+)\s+([\d,]+\.\d{2})\s+([\d,.]+)\s+([\d,]+\.\d{2})\s+([\d,.]+)\s+([\d,]+\.\d{2})\s+([\d,.]+)\s+([\d,]+\.\d{2})/i);
-      if (!afterUomMatch) continue;
-      
-      const unitPrice = toNum(afterUomMatch[1]);
-      const baseAmount = toNum(afterUomMatch[2]);
-      const cgstRate = toNum(afterUomMatch[3]);
-      const cgstAmt = toNum(afterUomMatch[4]);
-      const sgstRate = toNum(afterUomMatch[5]);
-      const sgstAmt = toNum(afterUomMatch[6]);
-      const igstRate = toNum(afterUomMatch[7]);
-      const igstAmt = toNum(afterUomMatch[8]);
-      
-      // Extract parts before UOM
-      const beforeUom = line.slice(0, uomIdx).trim();
-      
-      // Find qty: the number with decimals just before "UNIT" or "WHSE"
-      // Pattern: "4820  2400.00  UNIT" → HSN=4820, QTY=2400
-      const qtyMatch = beforeUom.match(/([\d,]+\.\d{2})\s+(?:UNIT|WHSE)/i)
-        || beforeUom.match(/([\d,]+\.\d{2})\s*$/);
-      
-      // Find HSN: 4-digit number
-      const hsnMatch = beforeUom.match(/\b(\d{4})\b/);
-      
-      // Extract description
-      let description = beforeUom;
-      // Remove leading S.No
-      description = description.replace(/^\d+\s+/, "");
-      // Remove HSN code
-      if (hsnMatch) description = description.replace(hsnMatch[0], "");
-      // Remove qty and everything after
-      if (qtyMatch) {
-        const qtyIdx2 = description.lastIndexOf(qtyMatch[1]);
-        if (qtyIdx2 >= 0) description = description.slice(0, qtyIdx2);
+
+      // Extract everything after "NOS": unit_price base_amount cgst_rate cgst_amt sgst_rate sgst_amt igst_rate igst_amt
+      const afterNos = line.slice(uomIdx).replace(/^NOS\s+/i, "");
+      const amounts = afterNos.match(/([\d,]+(?:\.\d{1,2})?)/g);
+      if (!amounts || amounts.length < 2) continue;
+
+      const unitPrice = toNum(amounts[0]);
+      const baseAmount = toNum(amounts[1]);
+      let cgstRate = 0, cgstAmt = 0, sgstRate = 0, sgstAmt = 0, igstRate = 0, igstAmt = 0;
+      if (amounts.length >= 8) {
+        cgstRate = toNum(amounts[2]);
+        cgstAmt = toNum(amounts[3]);
+        sgstRate = toNum(amounts[4]);
+        sgstAmt = toNum(amounts[5]);
+        igstRate = toNum(amounts[6]);
+        igstAmt = toNum(amounts[7]);
       }
-      description = description.replace(/\s+/g, " ").trim();
-      
+
+      // Extract parts before NOS
+      const beforeNos = line.slice(0, uomIdx).trim();
+
+      // Find qty: the decimal number before "UNIT" e.g. "4820  2400.00  UNIT  1" or "4820  2400.00  UNIT  2"
+      // Pattern: look for NUMBER.00 UNIT [N] (where N is the multiplier before NOS)
+      const qtyUnitMatch = beforeNos.match(/([\d,]+\.\d{2})\s+UNIT(?:\s+(\d+))?$/i);
       let qty = 0;
-      if (qtyMatch) {
-        qty = toNum(qtyMatch[1]);
-      } else if (unitPrice > 0 && baseAmount > 0) {
-        qty = Math.round(baseAmount / unitPrice);
-      }
-      
-      if (qty > 0 && baseAmount > 0) {
-        lineItems.push({
-          ...emptyLineItem(),
-          description: description || "Item",
-          hsn_code: hsnMatch ? hsnMatch[1] : "",
-          qty,
-          uom: "NOS",
-          unit_price: unitPrice,
-          base_amount: baseAmount,
-          cgst_percent: cgstRate,
-          cgst_amount: cgstAmt,
-          sgst_percent: sgstRate,
-          sgst_amount: sgstAmt,
-          igst_percent: igstRate,
-          igst_amount: igstAmt,
-          total_amount: baseAmount + cgstAmt + sgstAmt + igstAmt,
-          suggested_product_type: mapHsnToProductType(hsnMatch ? hsnMatch[1] : ""),
-        });
+      let hsnCode = "";
+
+      if (qtyUnitMatch) {
+        qty = toNum(qtyUnitMatch[1]);
+        // Part before qty: contains description and HSN
+        const beforeQty = beforeNos.slice(0, beforeNos.lastIndexOf(qtyUnitMatch[0])).trim();
+        // HSN is typically a 4-digit number
+        const hsnMatch = beforeQty.match(/\b(\d{4})\b/);
+        if (hsnMatch) hsnCode = hsnMatch[1];
+
+        // Description: remove S.No, HSN
+        let description = beforeQty.replace(/^\d+\s+/, ""); // remove leading S.No
+        if (hsnCode) description = description.replace(new RegExp("\\b" + hsnCode + "\\b"), "");
+        description = description.replace(/\s{2,}/g, " ").trim();
+
+        if (qty > 0 && baseAmount > 0) {
+          lineItems.push({
+            ...emptyLineItem(),
+            description: description || "Item",
+            hsn_code: hsnCode,
+            qty,
+            uom: "NOS",
+            unit_price: unitPrice,
+            base_amount: baseAmount,
+            cgst_percent: cgstRate,
+            cgst_amount: cgstAmt,
+            sgst_percent: sgstRate,
+            sgst_amount: sgstAmt,
+            igst_percent: igstRate,
+            igst_amount: igstAmt,
+            total_amount: baseAmount + cgstAmt + sgstAmt + igstAmt,
+            suggested_product_type: mapHsnToProductType(hsnCode),
+          });
+        }
+      } else {
+        // Fallback: try to find qty differently
+        // Remove leading S.No
+        let rest = beforeNos.replace(/^\d+\s+/, "");
+        // Find all numbers
+        const nums = rest.match(/([\d,]+(?:\.\d{1,2})?)/g);
+        if (nums && nums.length >= 1) {
+          // Last number before NOS is likely the qty or multiplier
+          qty = toNum(nums[nums.length - 1]);
+          // If qty < 10, might be multiplier, check second-to-last
+          if (qty < 10 && nums.length >= 2) {
+            qty = toNum(nums[nums.length - 2]);
+          }
+          const hsnMatch = rest.match(/\b(\d{4})\b/);
+          if (hsnMatch) hsnCode = hsnMatch[1];
+          let description = rest;
+          if (hsnCode) description = description.replace(new RegExp("\\b" + hsnCode + "\\b"), "");
+          // Remove numbers that look like qty
+          description = description.replace(/([\d,]+\.\d{2})/g, "").replace(/\s+UNIT\s*/i, " ").replace(/\s{2,}/g, " ").trim();
+
+          if (qty > 0 && baseAmount > 0) {
+            lineItems.push({
+              ...emptyLineItem(),
+              description: description || "Item",
+              hsn_code: hsnCode,
+              qty,
+              uom: "NOS",
+              unit_price: unitPrice,
+              base_amount: baseAmount,
+              cgst_percent: cgstRate,
+              cgst_amount: cgstAmt,
+              sgst_percent: sgstRate,
+              sgst_amount: sgstAmt,
+              igst_percent: igstRate,
+              igst_amount: igstAmt,
+              total_amount: baseAmount + cgstAmt + sgstAmt + igstAmt,
+              suggested_product_type: mapHsnToProductType(hsnCode),
+            });
+          }
+        }
       }
     }
   }
@@ -622,15 +676,15 @@ function tryGeneric(text: string): ParsedPOData | null {
     || firstMatch(text, /([A-Z]{2,5}\/?\s*\d{5,})/i);
   const poDateRaw = firstMatch(text, /(?:Date|PO\s+Date)\s*[:\s]*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})/i)
     || firstMatch(text, /(\d{1,2}[/-][A-Za-z]{3}[/-]\d{4})/);
-  const gstin = extractGstin(text);
+  const gstin = extractAllGstins(text)[0] || null;
 
   const lineItems: ParsedPOLineItem[] = [];
-  
+
   for (const line of lines) {
-    // Skip headers and totals
     if (/^(Sr\s*No|S\.No|Sl|Total|Subtotal|Grand|Page|Net|Base|Tax|Discount|Amount)/i.test(line)) continue;
-    
-    // Try UOM-anchored pattern first
+    if (/GST\s+No|PAN\s+No|Vendor\s+(Code|GST)/i.test(line)) continue;
+
+    // UOM-anchored pattern
     const uomMatch = line.match(/(\d[\d,]*(?:\.\d+)?)\s+(NOS|EA|PCS|SET|KG|MTR|DOZ|BOX)\s+([\d,.]+)\s+([\d,]+\.\d{2})/i);
     if (uomMatch) {
       const qty = toNum(uomMatch[1]);
@@ -654,26 +708,21 @@ function tryGeneric(text: string): ParsedPOData | null {
       }
       continue;
     }
-    
-    // Fallback: look for qty * price = total pattern
+
+    // Fallback: qty * price = total triplet
     const nums: number[] = [];
     let m2: RegExpExecArray | null;
     const numRe = /(?<![-\d.])([\d,]+(?:\.\d{1,2})?)(?!\d)/g;
     while ((m2 = numRe.exec(line)) !== null) nums.push(toNum(m2[1]));
-    
+
     if (nums.length >= 3) {
-      // Find the best triplet where qty * price ≈ total (prefer largest qty)
       let bestMatch: { qty: number; price: number; total: number } | null = null;
       for (let a = 0; a < nums.length - 2; a++) {
         for (let b = a + 1; b < nums.length - 1; b++) {
           for (let c = b + 1; c < nums.length; c++) {
-            const qty = nums[a];
-            const price = nums[b];
-            const total = nums[c];
+            const qty = nums[a], price = nums[b], total = nums[c];
             if (qty > 0 && qty < 100000 && price > 0 && total > 0 && Math.abs(total - qty * price) < 1) {
-              if (!bestMatch || qty > bestMatch.qty) {
-                bestMatch = { qty, price, total };
-              }
+              if (!bestMatch || qty > bestMatch.qty) bestMatch = { qty, price, total };
             }
           }
         }
