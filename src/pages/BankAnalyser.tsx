@@ -442,8 +442,7 @@ function parseTransactions(lines, statementId, customLookup = {}) {
 
     const { name, type } = extractCounterparty(details || "Unknown", customLookup);
 
-    const txnId = btoa(statementId + (refNo || "") + date + String(debit || credit))
-      .replace(/[^a-zA-Z0-9]/g, "").substring(0, 40);
+    const txnId = buildTxnId(statementId, txns.length, date, refNo, debit, credit, details || "");
 
     txns.push({
       id: txnId, date, details: details || "Transaction", refNo,
