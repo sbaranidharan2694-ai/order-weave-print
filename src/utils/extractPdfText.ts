@@ -48,40 +48,8 @@ export async function extractTextFromPdf(
 
   for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
     const page = await pdf.getPage(pageNum);
-    const textContent = await page.getTextContent();
-
-    let lastY: number | null = null;
-    let lastXEnd: number | null = null;
-    const lines: string[] = [];
-    let currentLine = "";
-
-    for (const item of textContent.items) {
-      if ("str" in item) {
-        const ti = item as { str: string; transform: number[] };
-        const transform = ti.transform;
-        const x = transform[4];
-        const y = transform[5];
-        const scaleX = transform[0];
-        const width = (ti.str.length * (scaleX || 12)) || 0;
-        const xEnd = x + width;
-
-        if (lastY !== null && Math.abs(y - lastY) > 2) {
-          if (currentLine.trim()) lines.push(fixMidWordSpaces(currentLine.trim()));
-          currentLine = "";
-          lastXEnd = null;
-        }
-        const gap = lastXEnd != null ? x - lastXEnd : 2;
-        if (gap < 2 && currentLine.length > 0) {
-          currentLine += ti.str;
-        } else {
-          currentLine += (currentLine.length > 0 ? " " : "") + ti.str;
-        }
-        lastY = y;
-        lastXEnd = xEnd;
-      }
-    }
-    if (currentLine.trim()) lines.push(fixMidWordSpaces(currentLine.trim()));
-    pageTexts.push(lines.join("\n"));
+    const text = await extractOrderedPageText(page);
+    if (text) pageTexts.push(text);
   }
 
   let finalText = pageTexts.join("\n\n").trim();

@@ -79,6 +79,13 @@ function detectAccountFromBankStatementData(data: BankStatementData): string | n
   return null;
 }
 
+function hasSummaryWithoutRows(data: BankStatementData): boolean {
+  const txCount = data.transactions?.length ?? 0;
+  const credits = Number(data.totalCredits) || 0;
+  const debits = Number(data.totalDebits) || 0;
+  return txCount === 0 && (credits > 0 || debits > 0);
+}
+
 function buildTxnId(
   statementId: string,
   index: number,
