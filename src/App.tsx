@@ -3,11 +3,10 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, Navigate, Outlet } from "react-router-dom";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { isSupabaseConfigured } from "@/integrations/supabase/client";
 import { ThemeProvider } from "next-themes";
-import { AuthProvider, useAuth } from "@/hooks/useAuth";
 
 const Dashboard = lazy(() => import("@/pages/Dashboard"));
 const OrderHistory = lazy(() => import("@/pages/OrderHistory"));
@@ -21,9 +20,6 @@ const ImportPO = lazy(() => import("@/pages/ImportPO"));
 const BankAnalyser = lazy(() => import("@/pages/BankAnalyser"));
 const Attendance = lazy(() => import("@/pages/Attendance"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
-const Login = lazy(() => import("@/pages/Login"));
-const ResetPassword = lazy(() => import("@/pages/ResetPassword"));
-const AuthCallback = lazy(() => import("@/pages/AuthCallback"));
 
 function PageLoader() {
   return (
@@ -62,64 +58,6 @@ function SetupRequired() {
   );
 }
 
-/* ── Protected route wrapper ── */
-function RequireAuth() {
-  const { user, loading } = useAuth();
-  if (loading) return <PageLoader />;
-  if (!user) return <Navigate to="/login" replace />;
-  return (
-    <AppLayout>
-      <Suspense fallback={<PageLoader />}>
-        <Outlet />
-      </Suspense>
-    </AppLayout>
-  );
-}
-
-/* ── Redirect away from login if already authenticated ── */
-function PublicOnly() {
-  const { user, loading } = useAuth();
-  if (loading) return <PageLoader />;
-  if (user) return <Navigate to="/" replace />;
-  return (
-    <Suspense fallback={<PageLoader />}>
-      <Outlet />
-    </Suspense>
-  );
-}
-
-function AppRoutes() {
-  return (
-    <Routes>
-      {/* Public auth routes — redirect to dashboard if already logged in */}
-      <Route element={<PublicOnly />}>
-        <Route path="/login" element={<Login />} />
-      </Route>
-
-      {/* Semi-public routes — accessible with or without auth */}
-      <Route path="/reset-password" element={<Suspense fallback={<PageLoader />}><ResetPassword /></Suspense>} />
-      <Route path="/auth/callback" element={<Suspense fallback={<PageLoader />}><AuthCallback /></Suspense>} />
-
-      {/* Protected routes — require authentication */}
-      <Route element={<RequireAuth />}>
-        <Route path="/" element={<Dashboard />} />
-        <Route path="/orders" element={<OrderHistory />} />
-        <Route path="/orders/new" element={<NewOrder />} />
-        <Route path="/orders/:id" element={<OrderDetail />} />
-        <Route path="/orders/:id/edit" element={<EditOrder />} />
-        <Route path="/import-po" element={<ImportPO />} />
-        <Route path="/bank-analyser" element={<BankAnalyser />} />
-        <Route path="/attendance" element={<Attendance />} />
-        <Route path="/customers" element={<Customers />} />
-        <Route path="/customers/:id" element={<CustomerDetail />} />
-        <Route path="/settings" element={<SettingsPage />} />
-      </Route>
-
-      <Route path="*" element={<Suspense fallback={<PageLoader />}><NotFound /></Suspense>} />
-    </Routes>
-  );
-}
-
 const queryClient = new QueryClient();
 
 const App = () => (
@@ -131,11 +69,31 @@ const App = () => (
         {!isSupabaseConfigured ? (
           <SetupRequired />
         ) : (
-          <AuthProvider>
-            <BrowserRouter>
-              <AppRoutes />
-            </BrowserRouter>
-          </AuthProvider>
+          <BrowserRouter>
+            <Routes>
+              <Route element={<AppLayout><Suspense fallback={<PageLoader />}><></></Suspense></AppLayout>}>
+                {/* Dummy parent — we use AppLayout differently */}
+              </Route>
+            </Routes>
+            <AppLayout>
+              <Suspense fallback={<PageLoader />}>
+                <Routes>
+                  <Route path="/" element={<Dashboard />} />
+                  <Route path="/orders" element={<OrderHistory />} />
+                  <Route path="/orders/new" element={<NewOrder />} />
+                  <Route path="/orders/:id" element={<OrderDetail />} />
+                  <Route path="/orders/:id/edit" element={<EditOrder />} />
+                  <Route path="/import-po" element={<ImportPO />} />
+                  <Route path="/bank-analyser" element={<BankAnalyser />} />
+                  <Route path="/attendance" element={<Attendance />} />
+                  <Route path="/customers" element={<Customers />} />
+                  <Route path="/customers/:id" element={<CustomerDetail />} />
+                  <Route path="/settings" element={<SettingsPage />} />
+                  <Route path="*" element={<NotFound />} />
+                </Routes>
+              </Suspense>
+            </AppLayout>
+          </BrowserRouter>
         )}
       </TooltipProvider>
     </QueryClientProvider>
