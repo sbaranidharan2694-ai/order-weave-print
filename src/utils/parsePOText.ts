@@ -286,7 +286,7 @@ function tryGuindy(text: string): ParsedPOData | null {
 // ─── Fujitec India (SUBCON PURCHASE ORDER) ────────────────────────────────
 
 function tryFujitec(text: string): ParsedPOData | null {
-  if (!/SUBCON PURCHASE ORDER|FUJITEC/i.test(text)) return null;
+  if (!/SUBCON|FUJITEC|List\s*of\s*Subcon|ListOfSubcon/i.test(text)) return null;
 
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
 
