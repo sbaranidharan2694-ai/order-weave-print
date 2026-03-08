@@ -115,7 +115,7 @@ function parseSummaryTotals(joined: string): {
 }
 
 function parseTabularTransactions(lines: string[]): Transaction[] {
-  const DATE_PREFIX = /^(\d{1,2}[-/\s](?:[A-Za-z]{3}|\d{1,2})[-/\s]\d{4})\b/i;
+  const DATE_PREFIX = /^(\d{1,2}[-/\s](?:[A-Za-z]{3}|\d{1,2})[-/\s]?\d{4})/i;
   const blocks: string[] = [];
   let current: string[] = [];
 
