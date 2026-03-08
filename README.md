@@ -132,3 +132,33 @@ GitHub has the latest code; Lovable must **pull** it and **rebuild**. Do this:
 
 4. **Verify**  
    Open the live URL (e.g. `https://superprintersoms.lovable.app`), do a **hard refresh** (Ctrl+Shift+R or Cmd+Shift+R). The header should show a small build date (e.g. **2025-03-07**) when the latest deploy is active.
+
+---
+
+## Import PO — why PO might not import
+
+If **Upload & Parse PO** or **Import as N Order(s)** fails, check:
+
+1. **PDF parsing (AI)**  
+   - Supabase **Edge Function** `parse-po` must be deployed and the function must have **LOVABLE_API_KEY** set (Lovable AI gateway).  
+   - If you see “AI parsing returned no data” or a function error, deploy the edge function and set the secret in Supabase → Edge Functions → parse-po → Secrets.
+
+2. **Saving Purchase Order / Line items**  
+   - Tables `purchase_orders` and `purchase_order_line_items` must exist (run migrations).  
+   - The app shows a clear toast if saving the PO or line items fails (e.g. missing columns or RLS).
+
+3. **Creating orders**  
+   - The **RPC** `generate_order_no` must exist in Supabase (migrations).  
+   - Table `orders` must exist with the expected columns.  
+   - If creation fails, the toast will say “Failed to create orders” and mention `generate_order_no` / orders table.
+
+Use **Manual PO Entry** if PDF parsing is not available; it creates orders without the parse-po edge function.
+
+---
+
+## Bank Analyser — statements and transactions
+
+- All data is in Supabase: **bank_statements**, **bank_transactions**, **bank_custom_lookup**, and the **bank-pdfs** storage bucket.  
+- Migrations: see `supabase/migrations/README_BANK_ANALYSER.md`; run migrations (e.g. via GitHub Actions) so these tables and the bucket exist.  
+- If statements or transactions don’t show: confirm the migrations ran, then refresh the Bank Analyser page; check Supabase → Table Editor for `bank_statements` and `bank_transactions`.  
+- **Max rows**: if you have many transactions, ensure Supabase **Settings → API** “Max Rows” is high enough (e.g. 2000); the app requests up to 2000 transactions per account.
