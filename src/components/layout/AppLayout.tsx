@@ -2,9 +2,10 @@ import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "./AppSidebar";
 import { MobileBottomNav } from "./MobileBottomNav";
 import { QuickStatusModal } from "@/components/QuickStatusModal";
-import { Bell, Zap } from "lucide-react";
+import { Bell, Zap, LogIn, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useOrders } from "@/hooks/useOrders";
+import { useAuth } from "@/contexts/AuthContext";
 import { useMemo, useState } from "react";
 import { parseISO, isBefore } from "date-fns";
 import { useNavigate } from "react-router-dom";
@@ -20,6 +21,7 @@ interface AppLayoutProps {
 
 export function AppLayout({ children }: AppLayoutProps) {
   const { data: orders = [] } = useOrders();
+  const auth = useAuth();
   const [showQuickStatus, setShowQuickStatus] = useState(false);
 
   const notifications = useMemo(() => {
@@ -95,6 +97,27 @@ export function AppLayout({ children }: AppLayoutProps) {
                   </div>
                 </PopoverContent>
               </Popover>
+              {auth?.user ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="gap-1 text-xs text-muted-foreground"
+                  onClick={() => auth.signOut().then(() => window.location.assign("/login"))}
+                >
+                  <LogOut className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Logout</span>
+                </Button>
+              ) : (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="gap-1 text-xs text-muted-foreground"
+                  onClick={() => navigate("/login")}
+                >
+                  <LogIn className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Login</span>
+                </Button>
+              )}
               <div className="h-8 w-8 rounded-full bg-primary flex items-center justify-center">
                 <span className="text-xs font-semibold text-primary-foreground">SP</span>
               </div>

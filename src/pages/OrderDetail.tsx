@@ -35,7 +35,7 @@ const formatContact = (phone: string) => phone.replace(/\D/g, "").slice(-10);
 export default function OrderDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { data: order, isLoading } = useOrder(id);
+  const { data: order, isLoading, isError } = useOrder(id);
   const { data: logs = [] } = useStatusLogs(id);
   const { data: settings } = useSettings();
   const { data: fulfillments = [] } = useFulfillments(id);
@@ -61,6 +61,15 @@ export default function OrderDetail() {
   });
 
   if (!id) return null;
+  if (isError && !isLoading) {
+    return (
+      <div className="max-w-4xl mx-auto space-y-6 animate-fade-in text-center py-12">
+        <h2 className="text-xl font-semibold text-foreground">Order not found</h2>
+        <p className="text-muted-foreground">The order you are looking for may have been deleted or the link is invalid.</p>
+        <Button variant="default" onClick={() => navigate("/orders")}>Back to Orders</Button>
+      </div>
+    );
+  }
   if (isLoading || !order) {
     return (
       <div className="max-w-4xl mx-auto space-y-6 animate-fade-in">

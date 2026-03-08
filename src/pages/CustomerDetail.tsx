@@ -12,7 +12,7 @@ export default function CustomerDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
 
-  const { data: customer, isLoading: loadingCustomer } = useQuery({
+  const { data: customer, isLoading: loadingCustomer, isError: customerError } = useQuery({
     queryKey: ["customer", id],
     queryFn: async () => {
       if (!id) throw new Error("Customer id is required");
@@ -39,6 +39,15 @@ export default function CustomerDetail() {
   });
 
   if (!id) return null;
+  if (customerError && !loadingCustomer) {
+    return (
+      <div className="max-w-4xl mx-auto space-y-6 animate-fade-in text-center py-12">
+        <h2 className="text-xl font-semibold text-foreground">Customer not found</h2>
+        <p className="text-muted-foreground">The customer you are looking for may have been deleted or the link is invalid.</p>
+        <Button variant="default" onClick={() => navigate("/customers")}>Back to Customers</Button>
+      </div>
+    );
+  }
   if (loadingCustomer || !customer) {
     return (
       <div className="max-w-4xl mx-auto space-y-6 animate-fade-in">

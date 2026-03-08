@@ -14,7 +14,7 @@ import { useState, useEffect } from "react";
 export default function EditOrder() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { data: order, isLoading } = useOrder(id);
+  const { data: order, isLoading, isError } = useOrder(id);
   const updateOrder = useUpdateOrder();
   const { data: productTypes = [] } = useProductTypes();
   const { data: settings } = useSettings();
@@ -49,6 +49,15 @@ export default function EditOrder() {
   }, [order]);
 
   if (!id) return null;
+  if (isError && !isLoading) {
+    return (
+      <div className="max-w-4xl mx-auto space-y-6 animate-fade-in text-center py-12">
+        <h2 className="text-xl font-semibold text-foreground">Order not found</h2>
+        <p className="text-muted-foreground">The order you are looking for may have been deleted or the link is invalid.</p>
+        <Button variant="default" onClick={() => navigate("/orders")}>Back to Orders</Button>
+      </div>
+    );
+  }
   if (isLoading || !form) return <div className="flex items-center justify-center h-64 text-muted-foreground">Loading...</div>;
 
   const amt = parseFloat(form.amount) || 0;

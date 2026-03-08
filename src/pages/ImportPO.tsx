@@ -169,7 +169,8 @@ export default function ImportPO() {
       }
 
       if (!result?.success || !result?.data) {
-        toast.error(result?.error || "AI parsing returned no data");
+        const msg = result?.error || "AI parsing returned no data";
+        toast.error(msg + " — Ensure Supabase edge function 'parse-po' is deployed and LOVABLE_API_KEY is set.");
         return;
       }
 
@@ -369,27 +370,37 @@ export default function ImportPO() {
         }
       }
 
-      const poRecord = await createPO.mutateAsync({
-        po_number: poNumber,
-        po_date: poDate,
-        vendor_name: customerName,
-        contact_no: contactNo,
-        contact_person: contactPerson,
-        gstin: customerGstin,
-        delivery_address: (getHeader("delivery_address") as string) || parsed.delivery_address,
-        delivery_date: deliveryDate,
-        payment_terms: paymentTerms,
-        currency: parsed.currency || "INR",
-        total_amount: totals.total || parsed.total_amount || 0,
-        tax_amount: (totals.cgst + totals.sgst + totals.igst) || parsed.tax_amount || 0,
-        po_file_url: null,
-        parsed_data: { ...parsed, ...editHeader, line_items: lineItems },
-        status: "processed",
-      } as any);
+      let poRecord: { id: string };
+      try {
+        poRecord = await createPO.mutateAsync({
+          po_number: poNumber,
+          po_date: poDate,
+          vendor_name: customerName,
+          contact_no: contactNo,
+          contact_person: contactPerson,
+          gstin: customerGstin,
+          delivery_address: (getHeader("delivery_address") as string) || parsed.delivery_address,
+          delivery_date: deliveryDate,
+          payment_terms: paymentTerms,
+          currency: parsed.currency || "INR",
+          total_amount: totals.total || parsed.total_amount || 0,
+          tax_amount: (totals.cgst + totals.sgst + totals.igst) || parsed.tax_amount || 0,
+          po_file_url: null,
+          parsed_data: { ...parsed, ...editHeader, line_items: lineItems },
+          status: "processed",
+        } as any);
+      } catch (poErr: unknown) {
+        const msg = poErr instanceof Error ? poErr.message : String(poErr);
+        toast.error("Failed to save Purchase Order: " + msg);
+        setCreating(false);
+        return;
+      }
 
       const poId = poRecord.id;
 
-      const lineItemRecords = await createPOLineItems.mutateAsync(
+      let lineItemRecords: { id: string }[];
+      try {
+        lineItemRecords = await createPOLineItems.mutateAsync(
         lineItems.map((li, idx) => ({
           purchase_order_id: poId,
           line_item_no: idx + 1,
@@ -402,7 +413,13 @@ export default function ImportPO() {
           mapped_product_type_id: li.mapped_product_type_id || null,
           status: "ordered",
         }))
-      );
+        );
+      } catch (lineErr: unknown) {
+        const msg = lineErr instanceof Error ? lineErr.message : String(lineErr);
+        toast.error("Failed to save PO line items: " + msg);
+        setCreating(false);
+        return;
+      }
 
       const orderNos: string[] = [];
       for (let i = 0; i < lineItems.length; i++) {
@@ -442,16 +459,18 @@ export default function ImportPO() {
 
         orderNos.push(order.order_no);
 
-        await supabase.from("order_tags").insert({
+        const { error: tagErr } = await supabase.from("order_tags").insert({
           order_id: order.id,
           tag_name: "From PO",
         } as any);
+        if (tagErr) console.warn("Order tag insert failed (non-blocking):", tagErr.message);
       }
 
       setCreatedOrders(orderNos);
       setShowSuccess(true);
-    } catch (err: any) {
-      toast.error("Failed to create orders: " + err.message);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      toast.error("Failed to create orders: " + msg + " — Check that generate_order_no RPC and orders table exist in Supabase.");
     } finally {
       setCreating(false);
     }

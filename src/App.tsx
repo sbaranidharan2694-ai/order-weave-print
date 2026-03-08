@@ -3,9 +3,10 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { ThemeProvider } from "next-themes";
+import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 
 const Dashboard = lazy(() => import("@/pages/Dashboard"));
 const OrderHistory = lazy(() => import("@/pages/OrderHistory"));
@@ -18,7 +19,26 @@ const SettingsPage = lazy(() => import("@/pages/SettingsPage"));
 const ImportPO = lazy(() => import("@/pages/ImportPO"));
 const BankAnalyser = lazy(() => import("@/pages/BankAnalyser"));
 const Attendance = lazy(() => import("@/pages/Attendance"));
+const Login = lazy(() => import("@/pages/Login"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
+
+const REQUIRE_AUTH = import.meta.env.VITE_REQUIRE_AUTH === "true";
+
+function ProtectedRoute({ children }: { children: React.ReactNode }) {
+  const auth = useAuth();
+  const location = useLocation();
+  if (auth?.isLoading) {
+    return (
+      <div className="flex min-h-[50vh] items-center justify-center">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+      </div>
+    );
+  }
+  if (REQUIRE_AUTH && !auth?.user) {
+    return <Navigate to="/login" state={{ from: location }} replace />;
+  }
+  return <>{children}</>;
+}
 
 function PageLoader() {
   return (
@@ -32,24 +52,34 @@ const queryClient = new QueryClient();
 
 function AppContent() {
   return (
-    <AppLayout>
-      <Suspense fallback={<PageLoader />}>
-        <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/orders" element={<OrderHistory />} />
-          <Route path="/orders/new" element={<NewOrder />} />
-          <Route path="/orders/:id" element={<OrderDetail />} />
-          <Route path="/orders/:id/edit" element={<EditOrder />} />
-          <Route path="/import-po" element={<ImportPO />} />
-          <Route path="/bank-analyser" element={<BankAnalyser />} />
-          <Route path="/attendance" element={<Attendance />} />
-          <Route path="/customers" element={<Customers />} />
-          <Route path="/customers/:id" element={<CustomerDetail />} />
-          <Route path="/settings" element={<SettingsPage />} />
-          <Route path="*" element={<NotFound />} />
-        </Routes>
-      </Suspense>
-    </AppLayout>
+    <Suspense fallback={<PageLoader />}>
+      <Routes>
+        <Route path="/login" element={<Login />} />
+        <Route
+          path="/*"
+          element={
+            <ProtectedRoute>
+              <AppLayout>
+                <Routes>
+                  <Route path="/" element={<Dashboard />} />
+                  <Route path="/orders" element={<OrderHistory />} />
+                  <Route path="/orders/new" element={<NewOrder />} />
+                  <Route path="/orders/:id" element={<OrderDetail />} />
+                  <Route path="/orders/:id/edit" element={<EditOrder />} />
+                  <Route path="/import-po" element={<ImportPO />} />
+                  <Route path="/bank-analyser" element={<BankAnalyser />} />
+                  <Route path="/attendance" element={<Attendance />} />
+                  <Route path="/customers" element={<Customers />} />
+                  <Route path="/customers/:id" element={<CustomerDetail />} />
+                  <Route path="/settings" element={<SettingsPage />} />
+                  <Route path="*" element={<NotFound />} />
+                </Routes>
+              </AppLayout>
+            </ProtectedRoute>
+          }
+        />
+      </Routes>
+    </Suspense>
   );
 }
 
@@ -60,7 +90,9 @@ const App = () => (
         <Toaster />
         <Sonner />
         <BrowserRouter>
-          <AppContent />
+          <AuthProvider>
+            <AppContent />
+          </AuthProvider>
         </BrowserRouter>
       </TooltipProvider>
     </QueryClientProvider>
