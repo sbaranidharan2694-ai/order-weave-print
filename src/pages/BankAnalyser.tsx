@@ -45,8 +45,6 @@ import {
   updateStatementTransactionCount,
   updateStatementLastValidated,
 } from "@/lib/bankStorage";
-import { useStorageMode } from "@/hooks/useStorageMode";
-import { SharedDataBanner } from "@/components/SharedDataBanner";
 import { friendlyDbError } from "@/lib/utils";
 import { parseDocument, type BankStatementData } from "@/utils/parseDocument";
 import { extractTextFromPdf } from "@/utils/extractPdfText";
