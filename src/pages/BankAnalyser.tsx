@@ -1084,6 +1084,60 @@ function AccountTab({ account, onRefresh, customLookup, onUpdateLookup }) {
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [parsedPreview, setParsedPreview] = useState<{ statementId: string; data: BankStatementData } | null>(null);
   const [isParsingPreview, setIsParsingPreview] = useState(false);
+  const [reprocessing, setReprocessing] = useState(false);
+
+  // Detect if statements have transaction_count > 0 but no actual transactions in DB
+  const needsReprocess = useMemo(() => {
+    return statements.some(s => (s.transactionCount ?? 0) > 0) && hookTransactions.length === 0;
+  }, [statements, hookTransactions.length]);
+
+  const handleReprocessAll = useCallback(async () => {
+    setReprocessing(true);
+    let totalSaved = 0;
+    try {
+      for (const s of statements) {
+        if ((s.transactionCount ?? 0) === 0) continue;
+        // Try to get PDF from storage and re-parse
+        const url = await pdfStorage.retrieve(s.id);
+        if (!url) {
+          console.warn(`[Reprocess] No PDF in storage for statement ${s.id} (${s.fileName})`);
+          toast.error(`Cannot reprocess ${s.fileName} — PDF not in storage. Please re-upload.`);
+          continue;
+        }
+        toast.loading(`Reprocessing ${s.fileName}…`, { id: `reprocess-${s.id}` });
+        try {
+          const { text } = await extractTextFromPdf(url);
+          if (!text || text.trim().length < 30) {
+            toast.error(`No text in ${s.fileName}`, { id: `reprocess-${s.id}` });
+            continue;
+          }
+          const data = parseBankStatement(text);
+          if (data.transactions.length === 0) {
+            toast.error(`No transactions parsed from ${s.fileName}`, { id: `reprocess-${s.id}` });
+            continue;
+          }
+          const accountKey = account.key;
+          const { transactions: txns } = mapBankStatementDataToStatementAndTransactions(data, s.id, accountKey, s.fileName);
+          console.log(`[Reprocess] Inserting ${txns.length} transactions for statement ${s.id}`);
+          await saveTransactionsBatch(txns);
+          totalSaved += txns.length;
+          toast.success(`Reprocessed ${s.fileName}: ${txns.length} transactions saved`, { id: `reprocess-${s.id}` });
+        } catch (err) {
+          console.error(`[Reprocess] Error for ${s.fileName}:`, err);
+          toast.error(`Failed to reprocess ${s.fileName}: ${toErrorMessage(err)}`, { id: `reprocess-${s.id}` });
+        }
+      }
+      if (totalSaved > 0) {
+        toast.success(`Reprocess complete: ${totalSaved} total transactions saved`);
+        await refetch();
+        await onRefresh();
+      }
+    } catch (err) {
+      toast.error(`Reprocess failed: ${toErrorMessage(err)}`);
+    } finally {
+      setReprocessing(false);
+    }
+  }, [statements, account.key, refetch, onRefresh]);
 
   const fileInputRef = useRef(null);
   const dropRef = useRef(null);
