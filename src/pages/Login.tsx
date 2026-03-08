@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,23 +15,49 @@ export default function Login() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email || !password) {
+    const trimmedEmail = email.trim().toLowerCase();
+    if (!trimmedEmail || !password) {
       toast.error("Please fill in all fields");
       return;
     }
     setLoading(true);
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: trimmedEmail,
+        password,
+      });
       if (error) throw error;
 
-      const session = data?.session ?? (await supabase.auth.getSession()).data.session;
-      if (!session) throw new Error("Login succeeded but no session was returned.");
+      // Verify we actually got a session back
+      const session = data?.session;
+      if (!session) {
+        // Fallback: some browsers delay session storage — wait and retry
+        await new Promise((r) => setTimeout(r, 500));
+        const { data: retryData } = await supabase.auth.getSession();
+        if (!retryData?.session) {
+          throw new Error("Login succeeded but session could not be established. Please try again.");
+        }
+      }
 
       toast.success("Welcome back!");
-      window.location.assign("/");
+
+      // Use replace so back button doesn't return to login
+      // Small delay ensures session is persisted to storage before reload
+      setTimeout(() => {
+        window.location.replace("/");
+      }, 300);
     } catch (err: any) {
-      console.error("Login failed:", err);
-      toast.error(err.message || "Authentication failed");
+      const msg = err?.message || "Authentication failed";
+      // Provide user-friendly messages for common errors
+      if (msg.includes("Invalid login")) {
+        toast.error("Invalid email or password. Please try again.");
+      } else if (msg.includes("rate") || msg.includes("too many")) {
+        toast.error("Too many login attempts. Please wait a moment and try again.");
+      } else if (msg.includes("fetch") || msg.includes("network") || msg.includes("Failed to fetch")) {
+        toast.error("Network error. Please check your internet connection and try again.");
+      } else {
+        toast.error(msg);
+      }
     } finally {
       setLoading(false);
     }
@@ -39,13 +65,14 @@ export default function Login() {
 
   const handleForgotPassword = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email) {
+    const trimmedEmail = email.trim().toLowerCase();
+    if (!trimmedEmail) {
       toast.error("Please enter your email");
       return;
     }
     setLoading(true);
     try {
-      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      const { error } = await supabase.auth.resetPasswordForEmail(trimmedEmail, {
         redirectTo: `${window.location.origin}/reset-password`,
       });
       if (error) throw error;
@@ -78,10 +105,14 @@ export default function Login() {
                 <Input
                   id="email"
                   type="email"
+                  inputMode="email"
                   placeholder="you@example.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   autoComplete="email"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
                 />
               </div>
               <div className="space-y-2">
@@ -92,7 +123,7 @@ export default function Login() {
                   placeholder="••••••••"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  autoComplete="off"
+                  autoComplete="current-password"
                 />
               </div>
               <Button type="submit" className="w-full" disabled={loading}>
@@ -116,10 +147,14 @@ export default function Login() {
                 <Input
                   id="reset-email"
                   type="email"
+                  inputMode="email"
                   placeholder="you@example.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   autoComplete="email"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
                 />
               </div>
               <Button type="submit" className="w-full" disabled={loading}>
