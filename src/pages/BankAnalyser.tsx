@@ -75,7 +75,7 @@ function detectAccountFromBankStatementData(data: BankStatementData): string | n
   const holder = (data.accountHolder ?? "").toUpperCase();
   if (num.includes("0244020080155") || holder.includes("SUPER SCREENS")) return "superscreens";
   if (num.includes("0244011477662") || holder.includes("REVATHY")) return "revathy";
-  if (holder.includes("SUPER PRINTERS")) return "superprinters";
+  if (num.includes("0244020077280") || holder.includes("SUPER PRINTERS")) return "superprinters";
   return null;
 }
 
@@ -158,7 +158,7 @@ function detectAccount(text) {
   const t = text.toUpperCase();
   if (t.includes("REVATHY BHARANIDHARAN") || t.includes("0244011477662")) return "revathy";
   if (t.includes("SUPER SCREENS") || t.includes("0244020080155")) return "superscreens";
-  if (t.includes("SUPER PRINTERS")) return "superprinters";
+  if (t.includes("SUPER PRINTERS") || t.includes("0244020077280")) return "superprinters";
   return null;
 }
 
@@ -797,7 +797,7 @@ function OverviewTab({
         throw new Error("No text extracted — PDF may be image/scanned only");
       }
       const parsed = parseBankStatement(text);
-      const assignedTab = getTabForAccount(parsed.accountNumber ?? "");
+      const assignedTab = getTabForAccount(parsed.accountNumber ?? "") || detectAccountFromBankStatementData(parsed);
       if (!assignedTab) {
         throw new Error(`Unknown account: ${parsed.accountNumber ?? "—"}. Add to ACCOUNT_TAB_MAP if needed.`);
       }
@@ -826,7 +826,7 @@ function OverviewTab({
       const { text } = await extractTextFromPdf(entry.file, password);
       if (!text || text.trim().length < 30) throw new Error("No text extracted");
       const parsed = parseBankStatement(text);
-      const assignedTab = getTabForAccount(parsed.accountNumber ?? "");
+      const assignedTab = getTabForAccount(parsed.accountNumber ?? "") || detectAccountFromBankStatementData(parsed);
       if (!assignedTab) throw new Error(`Unknown account: ${parsed.accountNumber ?? "—"}`);
       setUploads(prev => prev.map(u => u.id === entry.id ? { ...u, status: "done", data: parsed, assignedTab } : u));
       toast.success(`${parsed.transactions.length} transactions saved`);

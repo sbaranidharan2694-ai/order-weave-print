@@ -60,6 +60,19 @@ function toNum(raw: string | number): number {
   return parseFloat(String(raw).replace(/[^0-9.]/g, "")) || 0;
 }
 
+function normalizeAccountNumber(raw: string): string {
+  return raw.replace(/\D/g, "").trim();
+}
+
+function normalizeDateToken(raw: string): string {
+  const s = raw.trim().replace(/[\s/]+/g, "-");
+  const m = s.match(/^(\d{1,2})-([A-Za-z]{3}|\d{1,2})-(\d{4})$/);
+  if (!m) return raw.trim();
+  const [, d, mon, y] = m;
+  if (/^\d{1,2}$/.test(mon)) return `${d.padStart(2, "0")}-${mon.padStart(2, "0")}-${y}`;
+  return `${d.padStart(2, "0")}-${mon.slice(0, 1).toUpperCase()}${mon.slice(1, 3).toLowerCase()}-${y}`;
+}
+
 function categorise(detail: string): string {
   const d = detail.toUpperCase();
   if (d.includes("GOOGLE") || d.includes("IMPS")) return "Digital Receipt";
@@ -72,105 +85,150 @@ function categorise(detail: string): string {
   return "Other";
 }
 
-export function parseBankStatement(rawText: string): BankStatementData {
-  // Split into lines, remove blanks (CSB Bank format)
-  const lines = rawText
-    .split("\n")
-    .map((l) => l.trim())
-    .filter((l) => l.length > 0);
-
-  const joined = lines.join(" ");
-
-  // ── Header fields ─────────────────────────────────────────────
-  const accountHolder = lines[0] ?? "";
-
-  const accountNumber =
-    joined.match(/Account\s+Number\s*[:\s]+(\d{10,16})/i)?.[1] ?? "";
-
-  const accountType =
-    joined.match(/Type\s+of\s+Account\s*[:\s]+(SAVING|CURRENT)/i)?.[1] ?? "";
-
-  const branch =
-    joined.match(/Home\s+Branch\s*[:\s]+([A-Z]+)/i)?.[1] ?? "";
-
-  const ifsc =
-    joined.match(/IFSC\s+Code\s*[:\s]+([A-Z0-9]{11})/i)?.[1] ?? "";
-
-  const pm = joined.match(
-    /period[:\s]+(\d{2}[-\s][A-Za-z]{3}[-\s]\d{4})\s+to\s+(\d{2}[-\s][A-Za-z]{3}[-\s]\d{4})/i
-  );
-  const periodFrom = pm?.[1] ?? "";
-  const periodTo = pm?.[2] ?? "";
-
-  const openingBalance = toNum(
-    joined.match(/Opening\s+Balance\s+INR\s+([\d,]+\.\d{2})/i)?.[1] ?? "0"
-  );
-  const totalCredits = toNum(
-    joined.match(/Total\s+Credits\s+INR\s+([\d,]+\.\d{2})/i)?.[1] ?? "0"
-  );
-  const totalDebits = toNum(
-    joined.match(/Total\s+Debits\s+INR\s+([\d,]+\.\d{2})/i)?.[1] ?? "0"
-  );
-  const closingBalance = toNum(
-    joined.match(/Closing\s+Balance\s+INR\s+([\d,]+\.\d{2})/i)?.[1] ?? "0"
+function parseSummaryTotals(joined: string): {
+  openingBalance: number;
+  totalDebits: number;
+  totalCredits: number;
+  closingBalance: number;
+} {
+  const tableMatch = joined.match(
+    /Opening\s+Balance[\s\S]{0,140}?([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})/i,
   );
 
-  // ── Transaction parsing ───────────────────────────────────────
-  // CSB date format: "20 FEB 2026"
-  const DATE_RE = /^(\d{1,2}\s+[A-Z]{3}\s+\d{4})\s+(.*)/;
+  if (tableMatch) {
+    return {
+      openingBalance: toNum(tableMatch[1]),
+      totalDebits: toNum(tableMatch[2]),
+      totalCredits: toNum(tableMatch[3]),
+      closingBalance: toNum(tableMatch[4]),
+    };
+  }
+
+  return {
+    openingBalance: toNum(joined.match(/Opening\s+Balance\s+INR\s+([\d,]+\.\d{2})/i)?.[1] ?? "0"),
+    totalCredits: toNum(joined.match(/Total\s+Credits\s+INR\s+([\d,]+\.\d{2})/i)?.[1] ?? "0"),
+    totalDebits: toNum(joined.match(/Total\s+Debits\s+INR\s+([\d,]+\.\d{2})/i)?.[1] ?? "0"),
+    closingBalance: toNum(joined.match(/Closing\s+Balance\s+INR\s+([\d,]+\.\d{2})/i)?.[1] ?? "0"),
+  };
+}
+
+function parseTabularTransactions(lines: string[]): Transaction[] {
+  const DATE_PREFIX = /^(\d{1,2}[-/\s](?:[A-Za-z]{3}|\d{1,2})[-/\s]\d{4})\b/i;
+  const blocks: string[] = [];
+  let current: string[] = [];
+
+  for (const rawLine of lines) {
+    const line = rawLine.replace(/\|/g, " ").replace(/\s+/g, " ").trim();
+    if (!line) continue;
+
+    if (DATE_PREFIX.test(line)) {
+      if (current.length) blocks.push(current.join(" "));
+      current = [line];
+      continue;
+    }
+
+    if (
+      current.length > 0 &&
+      !/^(TRANS\s+DATE|VALUE\s+DATE|DEBITS?|CREDITS?|BALANCE|CSB\s+24x7|PAGE\s+\d+)/i.test(line)
+    ) {
+      current.push(line);
+    }
+  }
+  if (current.length) blocks.push(current.join(" "));
+
+  const out: Transaction[] = [];
+
+  for (const block of blocks) {
+    const clean = block.replace(/\s+/g, " ").trim();
+    const start = clean.match(DATE_PREFIX);
+    if (!start) continue;
+
+    const date = normalizeDateToken(start[1]);
+    let rest = clean.slice(start[0].length).trim();
+
+    const valueDate = rest.match(DATE_PREFIX);
+    if (valueDate) {
+      rest = rest.slice(valueDate[0].length).trim();
+    }
+
+    const endNums = rest.match(/([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})$/);
+    if (!endNums) continue;
+
+    const debit = toNum(endNums[1]);
+    const credit = toNum(endNums[2]);
+    const balance = toNum(endNums[3]);
+    let body = rest.slice(0, endNums.index).trim();
+
+    const refMatches = [...body.matchAll(/\b([A-Z0-9]{6,20})\b/g)];
+    const refNo = refMatches.length ? (refMatches[refMatches.length - 1][1] ?? "") : "";
+    if (refNo) {
+      body = body.replace(new RegExp(`\\b${refNo}\\b`), "").replace(/\s+/g, " ").trim();
+    }
+
+    if (!body) body = "Transaction";
+
+    const isDebit = debit > 0 && credit === 0;
+    out.push({
+      date,
+      details: body,
+      refNo,
+      debit,
+      credit,
+      balance,
+      type: isDebit ? "debit" : "credit",
+      counterparty: categorise(body),
+    });
+  }
+
+  const deduped = Array.from(
+    new Map(out.map((t) => [`${t.date}|${t.refNo}|${t.debit}|${t.credit}|${t.balance}|${t.details}`, t])).values(),
+  );
+
+  return deduped;
+}
+
+function parseLegacyTransactions(lines: string[]): Transaction[] {
+  const DATE_RE = /^(\d{1,2}(?:[-/\s])[A-Z]{3}(?:[-/\s])\d{4})\s+(.*)/i;
   const BAL_RE = /INR\s+([\d,]+\.\d{2})\s*Cr/i;
   const AMOUNT_RE = /\b(\d{1,3}(?:,\d{3})*\.\d{2})\b/g;
 
   const transactions: Transaction[] = [];
-
   let i = 0;
 
   while (i < lines.length) {
     const dateMatch = lines[i].match(DATE_RE);
-
-    // Skip lines that don't start with a date
     if (!dateMatch) {
       i++;
       continue;
     }
 
-    const date = dateMatch[1];
+    const date = normalizeDateToken(dateMatch[1]);
     const detailParts: string[] = [dateMatch[2]];
 
-    // Advance and collect continuation lines
     let j = i + 1;
     while (j < lines.length) {
       const nextLine = lines[j];
-      // Stop if next line starts a new transaction date
       if (DATE_RE.test(nextLine)) break;
-      // Stop at end of statement
       if (/end\s+of\s+statement/i.test(nextLine)) break;
       detailParts.push(nextLine);
       j++;
     }
 
     const fullText = detailParts.join(" ");
-
-    // Extract running balance
     const balMatch = fullText.match(BAL_RE);
     const balance = balMatch ? toNum(balMatch[1]) : 0;
-
-    // Extract reference number (long digit string 12–20 digits)
     const refMatch = fullText.match(/\b(\d{12,20})\b/);
     const refNo = refMatch?.[1] ?? "";
 
-    // Classify direction
     const isDebit = /UPI\/DR|ATW\s+using|Chq\s+Paid|Issuer\s+ATM\s+Fin|DEBIT/i.test(fullText);
     const isCredit = /UPI\/CR|NEFT\s+Cr--|IMPS--|NEFT\s+Cr\b|CREDIT/i.test(fullText);
 
-    // Find smallest amount (that isn't the balance) as the transaction amount
     const allAmounts = [...fullText.matchAll(AMOUNT_RE)]
       .map((m) => toNum(m[1]))
       .filter((a) => a > 0 && Math.abs(a - balance) > 0.01);
 
     const txAmount = allAmounts.length > 0 ? Math.min(...allAmounts) : 0;
 
-    // Clean up details text
     const details = fullText
       .replace(BAL_RE, "")
       .replace(/\b\d{12,20}\b/g, "")
@@ -178,7 +236,6 @@ export function parseBankStatement(rawText: string): BankStatementData {
       .replace(/\s+/g, " ")
       .trim();
 
-    // Only push if we have a meaningful balance or amount
     if (balance > 0 || txAmount > 0) {
       transactions.push({
         date,
@@ -192,13 +249,57 @@ export function parseBankStatement(rawText: string): BankStatementData {
       });
     }
 
-    // Move to the next date line
     i = j;
   }
 
-  console.log(
-    `[parseBankStatement] ${accountHolder} | ${accountNumber} | ${transactions.length} transactions`
+  return transactions;
+}
+
+export function parseBankStatement(rawText: string): BankStatementData {
+  const lines = rawText
+    .split("\n")
+    .map((l) => l.replace(/[|#]/g, " ").replace(/\s+/g, " ").trim())
+    .filter((l) => l.length > 0);
+
+  const joined = lines.join(" ");
+
+  const accountHolderMatch =
+    joined.match(/\b(SUPER\s+PRINTERS|SUPER\s+SCREENS|REVATHY\s+BHARANIDHARAN)\b/i)?.[1] ?? "";
+
+  const accountHolder = accountHolderMatch
+    ? accountHolderMatch.replace(/\s+/g, " ").trim()
+    : lines.find((l) => !/(^CSB\s+BANK|TRUSTED\s+HERITAGE|CUSTOMER\s+ID|ACCOUNT\s+NUMBER|HOME\s+BRANCH|STATEMENT\s+OF\s+ACCOUNT)/i.test(l)) ?? "";
+
+  const rawAcc = joined.match(/Account\s+Number\s*[:\s]+([\d\s-]{10,24})/i)?.[1] ?? "";
+  let accountNumber = normalizeAccountNumber(rawAcc);
+  if (!accountNumber) {
+    const known = Object.keys(ACCOUNT_TAB_MAP).find((n) => joined.includes(n));
+    accountNumber = known ?? "";
+  }
+
+  const accountType = joined.match(/Type\s+of\s+Account\s*[:\s]+(SAVING|CURRENT)/i)?.[1] ?? "";
+  const branch = joined.match(/Home\s+Branch\s*[:\s]+([A-Z\s]+)/i)?.[1]?.trim() ?? "";
+  const ifsc = joined.match(/IFSC\s+Code\s*[:\s]+([A-Z0-9]{11})/i)?.[1] ?? "";
+
+  const periodMatch = joined.match(
+    /period\s*:?[\s]+(\d{1,2}[-/\s][A-Za-z]{3}[-/\s]\d{4})\s+to\s+(\d{1,2}[-/\s][A-Za-z]{3}[-/\s]\d{4})/i,
   );
+
+  const periodFrom = periodMatch ? normalizeDateToken(periodMatch[1]) : "";
+  const periodTo = periodMatch ? normalizeDateToken(periodMatch[2]) : "";
+
+  const summary = parseSummaryTotals(joined);
+
+  const tabularTransactions = parseTabularTransactions(lines);
+  const legacyTransactions = parseLegacyTransactions(lines);
+  const transactions = tabularTransactions.length >= legacyTransactions.length ? tabularTransactions : legacyTransactions;
+
+  const totalCredits = summary.totalCredits > 0 ? summary.totalCredits : transactions.reduce((s, t) => s + (t.credit || 0), 0);
+  const totalDebits = summary.totalDebits > 0 ? summary.totalDebits : transactions.reduce((s, t) => s + (t.debit || 0), 0);
+  const openingBalance = summary.openingBalance > 0 ? summary.openingBalance : transactions[0]?.balance ?? 0;
+  const closingBalance = summary.closingBalance > 0 ? summary.closingBalance : transactions[transactions.length - 1]?.balance ?? 0;
+
+  console.log(`[parseBankStatement] ${accountHolder} | ${accountNumber} | ${transactions.length} transactions`);
 
   return {
     docType: "bank_statement",
