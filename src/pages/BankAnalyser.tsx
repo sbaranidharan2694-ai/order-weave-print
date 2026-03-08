@@ -79,6 +79,22 @@ function detectAccountFromBankStatementData(data: BankStatementData): string | n
   return null;
 }
 
+function buildTxnId(
+  statementId: string,
+  index: number,
+  date: string,
+  refNo: string,
+  debit: number,
+  credit: number,
+  details: string,
+): string {
+  const amountPaise = Math.round((debit || credit || 0) * 100);
+  const safeDate = (date || "").replace(/[^0-9A-Za-z]/g, "").slice(0, 16);
+  const safeRef = (refNo || "").replace(/[^0-9A-Za-z]/g, "").slice(-16);
+  const safeDetails = (details || "").toUpperCase().replace(/[^0-9A-Z]/g, "").slice(0, 24);
+  return `${statementId}_${index}_${safeDate}_${safeRef}_${amountPaise}_${safeDetails || "TXN"}`;
+}
+
 /** Map BankStatementData (PDF.js parser) to our statement + transactions. */
 function mapBankStatementDataToStatementAndTransactions(
   data: BankStatementData,
@@ -91,10 +107,8 @@ function mapBankStatementDataToStatementAndTransactions(
     const date = t.date ?? "";
     const debit = Number(t.debit) || 0;
     const credit = Number(t.credit) || 0;
-    const txnId = btoa(statementId + String(i) + refNo + date + String(debit || credit))
-      .replace(/[^a-zA-Z0-9]/g, "")
-      .substring(0, 40);
     const counterpartyVal = (t as { counterparty?: string }).counterparty ?? extractParty(t.details ?? "");
+    const txnId = buildTxnId(statementId, i, date, refNo, debit, credit, t.details ?? "");
     return {
       id: txnId,
       statementId,
