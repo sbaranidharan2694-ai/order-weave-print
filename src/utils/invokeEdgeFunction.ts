@@ -1,34 +1,55 @@
-import { supabase } from "@/integrations/supabase/client";
-import { FunctionsHttpError } from "@supabase/supabase-js";
+const env = import.meta.env as Record<string, string | undefined>;
+const SUPABASE_URL =
+  env.VITE_SUPABASE_URL ?? env.SUPABASE_URL ?? "";
+const SUPABASE_KEY =
+  env.VITE_SUPABASE_PUBLISHABLE_KEY ?? env.VITE_SUPABASE_ANON_KEY ?? env.SUPABASE_ANON_KEY ?? "";
 
 /**
  * Invoke a Supabase Edge Function and return the parsed result.
- * On non-2xx response, reads the response body (error.message or body.error) so the UI can show the actual server error
+ * Uses fetch so we can always read the response body on non-2xx and show the real error
  * (e.g. "LOVABLE_API_KEY not configured" instead of "Edge Function returned a non-2xx status code").
  */
 export async function invokeEdgeFunction<T = unknown>(
   name: string,
   body: Record<string, unknown>
 ): Promise<{ data: T | null; error: string | null }> {
-  const { data, error } = await supabase.functions.invoke<T & { success?: boolean; error?: string }>(name, {
-    body,
+  const url = `${SUPABASE_URL.replace(/\/$/, "")}/functions/v1/${name}`;
+  const authHeader = SUPABASE_KEY ? { Authorization: `Bearer ${SUPABASE_KEY}` } : {};
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeader,
+    },
+    body: JSON.stringify(body),
   });
 
-  if (error) {
-    let message = error.message || "Unknown error";
-    if (error instanceof FunctionsHttpError && error.context) {
-      try {
-        const res = error.context as Response;
-        if (typeof res.json === "function") {
-          const parsed = await res.json();
-          if (parsed && typeof parsed.error === "string") message = parsed.error;
+  const contentType = response.headers.get("Content-Type") ?? "";
+  const isJson = contentType.includes("application/json");
+
+  if (!response.ok) {
+    let message = `Request failed (${response.status})`;
+    try {
+      if (isJson) {
+        const parsed = await response.json();
+        if (parsed && typeof parsed.error === "string" && parsed.error.trim()) {
+          message = parsed.error;
         }
-      } catch {
-        // ignore JSON parse failure
+      } else {
+        const text = await response.text();
+        if (text && text.trim()) message = text.trim().slice(0, 300);
       }
+    } catch {
+      // use default message
     }
     return { data: null, error: message };
   }
 
-  return { data: data as T, error: null };
+  try {
+    const data = isJson ? await response.json() : await response.text();
+    return { data: data as T, error: null };
+  } catch (e) {
+    return { data: null, error: "Invalid response from server" };
+  }
 }

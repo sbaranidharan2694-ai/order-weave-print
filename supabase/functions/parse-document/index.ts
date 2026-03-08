@@ -1,30 +1,37 @@
+// Supabase Edge Function: parse-document
+// Parses bank statement PDF text into structured JSON using AI.
+// Uses LOVABLE_API_KEY if set (Lovable), else GOOGLE_GEMINI_API_KEY (free at https://aistudio.google.com/apikey).
+// Used by Bank Analyser with parseMode: "bank_statement".
+// Request: POST { "pdfText": "...", "parseMode": "bank_statement" | "auto" }
+// Response: { "success": true, "data": { account_holder, transactions, ... } } or { "error": "..." }
+
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
-const corsHeaders = {
+const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-const bankStatementPrompt = `You are a Bank Statement parser for Indian banks (especially CSB Bank / Catholic Syrian Bank).
+const BANK_STATEMENT_PROMPT = `You are a Bank Statement parser for Indian banks (especially CSB Bank / Catholic Syrian Bank).
 Extract ALL data from the bank statement text. Be extremely thorough — extract EVERY transaction row.
 
 CRITICAL RULES:
-1. Parse ALL transactions — do not skip any rows
-2. Dates: parse as YYYY-MM-DD. Handle formats: DD-MMM-YYYY, DD/MM/YYYY, DD-MMMYYYY (no separator), DDMONYYYY
-3. For each transaction, determine if it's a debit or credit based on the amount columns
-4. "counterparty" = extract the other party name from the transaction details (e.g., from NEFT/RTGS/UPI descriptions)
-5. Balance must be tracked — each row should have the running balance
-6. Extract account holder name, account number, branch, IFSC, period, opening/closing balances
-7. Total credits and total debits should be the sum of all credit and debit transactions respectively
+1. Parse ALL transactions — do not skip any rows.
+2. Dates: use YYYY-MM-DD. Handle DD-MMM-YYYY, DD/MM/YYYY, DD-MMMYYYY, DDMONYYYY.
+3. For each transaction, set debit and credit from the amount columns (one will be 0).
+4. "counterparty" = other party name from details (e.g. NEFT/RTGS/UPI payee/payer).
+5. Each row should have the running balance after that transaction.
+6. Extract account_holder, account_number, branch, ifsc, period_from, period_to, opening_balance, closing_balance.
+7. total_credits = sum of all credit amounts; total_debits = sum of all debit amounts.
 
-Return ONLY valid JSON with no markdown fences, no explanation:
+Return ONLY valid JSON with no markdown fences, no explanation. Use exactly these field names (snake_case):
 {
   "doc_type": "bank_statement",
   "account_holder": "",
   "account_number": "",
-  "account_type": "",
+  "account_type": "SAVING or CURRENT",
   "bank_name": "",
   "branch": "",
   "ifsc": "",
@@ -47,144 +54,170 @@ Return ONLY valid JSON with no markdown fences, no explanation:
   ]
 }`;
 
-const purchaseOrderPrompt = `You are a Purchase Order parser for a printing press business in India.
-Extract ALL data from the purchase order text.
+function jsonResponse(status: number, body: Record<string, unknown>): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+  });
+}
 
-Return ONLY valid JSON with no markdown fences, no explanation:
-{
-  "doc_type": "purchase_order",
-  "po_number": "",
-  "po_date": "YYYY-MM-DD",
-  "buyer": { "name": "", "gst": "", "pan": "", "address": "" },
-  "vendor": { "name": "", "code": "", "address": "" },
-  "items": [{ "sno": "", "description": "", "hsn": "", "uom": "", "qty": 0, "rate": 0, "delivery_date": "", "sgst_pct": 0, "cgst_pct": 0, "value_before_tax": 0, "total_value": 0 }],
-  "grand_total": 0,
-  "grand_total_words": "",
-  "payment_terms": "",
-  "delivery_terms": "",
-  "order_handled_by": "",
-  "order_handler_email": ""
-}`;
+function stripMarkdownJson(raw: string): string {
+  return raw
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/\s*```\s*$/g, "")
+    .trim();
+}
 
-serve(async (req: Request) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { status: 200, headers: corsHeaders });
+function detectMode(pdfText: string): "bank_statement" | "purchase_order" {
+  const upper = pdfText.toUpperCase();
+  if (
+    upper.includes("STATEMENT OF ACCOUNT") ||
+    upper.includes("OPENING BALANCE") ||
+    upper.includes("CLOSING BALANCE") ||
+    upper.includes("TOTAL CREDITS") ||
+    upper.includes("TOTAL DEBITS")
+  ) {
+    return "bank_statement";
   }
+  if (
+    upper.includes("PURCHASE ORDER") ||
+    upper.includes("PO NO") ||
+    upper.includes("VENDOR CODE") ||
+    upper.includes("SUBCON PURCHASE ORDER")
+  ) {
+    return "purchase_order";
+  }
+  return "bank_statement";
+}
 
-  try {
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) {
-      return new Response(
-        JSON.stringify({ error: "LOVABLE_API_KEY not configured. Set it in Supabase → Edge Functions → parse-document → Secrets." }),
-        { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
-    }
+async function callAI(systemPrompt: string, userMessage: string): Promise<{ text: string } | { error: string; status: number }> {
+  const lovableKey = Deno.env.get("LOVABLE_API_KEY")?.trim();
+  const googleKey = Deno.env.get("GOOGLE_GEMINI_API_KEY")?.trim() || Deno.env.get("GEMINI_API_KEY")?.trim();
 
-    const body = await req.json();
-    const { pdfText, parseMode = "auto" } = body;
-
-    if (!pdfText || typeof pdfText !== "string") {
-      return new Response(
-        JSON.stringify({ error: "pdfText is required" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    if (pdfText.length > 500_000) {
-      return new Response(
-        JSON.stringify({ error: "Text too large. Maximum 500KB allowed." }),
-        { status: 413, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    // Detect document type
-    let mode = parseMode;
-    if (mode === "auto") {
-      const upper = pdfText.toUpperCase();
-      if (
-        upper.includes("STATEMENT OF ACCOUNT") ||
-        upper.includes("OPENING BALANCE") ||
-        upper.includes("CLOSING BALANCE") ||
-        upper.includes("TOTAL CREDITS")
-      ) {
-        mode = "bank_statement";
-      } else if (
-        upper.includes("PURCHASE ORDER") ||
-        upper.includes("PO NO") ||
-        upper.includes("VENDOR CODE")
-      ) {
-        mode = "purchase_order";
-      } else {
-        mode = "bank_statement";
-      }
-    }
-
-    const prompt = mode === "bank_statement" ? bankStatementPrompt : purchaseOrderPrompt;
-
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+  if (lovableKey) {
+    const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
+      headers: { Authorization: `Bearer ${lovableKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
         model: "google/gemini-2.5-flash",
-        messages: [
-          { role: "system", content: prompt },
-          { role: "user", content: "Parse this document:\n\n" + pdfText },
-        ],
+        messages: [{ role: "system", content: systemPrompt }, { role: "user", content: userMessage }],
         stream: false,
       }),
     });
-
-    if (!response.ok) {
-      const errText = await response.text();
-      console.error("Lovable AI gateway error:", response.status, errText);
-      if (response.status === 429) {
-        return new Response(
-          JSON.stringify({ error: "Rate limit exceeded, please try again later." }),
-          { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-      if (response.status === 402) {
-        return new Response(
-          JSON.stringify({ error: "AI credits exhausted. Please add funds to your Lovable workspace." }),
-          { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-      return new Response(
-        JSON.stringify({ error: "AI parsing failed" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+    if (res.status === 429) return { error: "Rate limit exceeded, please try again later.", status: 429 };
+    if (res.status === 402) return { error: "AI credits exhausted. Please add funds to your Lovable workspace.", status: 402 };
+    if (!res.ok) {
+      console.error("Lovable AI error:", res.status, await res.text().then((t) => t.slice(0, 300)));
+      return { error: "AI parsing failed. Please try again.", status: 500 };
     }
-
-    const data = await response.json();
-    const rawText = data?.choices?.[0]?.message?.content ?? "";
-
-    const cleanText = rawText
-      .replace(/```json\s*/gi, "")
-      .replace(/```\s*/g, "")
-      .trim();
-
-    let parsed: Record<string, unknown>;
-    try {
-      parsed = JSON.parse(cleanText);
-    } catch {
-      console.error("Failed to parse AI response:", rawText.substring(0, 500));
-      throw new Error("Could not parse AI response as JSON");
-    }
-
-    return new Response(
-      JSON.stringify({ success: true, data: parsed }),
-      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "Document parsing failed. Please try again.";
-    console.error("parse-document error:", error);
-
-    return new Response(
-      JSON.stringify({ success: false, error: message }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    const data = await res.json().catch(() => null);
+    const text = data?.choices?.[0]?.message?.content ?? "";
+    if (!text.trim()) return { error: "AI returned no content.", status: 500 };
+    return { text };
   }
+
+  if (googleKey) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${encodeURIComponent(googleKey)}`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: systemPrompt }] },
+        contents: [{ parts: [{ text: userMessage }] }],
+        generationConfig: { temperature: 0.2, maxOutputTokens: 8192 },
+      }),
+    });
+    if (res.status === 429) return { error: "Rate limit exceeded, please try again later.", status: 429 };
+    if (res.status === 403) {
+      const errText = await res.text();
+      if (/quota|billing|api key/i.test(errText)) {
+        return { error: "Gemini API quota exceeded or invalid key. Get a free key at https://aistudio.google.com/apikey", status: 403 };
+      }
+    }
+    if (!res.ok) {
+      console.error("Gemini API error:", res.status, await res.text().then((t) => t.slice(0, 300)));
+      return { error: "AI parsing failed. Please try again.", status: 500 };
+    }
+    const data = await res.json().catch(() => null);
+    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+    if (!text.trim()) return { error: "AI returned no content.", status: 500 };
+    return { text };
+  }
+
+  return {
+    error: "No AI API key. Set LOVABLE_API_KEY (Lovable) or GOOGLE_GEMINI_API_KEY (free at https://aistudio.google.com/apikey) in Edge Function Secrets.",
+    status: 503,
+  };
+}
+
+serve(async (req: Request): Promise<Response> => {
+  if (req.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: CORS_HEADERS });
+  }
+
+  if (req.method !== "POST") {
+    return jsonResponse(405, { error: "Method not allowed. Use POST." });
+  }
+
+  let pdfText: string;
+  let parseMode: string;
+  try {
+    const body = (await req.json()) as { pdfText?: unknown; parseMode?: unknown };
+    if (body == null || typeof body !== "object") {
+      return jsonResponse(400, { error: "Request body must be a JSON object." });
+    }
+    if (body.pdfText == null || body.pdfText === "") {
+      return jsonResponse(400, { error: "pdfText is required and cannot be empty." });
+    }
+    if (typeof body.pdfText !== "string") {
+      return jsonResponse(400, { error: "pdfText must be a string." });
+    }
+    pdfText = body.pdfText;
+    parseMode = typeof body.parseMode === "string" ? body.parseMode : "auto";
+  } catch {
+    return jsonResponse(400, { error: "Invalid JSON in request body." });
+  }
+
+  const MAX_LENGTH = 500_000;
+  if (pdfText.length > MAX_LENGTH) {
+    return jsonResponse(413, {
+      error: `Text too large. Maximum ${MAX_LENGTH / 1024}KB allowed.`,
+    });
+  }
+
+  const mode = parseMode === "auto" ? detectMode(pdfText) : parseMode;
+  if (mode !== "bank_statement") {
+    return jsonResponse(400, {
+      error:
+        "parse-document is configured for bank statements only. Use the parse-po function for Purchase Orders.",
+    });
+  }
+
+  const aiResult = await callAI(BANK_STATEMENT_PROMPT, "Parse this bank statement text:\n\n" + pdfText);
+  if ("error" in aiResult) {
+    return jsonResponse(aiResult.status ?? 500, { error: aiResult.error });
+  }
+
+  const cleanText = stripMarkdownJson(aiResult.text);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(cleanText);
+  } catch (e) {
+    console.error("AI response is not valid JSON:", cleanText.slice(0, 300));
+    return jsonResponse(500, {
+      error: "AI did not return valid JSON. Try a different PDF.",
+    });
+  }
+
+  if (parsed == null || typeof parsed !== "object") {
+    return jsonResponse(500, { error: "AI returned invalid structure." });
+  }
+
+  const data = parsed as Record<string, unknown>;
+  if (!Array.isArray(data.transactions)) {
+    data.transactions = [];
+  }
+
+  return jsonResponse(200, { success: true, data });
 });

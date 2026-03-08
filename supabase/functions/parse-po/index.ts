@@ -2,7 +2,8 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
 const systemPrompt = `You are a Purchase Order (PO) parser for a printing press business in India. Extract structured data from PO text.
@@ -22,14 +23,14 @@ You MUST support these 3 PO formats:
 
 === FORMAT 2: Guindy Machine Tools (LOC PO) ===
 - Identifier: Contains "GUINDY MACHINE TOOLS" or PO starts with "LOC"
-- PO Number: first line (e.g. LOC252566)
-- PO Date: second line DDMMYYYY format (e.g. 04032026 → 2026-03-04)
+- PO Number: after "PO No & Date" (e.g. LOC/252566)
+- PO Date: after "PO No & Date" in DD/MM/YYYY format (e.g. 04/03/2026)
 - vendor_name: "Guindy Machine Tools Limited" (the BUYER company)
 - gstin: after "GST No."
-- delivery_date: after "Delivery Date" (DDMMYYYY format)
+- delivery_date: after "Delivery Date" (DD/MM/YYYY format)
 - payment_terms: after "Payment Terms" (e.g. "30 DAYS CREDIT")
 - Note: "GST EXTRA" means taxes are NOT included in line amounts
-- Line items: Sl.No | Item Number | Description | Qty | UOM | Unit Price | Amount
+- Line items: Sl.No | Item Number/Description | Qty | UOM | Unit Price | Amount
 - gst_extra flag: true if "GST EXTRA" or "CGST,SGST,IGST EXTRA" appears
 
 === FORMAT 3: Contemporary Leather (SAP Business One PO) ===
@@ -48,11 +49,12 @@ CRITICAL RULES:
 1. vendor_name = The BUYER/CLIENT COMPANY that ISSUED the PO. NOT the supplier/vendor.
 2. contact_person = Individual handler name, NOT company name.
 3. contact_no = Phone number only. NEVER put a name here.
-4. Parse dates as YYYY-MM-DD. Handle DD-MM-YYYY, DDMMYYYY, DD-Mon-YYYY, DD-MM-YY formats.
-5. For DDMMYYYY like "04032026": day=04, month=03, year=2026 → 2026-03-04
-6. For DD-MM-YY like "25-02-26": assume 2000s → 2026-02-25
-7. For amounts, extract numeric values only (remove commas).
-8. gst_extra: set true if document says "GST EXTRA" or taxes are not included in line totals.
+4. Parse dates as YYYY-MM-DD. Handle DD/MM/YYYY, DD-MM-YYYY, DDMMYYYY, DD-Mon-YYYY, DD-MM-YY formats.
+5. For DD/MM/YYYY like "04/03/2026": day=04, month=03, year=2026 → 2026-03-04
+6. For DDMMYYYY like "04032026": day=04, month=03, year=2026 → 2026-03-04
+7. For DD-MM-YY like "25-02-26": assume 2000s → 2026-02-25
+8. For amounts, extract numeric values only (remove commas).
+9. gst_extra: set true if document says "GST EXTRA" or "CGST,SGST,IGST EXTRA" or taxes are not included in line totals.
 
 Map HSN codes to product types:
 - 3923, 4911 = Visiting Cards/Cards
@@ -64,57 +66,94 @@ Map HSN codes to product types:
 - 4819, 6305 = Carry Bag
 - 8412 = Other/Book
 
-If you can't determine a field, use null. Always extract as much as possible.
+If you can't determine a field, use null. Always extract as much as possible.`;
 
-Return ONLY valid JSON matching this schema (no markdown, no explanation):
-{
-  "po_number": "",
-  "po_date": "",
-  "vendor_name": "",
-  "contact_no": "",
-  "contact_person": "",
-  "contact_email": "",
-  "gstin": "",
-  "vendor_gstin": "",
-  "delivery_address": "",
-  "buyer_address": "",
-  "delivery_date": "",
-  "payment_terms": "",
-  "currency": "INR",
-  "gst_extra": false,
-  "base_amount": 0,
-  "cgst_percent": 0,
-  "cgst_amount": 0,
-  "sgst_percent": 0,
-  "sgst_amount": 0,
-  "igst_percent": 0,
-  "igst_amount": 0,
-  "tax_amount": 0,
-  "total_amount": 0,
-  "remarks": "",
-  "line_items": [
-    {
-      "description": "",
-      "item_code": "",
-      "hsn_code": "",
-      "qty": 0,
-      "uom": "",
-      "unit_price": 0,
-      "base_amount": 0,
-      "cgst_percent": 0,
-      "cgst_amount": 0,
-      "sgst_percent": 0,
-      "sgst_amount": 0,
-      "igst_percent": 0,
-      "igst_amount": 0,
-      "total_amount": 0,
-      "suggested_product_type": ""
+const extractTool = {
+  type: "function" as const,
+  function: {
+    name: "extract_po_data",
+    description: "Extract structured purchase order data from parsed PDF text",
+    parameters: {
+      type: "object",
+      properties: {
+        po_number: { type: "string", description: "PO number" },
+        po_date: { type: "string", description: "PO date in YYYY-MM-DD" },
+        vendor_name: { type: "string", description: "BUYER COMPANY NAME that issued the PO" },
+        contact_no: { type: "string", description: "Phone number (10+ digits). null if not found." },
+        contact_person: { type: "string", description: "Individual handler/contact person name" },
+        contact_email: { type: "string", description: "Contact email if found" },
+        gstin: { type: "string", description: "Buyer GSTIN (15 characters)" },
+        vendor_gstin: { type: "string", description: "Supplier/Vendor GSTIN if found" },
+        delivery_address: { type: "string", description: "Full delivery address" },
+        buyer_address: { type: "string", description: "Buyer company full address" },
+        delivery_date: { type: "string", description: "Delivery/completion date in YYYY-MM-DD" },
+        payment_terms: { type: "string", description: "Payment terms e.g. '30 Days', '60 DAYS'" },
+        currency: { type: "string", description: "Currency code e.g. INR" },
+        gst_extra: { type: "boolean", description: "true if GST is NOT included in line item totals" },
+        base_amount: { type: "number", description: "Total amount before tax" },
+        cgst_percent: { type: "number", description: "CGST percentage e.g. 9" },
+        cgst_amount: { type: "number", description: "Total CGST tax amount" },
+        sgst_percent: { type: "number", description: "SGST percentage e.g. 9" },
+        sgst_amount: { type: "number", description: "Total SGST tax amount" },
+        igst_percent: { type: "number", description: "IGST percentage, 0 if not applicable" },
+        igst_amount: { type: "number", description: "Total IGST amount, 0 if not applicable" },
+        tax_amount: { type: "number", description: "Total tax amount (CGST+SGST+IGST)" },
+        total_amount: { type: "number", description: "Grand total including all taxes" },
+        remarks: { type: "string", description: "Any remarks, PR references, or notes" },
+        line_items: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              description: { type: "string" },
+              item_code: { type: "string", description: "Item number/part number if any" },
+              hsn_code: { type: "string" },
+              qty: { type: "number" },
+              uom: { type: "string" },
+              unit_price: { type: "number" },
+              base_amount: { type: "number", description: "Amount before tax for this line" },
+              cgst_percent: { type: "number" },
+              cgst_amount: { type: "number" },
+              sgst_percent: { type: "number" },
+              sgst_amount: { type: "number" },
+              igst_percent: { type: "number" },
+              igst_amount: { type: "number" },
+              total_amount: { type: "number", description: "Line total including tax" },
+              suggested_product_type: { type: "string", description: "Mapped product type name" },
+            },
+            required: ["description", "qty"],
+          },
+        },
+      },
+      required: ["po_number", "vendor_name", "line_items"],
+    },
+  },
+};
+
+/** Try to extract JSON from a raw AI text response (fallback) */
+function extractJsonFromText(raw: string): Record<string, unknown> | null {
+  let clean = raw.replace(/```(?:json)?\s*/gi, "").replace(/```\s*/g, "").trim();
+  try {
+    return JSON.parse(clean);
+  } catch {
+    /* continue */
+  }
+  const start = clean.indexOf("{");
+  const end = clean.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    try {
+      return JSON.parse(clean.slice(start, end + 1));
+    } catch {
+      /* continue */
     }
-  ]
-}`;
+  }
+  return null;
+}
 
 serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+  if (req.method === "OPTIONS") {
+    return new Response(null, { headers: corsHeaders });
+  }
 
   try {
     const { pdfText } = await req.json();
@@ -127,78 +166,135 @@ serve(async (req) => {
 
     if (pdfText.length > 200_000) {
       return new Response(JSON.stringify({ error: "Payload too large. Maximum 200KB allowed." }), {
-        status: 413, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 413,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) {
+    const GOOGLE_GEMINI_API_KEY = Deno.env.get("GOOGLE_GEMINI_API_KEY")?.trim() || Deno.env.get("GEMINI_API_KEY")?.trim();
+
+    if (!LOVABLE_API_KEY && !GOOGLE_GEMINI_API_KEY) {
       return new Response(
-        JSON.stringify({ error: "LOVABLE_API_KEY not configured. Set it in Supabase → Edge Functions → parse-po → Secrets." }),
+        JSON.stringify({
+          error:
+            "No AI API key. Set LOVABLE_API_KEY or GOOGLE_GEMINI_API_KEY (free at https://aistudio.google.com/apikey) in Edge Function Secrets.",
+        }),
         { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: "Parse this Purchase Order text:\n\n" + pdfText },
-        ],
-        stream: false,
-      }),
-    });
+    let data: { choices?: Array<{ message?: { content?: string; tool_calls?: Array<{ function?: { arguments?: string } }> } }> };
+    let rawContent = "";
 
-    if (!response.ok) {
-      const errText = await response.text();
-      console.error("Lovable AI gateway error:", response.status, errText);
-      if (response.status === 429) {
-        return new Response(JSON.stringify({ error: "Rate limit exceeded, please try again later." }), {
-          status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      if (response.status === 402) {
-        return new Response(JSON.stringify({ error: "AI credits exhausted. Please add funds to your Lovable workspace." }), {
-          status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      return new Response(JSON.stringify({ error: "AI parsing failed" }), {
-        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+    if (LOVABLE_API_KEY) {
+      const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${LOVABLE_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "google/gemini-2.5-flash",
+          temperature: 0,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: "Parse this Purchase Order text:\n\n" + pdfText },
+          ],
+          tools: [extractTool],
+          tool_choice: { type: "function", function: { name: "extract_po_data" } },
+        }),
       });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        console.error("[parse-po] AI gateway error:", response.status, errText);
+        if (response.status === 429) {
+          return new Response(JSON.stringify({ error: "Rate limit exceeded. Please wait and try again." }), {
+            status: 429,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        if (response.status === 402) {
+          return new Response(
+            JSON.stringify({
+              error: "AI credits exhausted. Add funds in Lovable → Settings → Workspace → Usage.",
+            }),
+            { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          );
+        }
+        return new Response(JSON.stringify({ error: `AI gateway returned ${response.status}` }), {
+          status: 502,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      data = await response.json();
+      rawContent = data?.choices?.[0]?.message?.content ?? "";
+    } else {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${encodeURIComponent(GOOGLE_GEMINI_API_KEY!)}`;
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: systemPrompt }] },
+          contents: [{ parts: [{ text: "Parse this Purchase Order text and return ONLY valid JSON (no markdown). Use the same schema as extract_po_data.\n\n" + pdfText }] }],
+          generationConfig: { temperature: 0, maxOutputTokens: 8192 },
+        }),
+      });
+      if (!response.ok) {
+        const errText = await response.text();
+        console.error("[parse-po] Gemini API error:", response.status, errText.slice(0, 300));
+        return new Response(JSON.stringify({ error: "AI parsing failed. Please try again." }), {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      const geminiData = await response.json();
+      rawContent = geminiData?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+      data = { choices: [{ message: { content: rawContent } }] };
     }
 
-    const data = await response.json();
-    const rawText = data?.choices?.[0]?.message?.content ?? "";
+    let parsed: Record<string, unknown> | null = null;
 
-    const cleanText = rawText
-      .replace(/```json\s*/gi, "")
-      .replace(/```\s*/g, "")
-      .trim();
+    // Strategy 1: tool_calls (Lovable only — structured output)
+    const toolCall = data?.choices?.[0]?.message?.tool_calls?.[0];
+    if (toolCall?.function?.arguments) {
+      try {
+        parsed = JSON.parse(toolCall.function.arguments);
+        console.log("[parse-po] Parsed via tool_calls:", parsed?.po_number);
+      } catch (e) {
+        console.error("[parse-po] tool_calls JSON parse failed:", e);
+      }
+    }
 
-    let parsed;
-    try {
-      parsed = JSON.parse(cleanText);
-    } catch {
-      console.error("Failed to parse AI response as JSON:", rawText.substring(0, 500));
-      return new Response(JSON.stringify({ error: "AI did not return valid JSON" }), {
-        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+    // Strategy 2: text content fallback (Gemini or when tool_calls not returned)
+    if (!parsed && rawContent) {
+      parsed = extractJsonFromText(rawContent);
+      if (parsed) console.log("[parse-po] Parsed via text fallback:", parsed?.po_number);
+    }
+
+    if (!parsed) {
+      console.error("[parse-po] No structured data. Response:", JSON.stringify(data).substring(0, 1000));
+      return new Response(
+        JSON.stringify({ error: "AI did not return structured data. Please try again." }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
+    if (!Array.isArray(parsed.line_items)) {
+      parsed.line_items = [];
     }
 
     return new Response(JSON.stringify({ success: true, data: parsed }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "PO parsing failed. Please try again.";
-    console.error("parse-po error:", e);
+    const msg = e instanceof Error ? e.message : "PO parsing failed";
+    console.error("[parse-po] Unhandled error:", e);
     return new Response(JSON.stringify({ error: msg }), {
-      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
 });
