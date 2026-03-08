@@ -222,7 +222,9 @@ function tryFujitec(text: string): ParsedPOData | null {
 
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
 
-  const poNumber = firstMatch(text, /Purchase\s+Job\s+Order\s+No\s+(PO-[\w-]+)/i)
+  const superMatch = text.match(/SUPER\s*[_\s]*(\d+)/i);
+  const poNumber = (superMatch ? `SUPER_${superMatch[1]}` : null)
+    || firstMatch(text, /Purchase\s+Job\s+Order\s+No\s+(PO-[\w-]+)/i)
     || firstMatch(text, /Order\s+No\.?\s*[:\s]*([A-Z0-9-]+)/i)
     || firstMatch(text, /PO\s*[#:]?\s*([A-Z0-9-]+)/i);
   const poDateRaw = firstMatch(text, /Date\s+(\d{2}-\w+-\d{4})/i)
@@ -361,7 +363,7 @@ function tryFujitec(text: string): ParsedPOData | null {
   const taxAmount = totalAmount - baseAmount;
 
   return {
-    po_number: poNumber || "FUJITEC-PO",
+    po_number: poNumber || "",
     po_date: normalizeDate(poDateRaw),
     vendor_name: vendorName,
     contact_no: null,
@@ -464,7 +466,7 @@ function tryGuindy(text: string): ParsedPOData | null {
   const totalAmount = recalcGrandTotal(deduped);
 
   return {
-    po_number: poNumber || "LOC-PO",
+    po_number: poNumber || "",
     po_date: poDateRaw ? normalizeDate(poDateRaw.slice(0, 2) + "-" + poDateRaw.slice(2, 4) + "-" + poDateRaw.slice(4)) : null,
     vendor_name: vendorName,
     contact_no: null,
@@ -562,7 +564,7 @@ function tryContemporary(text: string): ParsedPOData | null {
   const taxAmount = totalAmount - baseAmount;
 
   return {
-    po_number: poNumber || "SAP-PO",
+    po_number: poNumber || "",
     po_date: normalizeDate(poDateRaw),
     vendor_name: vendorName,
     contact_no: contactNo,
@@ -602,8 +604,8 @@ function tryWipro(text: string): ParsedPOData | null {
   const paymentTerms = firstMatch(text, /Terms of Payment\s+(.+?)(?=\s*(?:Order Handled|Email|$|\n))/i);
   const contactPerson = firstMatch(text, /Order Handled BY\s+(.+?)(?=\s*$|\n)/i);
   let contactEmail = firstMatch(text, /Email\s+(\S+)/i);
-  if (contactEmail && !contactEmail.includes("@") && contactEmail.includes("wipro")) {
-    contactEmail = contactEmail.replace(/\.(com|in)$/i, (m) => "@" + m);
+  if (contactEmail && !contactEmail.includes("@") && /wipro/i.test(contactEmail)) {
+    contactEmail = contactEmail.replace(/\.wipro\./i, ".@wipro.");
   }
   const vendorName = "Wipro Enterprises Private Limited";
 
@@ -630,8 +632,8 @@ function tryWipro(text: string): ParsedPOData | null {
       const unitPrice = nums[2];
       const total = nums[3];
       const base = qty * unitPrice;
-      const cgstMatch = text.match(/CGST-\s*(\d+)\s*-\s*([\d,\.]+)/i);
-      const sgstMatch = text.match(/SGST-\s*(\d+)\s*-\s*([\d,\.]+)/i);
+      const cgstMatch = text.match(/CGST-\s*(\d+)\s*-\s*([\d,.]+)/i);
+      const sgstMatch = text.match(/SGST-\s*(\d+)\s*-\s*([\d,.]+)/i);
       const cgstPct = cgstMatch ? toNum(cgstMatch[1]) : 9;
       const sgstPct = sgstMatch ? toNum(sgstMatch[1]) : 9;
       const cgstAmt = base * (cgstPct / 100);
@@ -667,7 +669,7 @@ function tryWipro(text: string): ParsedPOData | null {
   const deliveryDateRaw = firstMatch(text, /Delivery\s+(\d{2}\.\d{2}\.\d{4})/i);
 
   return {
-    po_number: poNumber || "WIPRO-PO",
+    po_number: poNumber || "",
     po_date: normalizeDate(poDateRaw),
     vendor_name: vendorName,
     contact_no: null,
@@ -708,8 +710,8 @@ function tryCGRD(text: string): ParsedPOData | null {
   const contactPerson = firstMatch(text, /APPROVED BY\s+(.+?)(?=\s*$|\n)/i);
   const vendorName = "CGRD Chemicals India Pvt Ltd";
 
-  const cgstTotalMatch = text.match(/CGST\s+([\d\.]+)/i);
-  const sgstTotalMatch = text.match(/SGST\s+([\d\.]+)/i);
+  const cgstTotalMatch = text.match(/CGST\s+([\d.]+)/i);
+  const sgstTotalMatch = text.match(/SGST\s+([\d.]+)/i);
   const cgstTotal = cgstTotalMatch ? toNum(cgstTotalMatch[1]) : 0;
   const sgstTotal = sgstTotalMatch ? toNum(sgstTotalMatch[1]) : 0;
   const lineItems: ParsedPOLineItem[] = [];
@@ -719,7 +721,7 @@ function tryCGRD(text: string): ParsedPOData | null {
   for (let i = startIndex; i < lines.length; i++) {
     const line = lines[i];
     if (isFooterLine(line)) continue;
-    if (isTotalLine(line) || /^TOTAL\s+[\d\.]+$/i.test(line)) break;
+    if (isTotalLine(line) || /^TOTAL\s+[\d.]+$/i.test(line)) break;
     if (!startsWithNumericIndex(line)) continue;
     const parts = line.split(/\s+/).filter(Boolean);
     const nums = extractNumbers(line);
@@ -763,7 +765,7 @@ function tryCGRD(text: string): ParsedPOData | null {
   const totalAmount = recalcGrandTotal(deduped);
 
   return {
-    po_number: poNumber || "CGRD-PO",
+    po_number: poNumber || "",
     po_date: normalizeDate(poDateRaw),
     vendor_name: vendorName,
     contact_no: null,
@@ -866,7 +868,7 @@ function tryGeneric(text: string): ParsedPOData | null {
   const totalAmount = recalcGrandTotal(deduped);
 
   return {
-    po_number: poNumber || "PO",
+    po_number: poNumber || "",
     po_date: normalizeDate(poDateRaw),
     vendor_name: "Vendor",
     contact_no: null,

@@ -9,7 +9,7 @@ import { useProductTypes } from "@/hooks/useProductTypes";
 import { useCreatePurchaseOrder, useCreatePOLineItems } from "@/hooks/usePurchaseOrders";
 import { useCreateOrder } from "@/hooks/useOrders";
 import { supabase } from "@/integrations/supabase/client";
-import { invokeEdgeFunction } from "@/utils/invokeEdgeFunction";
+import { parsePOText } from "@/utils/parsePOText";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import { Upload, Loader2, FileText, Trash2, CheckCircle2, X, PlusCircle, AlertTriangle } from "lucide-react";
@@ -174,21 +174,11 @@ export default function ImportPO() {
         return;
       }
 
-      // Send extracted text to AI edge function for parsing
-      console.log("[ImportPO] Calling parse-po edge function with", rawText.length, "chars");
-      const { data: aiResult, error: aiError } = await invokeEdgeFunction<{ success: boolean; data: any }>("parse-po", { pdfText: rawText });
-      console.log("[ImportPO] Edge function response:", { aiResult, aiError });
-
-      if (aiError) {
-        toast.error("AI parsing failed: " + aiError);
-        setParsing(false);
-        return;
-      }
-
-      const parsedData = aiResult?.data;
-      if (!parsedData || !parsedData.line_items?.length) {
-        console.warn("[ImportPO] No line items in parsed data:", parsedData);
-        toast.error("Could not parse line items from this file. Try Manual PO Entry tab.");
+      // Parse with built-in rule-based parser (no AI)
+      const parsedData = parsePOText(rawText);
+      if (!parsedData.line_items?.length) {
+        console.warn("[ImportPO] No line items parsed:", parsedData);
+        toast.error("Could not parse line items from this file. Try Manual PO Entry or use a supported format (Fujitec, Guindy, Contemporary, Wipro, CGRD Chemicals).");
         setParsing(false);
         return;
       }
@@ -218,7 +208,7 @@ export default function ImportPO() {
         igst_percent: parsedData.igst_percent ?? 0,
         igst_amount: parsedData.igst_amount ?? 0,
         remarks: parsedData.remarks ?? null,
-        line_items: (parsedData.line_items || []).map((li: any) => {
+        line_items: parsedData.line_items.map((li) => {
           const matched = productTypes.find(
             (pt) =>
               pt.name.toLowerCase() === (li.suggested_product_type || "").toLowerCase() ||
@@ -251,7 +241,7 @@ export default function ImportPO() {
       setParsed(poData);
       setLineItems(poData.line_items);
       setEditHeader({});
-      toast.success("PO parsed successfully using AI.");
+      toast.success("PO parsed successfully.");
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       toast.error("Parsing failed: " + msg);
@@ -635,7 +625,7 @@ export default function ImportPO() {
                 >
                   <Upload className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
                   <p className="text-lg font-medium text-foreground">Drag PDF or Excel purchase order or click to browse</p>
-                  <p className="text-sm text-muted-foreground mt-1">Supports: Fujitec, Guindy Machine Tools, Contemporary Leather, Wipro Enterprises, CGRD Chemicals, and other formats</p>
+                  <p className="text-sm text-muted-foreground mt-1">Supports: Fujitec, Guindy Machine Tools, Contemporary Leather, Wipro, CGRD Chemicals, and other formats</p>
                   <input
                     id="po-file-input"
                     type="file"
