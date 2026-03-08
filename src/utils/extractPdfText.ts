@@ -79,18 +79,24 @@ export async function extractTextFromPdf(
 async function extractOrderedPageText(page: pdfjsLib.PDFPageProxy): Promise<string> {
   const textContent = await page.getTextContent();
 
-  type PdfTextItem = { str: string; transform: number[]; width?: number };
   type PositionedToken = { text: string; x: number; y: number; width: number };
 
-  const tokens: PositionedToken[] = textContent.items
-    .filter((item): item is PdfTextItem => "str" in item && typeof item.str === "string" && item.str.trim().length > 0)
-    .map((item) => ({
-      text: item.str,
-      x: item.transform[4] ?? 0,
-      y: item.transform[5] ?? 0,
-      width: typeof item.width === "number" && item.width > 0 ? item.width : Math.max(4, item.str.length * 4.2),
-    }))
-    .sort((a, b) => Math.abs(a.y - b.y) <= 1 ? a.x - b.x : b.y - a.y);
+  const tokens: PositionedToken[] = [];
+  for (const item of textContent.items) {
+    if (!("str" in item) || typeof item.str !== "string") continue;
+
+    const text = item.str.trim();
+    if (!text) continue;
+
+    const transform = Array.isArray(item.transform) ? item.transform : [0, 0, 0, 0, 0, 0];
+    const x = Number(transform[4] ?? 0);
+    const y = Number(transform[5] ?? 0);
+    const width = typeof item.width === "number" && item.width > 0 ? item.width : Math.max(4, text.length * 4.2);
+
+    tokens.push({ text, x, y, width });
+  }
+
+  tokens.sort((a, b) => (Math.abs(a.y - b.y) <= 1 ? a.x - b.x : b.y - a.y));
 
   const rows: Array<{ y: number; tokens: PositionedToken[] }> = [];
   for (const token of tokens) {
