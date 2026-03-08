@@ -12,7 +12,6 @@ import {
   UserPlus,
   Edit2,
   FileUp,
-  Users,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -334,7 +333,7 @@ export default function Attendance() {
                               </tr>
                             </thead>
                             <tbody>
-                              {u.parsed_data?.employees?.map((emp: { name: string; present: number; absent: number; leave: number; halfDay: number; other: number }, i: number) => (
+                              {(u.parsed_data?.employees as any[])?.map((emp: any, i: number) => (
                                 <tr key={i} className="border-b last:border-0 hover:bg-muted/30">
                                   <td className="p-3 font-medium">{emp.name}</td>
                                   <td className="p-3 text-center text-green-600">{emp.present}</td>

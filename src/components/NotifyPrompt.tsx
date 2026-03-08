@@ -22,7 +22,7 @@ export function NotifyPrompt({ open, onOpenChange, order, status }: NotifyPrompt
   const shopPhone = settings?.contact_number || settings?.whatsapp_number || "9840199878";
 
   const template = WHATSAPP_STATUS_TEMPLATES[status] || "";
-  const [message, setMessage] = useState(() => fillWhatsAppTemplate(template, { ...order, status }, shopPhone));
+  const [message, setMessage] = useState(() => fillWhatsAppTemplate(template, { ...order, status } as any, shopPhone));
 
   const handleWhatsApp = () => {
     const phone = order.contact_no.replace(/\D/g, "").slice(-10);

@@ -14,6 +14,164 @@ export type Database = {
   }
   public: {
     Tables: {
+      attendance_uploads: {
+        Row: {
+          created_at: string
+          file_name: string
+          id: string
+          month_year: string
+          parsed_data: Json | null
+          uploaded_at: string
+        }
+        Insert: {
+          created_at?: string
+          file_name: string
+          id?: string
+          month_year: string
+          parsed_data?: Json | null
+          uploaded_at?: string
+        }
+        Update: {
+          created_at?: string
+          file_name?: string
+          id?: string
+          month_year?: string
+          parsed_data?: Json | null
+          uploaded_at?: string
+        }
+        Relationships: []
+      }
+      bank_custom_lookup: {
+        Row: {
+          id: string
+          lookup: Json
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          lookup?: Json
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          lookup?: Json
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      bank_statements: {
+        Row: {
+          account_key: string
+          account_number: string | null
+          closing_balance: number
+          created_at: string
+          file_name: string
+          id: string
+          last_validated: string | null
+          opening_balance: number
+          pdf_chunks: number
+          pdf_file_size: number
+          pdf_stored: boolean
+          period: string | null
+          period_end: string | null
+          period_start: string | null
+          total_credits: number
+          total_debits: number
+          transaction_count: number
+          uploaded_at: string
+        }
+        Insert: {
+          account_key?: string
+          account_number?: string | null
+          closing_balance?: number
+          created_at?: string
+          file_name?: string
+          id: string
+          last_validated?: string | null
+          opening_balance?: number
+          pdf_chunks?: number
+          pdf_file_size?: number
+          pdf_stored?: boolean
+          period?: string | null
+          period_end?: string | null
+          period_start?: string | null
+          total_credits?: number
+          total_debits?: number
+          transaction_count?: number
+          uploaded_at?: string
+        }
+        Update: {
+          account_key?: string
+          account_number?: string | null
+          closing_balance?: number
+          created_at?: string
+          file_name?: string
+          id?: string
+          last_validated?: string | null
+          opening_balance?: number
+          pdf_chunks?: number
+          pdf_file_size?: number
+          pdf_stored?: boolean
+          period?: string | null
+          period_end?: string | null
+          period_start?: string | null
+          total_credits?: number
+          total_debits?: number
+          transaction_count?: number
+          uploaded_at?: string
+        }
+        Relationships: []
+      }
+      bank_transactions: {
+        Row: {
+          balance: number
+          counterparty: string | null
+          created_at: string
+          credit: number
+          date: string
+          debit: number
+          details: string | null
+          id: string
+          ref_no: string | null
+          statement_id: string
+          type: string | null
+        }
+        Insert: {
+          balance?: number
+          counterparty?: string | null
+          created_at?: string
+          credit?: number
+          date?: string
+          debit?: number
+          details?: string | null
+          id: string
+          ref_no?: string | null
+          statement_id: string
+          type?: string | null
+        }
+        Update: {
+          balance?: number
+          counterparty?: string | null
+          created_at?: string
+          credit?: number
+          date?: string
+          debit?: number
+          details?: string | null
+          id?: string
+          ref_no?: string | null
+          statement_id?: string
+          type?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bank_transactions_statement_id_fkey"
+            columns: ["statement_id"]
+            isOneToOne: false
+            referencedRelation: "bank_statements"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       customers: {
         Row: {
           address: string | null
@@ -349,6 +507,36 @@ export type Database = {
           },
         ]
       }
+      payroll_employees: {
+        Row: {
+          created_at: string
+          display_name: string
+          employee_code: string
+          id: string
+          monthly_salary: number
+          updated_at: string
+          weekly_salary: number
+        }
+        Insert: {
+          created_at?: string
+          display_name: string
+          employee_code: string
+          id?: string
+          monthly_salary?: number
+          updated_at?: string
+          weekly_salary?: number
+        }
+        Update: {
+          created_at?: string
+          display_name?: string
+          employee_code?: string
+          id?: string
+          monthly_salary?: number
+          updated_at?: string
+          weekly_salary?: number
+        }
+        Relationships: []
+      }
       product_types: {
         Row: {
           created_at: string | null
@@ -624,194 +812,6 @@ export type Database = {
           created_at?: string | null
           id?: string
           name?: string
-        }
-        Relationships: []
-      }
-      bank_statements: {
-        Row: {
-          id: string
-          account_key: string
-          file_name: string
-          uploaded_at: string
-          period: string | null
-          period_start: string | null
-          period_end: string | null
-          account_number: string | null
-          opening_balance: number
-          closing_balance: number
-          total_credits: number
-          total_debits: number
-          transaction_count: number
-          pdf_stored: boolean
-          pdf_file_size: number
-          pdf_chunks: number
-          last_validated: string | null
-          created_at: string
-        }
-        Insert: {
-          id: string
-          account_key: string
-          file_name: string
-          uploaded_at?: string
-          period?: string | null
-          period_start?: string | null
-          period_end?: string | null
-          account_number?: string | null
-          opening_balance?: number
-          closing_balance?: number
-          total_credits?: number
-          total_debits?: number
-          transaction_count?: number
-          pdf_stored?: boolean
-          pdf_file_size?: number
-          pdf_chunks?: number
-          last_validated?: string | null
-          created_at?: string
-        }
-        Update: {
-          id?: string
-          account_key?: string
-          file_name?: string
-          uploaded_at?: string
-          period?: string | null
-          period_start?: string | null
-          period_end?: string | null
-          account_number?: string | null
-          opening_balance?: number
-          closing_balance?: number
-          total_credits?: number
-          total_debits?: number
-          transaction_count?: number
-          pdf_stored?: boolean
-          pdf_file_size?: number
-          pdf_chunks?: number
-          last_validated?: string | null
-          created_at?: string
-        }
-        Relationships: []
-      }
-      bank_transactions: {
-        Row: {
-          id: string
-          statement_id: string
-          date: string
-          details: string | null
-          ref_no: string | null
-          debit: number
-          credit: number
-          balance: number
-          type: string | null
-          counterparty: string | null
-          created_at: string
-        }
-        Insert: {
-          id: string
-          statement_id: string
-          date: string
-          details?: string | null
-          ref_no?: string | null
-          debit?: number
-          credit?: number
-          balance?: number
-          type?: string | null
-          counterparty?: string | null
-          created_at?: string
-        }
-        Update: {
-          id?: string
-          statement_id?: string
-          date?: string
-          details?: string | null
-          ref_no?: string | null
-          debit?: number
-          credit?: number
-          balance?: number
-          type?: string | null
-          counterparty?: string | null
-          created_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "bank_transactions_statement_id_fkey"
-            columns: ["statement_id"]
-            isOneToOne: false
-            referencedRelation: "bank_statements"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      bank_custom_lookup: {
-        Row: {
-          id: string
-          lookup: Json
-          updated_at: string
-        }
-        Insert: {
-          id?: string
-          lookup?: Json
-          updated_at?: string
-        }
-        Update: {
-          id?: string
-          lookup?: Json
-          updated_at?: string
-        }
-        Relationships: []
-      }
-      attendance_uploads: {
-        Row: {
-          id: string
-          month_year: string
-          file_name: string
-          uploaded_at: string
-          parsed_data: Json
-          created_at: string
-        }
-        Insert: {
-          id?: string
-          month_year: string
-          file_name: string
-          uploaded_at?: string
-          parsed_data?: Json
-          created_at?: string
-        }
-        Update: {
-          id?: string
-          month_year?: string
-          file_name?: string
-          uploaded_at?: string
-          parsed_data?: Json
-          created_at?: string
-        }
-        Relationships: []
-      }
-      payroll_employees: {
-        Row: {
-          id: string
-          employee_code: string
-          display_name: string
-          monthly_salary: number
-          weekly_salary: number
-          created_at: string
-          updated_at: string
-        }
-        Insert: {
-          id?: string
-          employee_code: string
-          display_name: string
-          monthly_salary?: number
-          weekly_salary?: number
-          created_at?: string
-          updated_at?: string
-        }
-        Update: {
-          id?: string
-          employee_code?: string
-          display_name?: string
-          monthly_salary?: number
-          weekly_salary?: number
-          created_at?: string
-          updated_at?: string
         }
         Relationships: []
       }

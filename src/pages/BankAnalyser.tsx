@@ -1063,7 +1063,7 @@ function AccountTab({ account, onRefresh, customLookup, onUpdateLookup }) {
       hookStatements.map((s) => ({
         id: s.id,
         fileName: s.file_name ?? "Statement",
-        uploadedAt: s.uploaded_at ?? s.created_at ?? "",
+        uploadedAt: s.created_at ?? "",
         periodStart: s.period_start ?? "",
         periodEnd: s.period_end ?? "",
         period: s.period ?? (s.period_start && s.period_end ? `${s.period_start} – ${s.period_end}` : ""),
@@ -1113,7 +1113,7 @@ function AccountTab({ account, onRefresh, customLookup, onUpdateLookup }) {
   const [showUnparsed, setShowUnparsed] = useState(false);
   const [dateFilter, setDateFilter] = useState("all");
   const [datePage, setDatePage] = useState(0);
-  const [unparsedModal, setUnparsedModal] = useState(false);
+  const [unparsedModal, setUnparsedModal] = useState<any>(false);
   const [validating, setValidating] = useState(false);
   const [dateRangeFrom, setDateRangeFrom] = useState("");
   const [dateRangeTo, setDateRangeTo] = useState("");
