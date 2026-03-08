@@ -74,7 +74,10 @@ serve(async (req: Request) => {
   try {
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) {
-      throw new Error("LOVABLE_API_KEY not set");
+      return new Response(
+        JSON.stringify({ error: "LOVABLE_API_KEY not configured. Set it in Supabase → Edge Functions → parse-document → Secrets." }),
+        { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
     }
 
     const body = await req.json();
@@ -176,11 +179,11 @@ serve(async (req: Request) => {
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    console.error("parse-document error:", message);
+    const message = error instanceof Error ? error.message : "Document parsing failed. Please try again.";
+    console.error("parse-document error:", error);
 
     return new Response(
-      JSON.stringify({ success: false, error: "Document parsing failed. Please try again." }),
+      JSON.stringify({ success: false, error: message }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }

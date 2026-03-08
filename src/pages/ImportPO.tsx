@@ -9,6 +9,7 @@ import { useProductTypes } from "@/hooks/useProductTypes";
 import { useCreatePurchaseOrder, useCreatePOLineItems } from "@/hooks/usePurchaseOrders";
 import { useCreateOrder } from "@/hooks/useOrders";
 import { supabase } from "@/integrations/supabase/client";
+import { invokeEdgeFunction } from "@/utils/invokeEdgeFunction";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import { Upload, Loader2, FileText, Trash2, CheckCircle2, X, PlusCircle, AlertTriangle } from "lucide-react";
@@ -159,22 +160,22 @@ export default function ImportPO() {
       }
 
       // Step 2: Send to AI edge function for structured parsing
-      const { data: result, error } = await supabase.functions.invoke("parse-po", {
-        body: { pdfText },
+      const { data: result, error: invokeError } = await invokeEdgeFunction<{ success?: boolean; data?: unknown; error?: string }>("parse-po", {
+        pdfText,
       });
 
-      if (error) {
-        toast.error("Parsing failed: " + (error.message || "Unknown error"));
+      if (invokeError) {
+        toast.error("Parsing failed: " + invokeError);
         return;
       }
 
       if (!result?.success || !result?.data) {
-        const msg = result?.error || "AI parsing returned no data";
-        toast.error(msg + " — Ensure Supabase edge function 'parse-po' is deployed and LOVABLE_API_KEY is set.");
+        const msg = (result as { error?: string })?.error || "AI parsing returned no data";
+        toast.error(msg);
         return;
       }
 
-      const d = result.data;
+      const d = result.data as Record<string, unknown>;
       const poData: ParsedPO = {
         po_number: d.po_number || "",
         po_date: d.po_date || null,

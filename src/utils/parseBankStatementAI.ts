@@ -1,5 +1,5 @@
-import { supabase } from "@/integrations/supabase/client";
 import { extractTextFromPdf } from "@/utils/extractPdfText";
+import { invokeEdgeFunction } from "@/utils/invokeEdgeFunction";
 import type { BankStatementData, Transaction } from "@/utils/parseBankStatement";
 
 export type { BankStatementData };
@@ -21,16 +21,17 @@ export async function parseBankStatementWithAI(
   }
 
   // Step 2: call edge function
-  const { data: result, error } = await supabase.functions.invoke("parse-document", {
-    body: { pdfText: text, parseMode: "bank_statement" },
+  const { data: result, error: invokeError } = await invokeEdgeFunction<{ success?: boolean; data?: Record<string, unknown>; error?: string }>("parse-document", {
+    pdfText: text,
+    parseMode: "bank_statement",
   });
 
-  if (error) {
-    throw new Error("AI parsing failed: " + (error.message || "Unknown error"));
+  if (invokeError) {
+    throw new Error("AI parsing failed: " + invokeError);
   }
 
   if (!result?.success || !result?.data) {
-    throw new Error(result?.error || "AI returned no data");
+    throw new Error((result as { error?: string })?.error || "AI returned no data");
   }
 
   const d = result.data;
