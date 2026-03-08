@@ -222,9 +222,7 @@ function tryFujitec(text: string): ParsedPOData | null {
 
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
 
-  const superMatch = text.match(/SUPER\s*[_\s]*(\d+)/i);
   const poNumber = firstMatch(text, /Purchase\s+Job\s+Order\s+No\s+(PO-[\w-]+)/i)
-    || (superMatch ? `SUPER_${superMatch[1]}` : null)
     || firstMatch(text, /Order\s+No\.?\s*[:\s]*([A-Z0-9-]+)/i)
     || firstMatch(text, /PO\s*[#:]?\s*([A-Z0-9-]+)/i);
   const poDateRaw = firstMatch(text, /Date\s+(\d{2}-\w+-\d{4})/i)
@@ -363,7 +361,7 @@ function tryFujitec(text: string): ParsedPOData | null {
   const taxAmount = totalAmount - baseAmount;
 
   return {
-    po_number: poNumber || "",
+    po_number: poNumber || "FUJITEC-PO",
     po_date: normalizeDate(poDateRaw),
     vendor_name: vendorName,
     contact_no: null,
@@ -466,7 +464,7 @@ function tryGuindy(text: string): ParsedPOData | null {
   const totalAmount = recalcGrandTotal(deduped);
 
   return {
-    po_number: poNumber || "",
+    po_number: poNumber || "LOC-PO",
     po_date: poDateRaw ? normalizeDate(poDateRaw.slice(0, 2) + "-" + poDateRaw.slice(2, 4) + "-" + poDateRaw.slice(4)) : null,
     vendor_name: vendorName,
     contact_no: null,
@@ -564,7 +562,7 @@ function tryContemporary(text: string): ParsedPOData | null {
   const taxAmount = totalAmount - baseAmount;
 
   return {
-    po_number: poNumber || "",
+    po_number: poNumber || "SAP-PO",
     po_date: normalizeDate(poDateRaw),
     vendor_name: vendorName,
     contact_no: contactNo,
@@ -669,7 +667,7 @@ function tryWipro(text: string): ParsedPOData | null {
   const deliveryDateRaw = firstMatch(text, /Delivery\s+(\d{2}\.\d{2}\.\d{4})/i);
 
   return {
-    po_number: poNumber || "",
+    po_number: poNumber || "WIPRO-PO",
     po_date: normalizeDate(poDateRaw),
     vendor_name: vendorName,
     contact_no: null,
@@ -765,7 +763,7 @@ function tryCGRD(text: string): ParsedPOData | null {
   const totalAmount = recalcGrandTotal(deduped);
 
   return {
-    po_number: poNumber || "",
+    po_number: poNumber || "CGRD-PO",
     po_date: normalizeDate(poDateRaw),
     vendor_name: vendorName,
     contact_no: null,
@@ -861,14 +859,6 @@ function tryGeneric(text: string): ParsedPOData | null {
     tryAddGenericLineItem(line, lineItems, 0.05);
   }
 
-  if (lineItems.length === 0) {
-    for (const line of lines) {
-      if (isFooterLine(line) || isTableHeaderLine(line) || isTotalLine(line)) continue;
-      if (line.length < 10) continue;
-      tryAddGenericLineItem(line, lineItems, 0.08);
-    }
-  }
-
   const deduped = dedupeLineItems(lineItems);
   if (deduped.length === 0) return null;
 
@@ -876,52 +866,7 @@ function tryGeneric(text: string): ParsedPOData | null {
   const totalAmount = recalcGrandTotal(deduped);
 
   return {
-    po_number: poNumber || "",
-    po_date: normalizeDate(poDateRaw),
-    vendor_name: "Vendor",
-    contact_no: null,
-    contact_person: null,
-    contact_email: null,
-    gstin,
-    vendor_gstin: null,
-    delivery_address: null,
-    buyer_address: null,
-    delivery_date: null,
-    payment_terms: null,
-    currency: "INR",
-    gst_extra: false,
-    base_amount: baseAmount,
-    total_amount: totalAmount,
-    tax_amount: totalAmount - baseAmount,
-    cgst_percent: 0,
-    cgst_amount: 0,
-    sgst_percent: 0,
-    sgst_amount: 0,
-    igst_percent: 0,
-    igst_amount: 0,
-    remarks: null,
-    line_items: deduped,
-  };
-}
-
-/** Last-resort: any line with 3+ numbers that look like qty, unit price, total (no index required) */
-function tryAnyTable(text: string): ParsedPOData | null {
-  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-  const poNumber = firstMatch(text, /(?:PO|Order)\s*[#:]?\s*([A-Z0-9/-]+)/i) || "";
-  const poDateRaw = firstMatch(text, /(\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4})/);
-  const gstin = extractGstin(text);
-  const lineItems: ParsedPOLineItem[] = [];
-  for (const line of lines) {
-    if (isFooterLine(line) || isTableHeaderLine(line) || isTotalLine(line)) continue;
-    if (line.length < 8) continue;
-    tryAddGenericLineItem(line, lineItems, 0.10);
-  }
-  const deduped = dedupeLineItems(lineItems);
-  if (deduped.length === 0) return null;
-  const baseAmount = deduped.reduce((s, li) => s + li.base_amount, 0);
-  const totalAmount = recalcGrandTotal(deduped);
-  return {
-    po_number: poNumber || "",
+    po_number: poNumber || "PO",
     po_date: normalizeDate(poDateRaw),
     vendor_name: "Vendor",
     contact_no: null,
@@ -951,7 +896,7 @@ function tryAnyTable(text: string): ParsedPOData | null {
 
 /**
  * Parse PO text with built-in rule-based logic (no AI).
- * Tries Fujitec → Guindy → Contemporary → Wipro → CGRD → generic → any table.
+ * Tries Fujitec → Guindy → Contemporary → Wipro → CGRD → generic.
  */
 export function parsePOText(pdfText: string): ParsedPOData {
   const t = pdfText.trim();
@@ -985,7 +930,7 @@ export function parsePOText(pdfText: string): ParsedPOData {
     };
   }
 
-  const result = tryFujitec(t) || tryGuindy(t) || tryContemporary(t) || tryWipro(t) || tryCGRD(t) || tryGeneric(t) || tryAnyTable(t);
+  const result = tryFujitec(t) || tryGuindy(t) || tryContemporary(t) || tryWipro(t) || tryCGRD(t) || tryGeneric(t);
   if (result) return result;
 
   return {

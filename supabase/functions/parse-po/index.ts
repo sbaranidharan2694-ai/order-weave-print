@@ -67,7 +67,7 @@ You MUST support these 5 PO formats:
 
 === FORMAT 5: CGRD Chemicals (Excel format) ===
 - Identifier: Contains "CGRD Chemicals" or "CGRD CHEMICALS" or "33AALCC5735C1ZW"
-- PO Number: after "PO NO" (e.g. 122-0225-26)
+- PO Number: after "PO NO" (e.g. 122-02/25-26)
 - PO Date: after "DATE" with dots (e.g. 26.02.26 → 2026-02-26)
 - vendor_name: "CGRD Chemicals India Pvt Ltd" (the BUYER company)
 - gstin: "33AALCC5735C1ZW"
@@ -167,13 +167,95 @@ const extractTool = {
 
 function extractJsonFromText(raw: string): Record<string, unknown> | null {
   const clean = raw.replace(/```(?:json)?\s*/gi, "").replace(/```\s*/g, "").trim();
-  try { return JSON.parse(clean); } catch { /* continue */ }
+  try {
+    return JSON.parse(clean);
+  } catch {
+    /* continue */
+  }
   const start = clean.indexOf("{");
   const end = clean.lastIndexOf("}");
   if (start >= 0 && end > start) {
-    try { return JSON.parse(clean.slice(start, end + 1)); } catch { /* continue */ }
+    try {
+      return JSON.parse(clean.slice(start, end + 1));
+    } catch {
+      /* continue */
+    }
   }
   return null;
+}
+
+function preprocessPoText(input: string): string {
+  let text = input.replace(/\r/g, "\n");
+
+  if (/Wipro Enterprises Private Limited/i.test(text)) {
+    const stopMatch = text.match(/Page:\s*3\s*\/\s*\d+|DISPATCH INSTRUCTIONS/i);
+    if (typeof stopMatch?.index === "number" && stopMatch.index > 0) {
+      text = text.slice(0, stopMatch.index);
+    }
+  }
+
+  if (text.length > 180_000) {
+    const head = text.slice(0, 120_000);
+    const keywordLines = text
+      .split(/\n+/)
+      .filter((line) =>
+        /po\s*no|purchase order|s\.?no|sl\.?no|qty|quantity|uom|unit\s*price|amount|cgst|sgst|igst|total|gst|payment terms|delivery date|approved by|order handled by/i.test(line),
+      )
+      .slice(0, 800)
+      .join("\n");
+    text = `${head}\n\n[KEY_LINES]\n${keywordLines}`;
+  }
+
+  return text.slice(0, 190_000);
+}
+
+async function callGateway(payloadText: string, lovableApiKey: string, focusedLineItems = false) {
+  const userPrompt = focusedLineItems
+    ? `Extract ONLY structured PO data with high focus on line_items.\n\nRules:\n- Must return every actual item row\n- Ignore footer/terms/address rows\n- If at least one item row exists, line_items must not be empty\n\nPO Text:\n\n${payloadText}`
+    : `Parse this Purchase Order text and extract all fields:\n\n${payloadText}`;
+
+  const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${lovableApiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "google/gemini-2.5-pro",
+      temperature: 0,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+      tools: [extractTool],
+      tool_choice: { type: "function", function: { name: "extract_po_data" } },
+    }),
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    console.error("[parse-po] AI gateway error:", response.status, errText);
+    return { ok: false as const, status: response.status, errorText: errText };
+  }
+
+  const data = await response.json();
+  const rawContent = data?.choices?.[0]?.message?.content ?? "";
+
+  let parsed: Record<string, unknown> | null = null;
+  const toolCall = data?.choices?.[0]?.message?.tool_calls?.[0];
+  if (toolCall?.function?.arguments) {
+    try {
+      parsed = JSON.parse(toolCall.function.arguments);
+    } catch (e) {
+      console.error("[parse-po] tool_calls JSON parse failed:", e);
+    }
+  }
+
+  if (!parsed && rawContent) {
+    parsed = extractJsonFromText(rawContent);
+  }
+
+  return { ok: true as const, parsed };
 }
 
 serve(async (req) => {
@@ -190,8 +272,8 @@ serve(async (req) => {
       });
     }
 
-    if (pdfText.length > 200_000) {
-      return new Response(JSON.stringify({ error: "Payload too large. Maximum 200KB allowed." }), {
+    if (pdfText.length > 500_000) {
+      return new Response(JSON.stringify({ error: "Payload too large. Maximum 500KB allowed." }), {
         status: 413,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -205,69 +287,44 @@ serve(async (req) => {
       );
     }
 
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-pro",
-        temperature: 0,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: "Parse this Purchase Order text and extract all fields:\n\n" + pdfText },
-        ],
-        tools: [extractTool],
-        tool_choice: { type: "function", function: { name: "extract_po_data" } },
-      }),
-    });
+    const preparedText = preprocessPoText(pdfText);
 
-    if (!response.ok) {
-      const errText = await response.text();
-      console.error("[parse-po] AI gateway error:", response.status, errText);
-      if (response.status === 429) {
+    const firstAttempt = await callGateway(preparedText, LOVABLE_API_KEY, false);
+    if (!firstAttempt.ok) {
+      if (firstAttempt.status === 429) {
         return new Response(JSON.stringify({ error: "Rate limit exceeded. Please wait and try again." }), {
-          status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          status: 429,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
-      if (response.status === 402) {
-        return new Response(JSON.stringify({ error: "AI credits exhausted. Add funds in Lovable → Settings → Workspace → Usage." }), {
-          status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
+      if (firstAttempt.status === 402) {
+        return new Response(
+          JSON.stringify({ error: "AI credits exhausted. Add funds in Lovable → Settings → Workspace → Usage." }),
+          { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
       }
-      return new Response(JSON.stringify({ error: `AI gateway returned ${response.status}` }), {
-        status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      return new Response(JSON.stringify({ error: `AI gateway returned ${firstAttempt.status}` }), {
+        status: 502,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    const data = await response.json();
-    const rawContent = data?.choices?.[0]?.message?.content ?? "";
-    let parsed: Record<string, unknown> | null = null;
+    let parsed = firstAttempt.parsed;
+    let lineItems = Array.isArray(parsed?.line_items) ? parsed?.line_items : [];
 
-    // Strategy 1: tool_calls (structured output)
-    const toolCall = data?.choices?.[0]?.message?.tool_calls?.[0];
-    if (toolCall?.function?.arguments) {
-      try {
-        parsed = JSON.parse(toolCall.function.arguments);
-        console.log("[parse-po] Parsed via tool_calls:", parsed?.po_number);
-      } catch (e) {
-        console.error("[parse-po] tool_calls JSON parse failed:", e);
+    if (!parsed || lineItems.length === 0) {
+      const secondAttempt = await callGateway(preparedText, LOVABLE_API_KEY, true);
+      if (secondAttempt.ok && secondAttempt.parsed) {
+        parsed = secondAttempt.parsed;
+        lineItems = Array.isArray(parsed?.line_items) ? parsed?.line_items : [];
       }
     }
 
-    // Strategy 2: text content fallback
-    if (!parsed && rawContent) {
-      parsed = extractJsonFromText(rawContent);
-      if (parsed) console.log("[parse-po] Parsed via text fallback:", parsed?.po_number);
-    }
-
     if (!parsed) {
-      console.error("[parse-po] No structured data. Response:", JSON.stringify(data).substring(0, 1000));
-      return new Response(
-        JSON.stringify({ error: "AI did not return structured data. Please try again." }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
+      return new Response(JSON.stringify({ error: "AI did not return structured data. Please try again." }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
 
     if (!Array.isArray(parsed.line_items)) {
@@ -281,7 +338,8 @@ serve(async (req) => {
     const msg = e instanceof Error ? e.message : "PO parsing failed";
     console.error("[parse-po] Unhandled error:", e);
     return new Response(JSON.stringify({ error: msg }), {
-      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
 });
