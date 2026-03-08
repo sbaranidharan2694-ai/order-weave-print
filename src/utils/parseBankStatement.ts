@@ -316,7 +316,7 @@ function parseLooseTransactions(lines: string[]): Transaction[] {
 }
 
 function parseLegacyTransactions(lines: string[]): Transaction[] {
-  const DATE_RE = /^(\d{1,2}(?:[-/\s])[A-Z]{3}(?:[-/\s])\d{4})\s+(.*)/i;
+  const DATE_RE = /^(\d{1,2}(?:[-/\s])[A-Z]{3}(?:[-/\s])?\d{4})\s*(.*)/i;
   const BAL_RE = /INR\s+([\d,]+\.\d{2})\s*Cr/i;
   const AMOUNT_RE = /\b(\d{1,3}(?:,\d{3})*\.\d{2})\b/g;
 
