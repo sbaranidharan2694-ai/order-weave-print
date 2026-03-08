@@ -1725,9 +1725,24 @@ function AccountTab({ account, onRefresh, customLookup, onUpdateLookup }) {
                         )}
                       </td>
                       <td className="px-3 py-2 text-center">
-                        <Button variant="ghost" size="sm" className="h-6 px-1 text-destructive" onClick={() => setDeleteConfirm(s.id)}>
-                          <Trash2 className="h-3 w-3" />
-                        </Button>
+                        <div className="flex items-center justify-center gap-1">
+                          {(s.transactionCount ?? 0) > 0 && (statementTxnCounts.get(s.id) ?? 0) === 0 && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-6 px-2 text-[11px]"
+                              onClick={() => openReuploadPicker(s.id)}
+                              disabled={repairingStatementId === s.id}
+                              title="Re-upload this statement PDF to recover missing transactions"
+                            >
+                              <Upload className="h-3 w-3 mr-1" />
+                              {repairingStatementId === s.id ? "Re-uploading…" : "Re-upload PDF"}
+                            </Button>
+                          )}
+                          <Button variant="ghost" size="sm" className="h-6 px-1 text-destructive" onClick={() => setDeleteConfirm(s.id)}>
+                            <Trash2 className="h-3 w-3" />
+                          </Button>
+                        </div>
                       </td>
                     </tr>
                   ))}
