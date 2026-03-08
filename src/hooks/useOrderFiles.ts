@@ -8,8 +8,9 @@ export type OrderFile = {
   filename: string;
   mime_type: string | null;
   file_size: number | null;
-  storage_url: string;
+  storage_url: string; // Now stores the storage path, not public URL
   uploaded_at: string;
+  signedUrl?: string; // Generated at read time
 };
 
 export function useOrderFiles(orderId?: string) {
@@ -22,7 +23,23 @@ export function useOrderFiles(orderId?: string) {
         .eq("order_id", orderId!)
         .order("uploaded_at", { ascending: false });
       if (error) throw error;
-      return data as OrderFile[];
+
+      // Generate signed URLs for each file (1 hour expiry)
+      const filesWithSignedUrls = await Promise.all(
+        (data as OrderFile[]).map(async (file) => {
+          // Extract storage path from the URL if it's a full URL, or use as-is
+          let storagePath = file.storage_url;
+          if (storagePath.includes("/order-files/")) {
+            storagePath = storagePath.split("/order-files/").pop() || storagePath;
+          }
+          const { data: signedData } = await supabase.storage
+            .from("order-files")
+            .createSignedUrl(storagePath, 3600);
+          return { ...file, signedUrl: signedData?.signedUrl || "" };
+        })
+      );
+
+      return filesWithSignedUrls;
     },
     enabled: !!orderId,
   });
@@ -38,16 +55,13 @@ export function useUploadOrderFile() {
         .upload(filePath, file);
       if (uploadError) throw uploadError;
 
-      const { data: { publicUrl } } = supabase.storage
-        .from("order-files")
-        .getPublicUrl(filePath);
-
+      // Store only the storage path, not the public URL
       const { error } = await supabase.from("order_files").insert({
         order_id: orderId,
         filename: file.name,
         mime_type: file.type,
         file_size: file.size,
-        storage_url: publicUrl,
+        storage_url: filePath, // Store path only
       } as any);
       if (error) throw error;
     },
