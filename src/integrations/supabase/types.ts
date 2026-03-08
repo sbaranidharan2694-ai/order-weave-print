@@ -14,6 +14,164 @@ export type Database = {
   }
   public: {
     Tables: {
+      attendance_uploads: {
+        Row: {
+          created_at: string
+          file_name: string
+          id: string
+          month_year: string
+          parsed_data: Json | null
+          uploaded_at: string
+        }
+        Insert: {
+          created_at?: string
+          file_name: string
+          id?: string
+          month_year: string
+          parsed_data?: Json | null
+          uploaded_at?: string
+        }
+        Update: {
+          created_at?: string
+          file_name?: string
+          id?: string
+          month_year?: string
+          parsed_data?: Json | null
+          uploaded_at?: string
+        }
+        Relationships: []
+      }
+      bank_custom_lookup: {
+        Row: {
+          id: string
+          lookup: Json
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          lookup?: Json
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          lookup?: Json
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      bank_statements: {
+        Row: {
+          account_key: string
+          account_number: string | null
+          closing_balance: number
+          created_at: string
+          file_name: string
+          id: string
+          last_validated: string | null
+          opening_balance: number
+          pdf_chunks: number
+          pdf_file_size: number
+          pdf_stored: boolean
+          period: string | null
+          period_end: string | null
+          period_start: string | null
+          total_credits: number
+          total_debits: number
+          transaction_count: number
+          uploaded_at: string
+        }
+        Insert: {
+          account_key?: string
+          account_number?: string | null
+          closing_balance?: number
+          created_at?: string
+          file_name?: string
+          id: string
+          last_validated?: string | null
+          opening_balance?: number
+          pdf_chunks?: number
+          pdf_file_size?: number
+          pdf_stored?: boolean
+          period?: string | null
+          period_end?: string | null
+          period_start?: string | null
+          total_credits?: number
+          total_debits?: number
+          transaction_count?: number
+          uploaded_at?: string
+        }
+        Update: {
+          account_key?: string
+          account_number?: string | null
+          closing_balance?: number
+          created_at?: string
+          file_name?: string
+          id?: string
+          last_validated?: string | null
+          opening_balance?: number
+          pdf_chunks?: number
+          pdf_file_size?: number
+          pdf_stored?: boolean
+          period?: string | null
+          period_end?: string | null
+          period_start?: string | null
+          total_credits?: number
+          total_debits?: number
+          transaction_count?: number
+          uploaded_at?: string
+        }
+        Relationships: []
+      }
+      bank_transactions: {
+        Row: {
+          balance: number
+          counterparty: string | null
+          created_at: string
+          credit: number
+          date: string
+          debit: number
+          details: string | null
+          id: string
+          ref_no: string | null
+          statement_id: string
+          type: string | null
+        }
+        Insert: {
+          balance?: number
+          counterparty?: string | null
+          created_at?: string
+          credit?: number
+          date?: string
+          debit?: number
+          details?: string | null
+          id: string
+          ref_no?: string | null
+          statement_id: string
+          type?: string | null
+        }
+        Update: {
+          balance?: number
+          counterparty?: string | null
+          created_at?: string
+          credit?: number
+          date?: string
+          debit?: number
+          details?: string | null
+          id?: string
+          ref_no?: string | null
+          statement_id?: string
+          type?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bank_transactions_statement_id_fkey"
+            columns: ["statement_id"]
+            isOneToOne: false
+            referencedRelation: "bank_statements"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       customers: {
         Row: {
           address: string | null
