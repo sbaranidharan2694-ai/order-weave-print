@@ -11,21 +11,30 @@ import { useCreateOrder } from "@/hooks/useOrders";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
-import { Upload, Loader2, FileText, Trash2, CheckCircle2, X, PlusCircle } from "lucide-react";
+import { Upload, Loader2, FileText, Trash2, CheckCircle2, X, PlusCircle, AlertTriangle } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { format } from "date-fns";
-import { parseDocument, type PurchaseOrderData } from "@/utils/parseDocument";
+import { extractTextFromPdf } from "@/utils/extractPdfText";
+import { numberToWords } from "@/lib/numberToWords";
 
-const MAX_PO_FILE_BYTES = 10 * 1024 * 1024; // 10MB for client-side PDF.js
+const MAX_PO_FILE_BYTES = 10 * 1024 * 1024;
 
 type ParsedLineItem = {
   description: string;
+  item_code: string;
   hsn_code: string;
   qty: number;
   uom: string;
   unit_price: number;
-  amount: number;
+  base_amount: number;
+  cgst_percent: number;
+  cgst_amount: number;
+  sgst_percent: number;
+  sgst_amount: number;
+  igst_percent: number;
+  igst_amount: number;
+  total_amount: number;
   suggested_product_type: string;
   mapped_product_type_id?: string;
 };
@@ -36,11 +45,15 @@ type ParsedPO = {
   vendor_name: string;
   contact_no: string | null;
   contact_person: string | null;
+  contact_email: string | null;
   gstin: string | null;
+  vendor_gstin: string | null;
   delivery_address: string | null;
+  buyer_address: string | null;
   delivery_date: string | null;
   payment_terms: string | null;
   currency: string;
+  gst_extra: boolean;
   total_amount: number;
   tax_amount: number;
   base_amount: number;
@@ -50,41 +63,22 @@ type ParsedPO = {
   sgst_amount: number;
   igst_percent: number;
   igst_amount: number;
+  remarks: string | null;
   line_items: ParsedLineItem[];
 };
 
-/** Map PurchaseOrderData (PDF.js parser) to ParsedPO shape used by ImportPO. */
-function mapPODataToParsedPO(po: PurchaseOrderData): ParsedPO {
-  const items = po.items ?? [];
+function recalcLineItem(li: ParsedLineItem): ParsedLineItem {
+  const base = li.qty * li.unit_price;
+  const cgst = base * (li.cgst_percent / 100);
+  const sgst = base * (li.sgst_percent / 100);
+  const igst = base * (li.igst_percent / 100);
   return {
-    po_number: po.poNumber ?? "",
-    po_date: po.poDate ?? null,
-    vendor_name: po.buyerName ?? po.vendorName ?? "",
-    contact_no: null,
-    contact_person: po.orderHandledBy ?? null,
-    gstin: po.buyerGst ?? null,
-    delivery_address: po.buyerAddress ?? po.vendorAddress ?? null,
-    delivery_date: items[0]?.deliveryDate ?? null,
-    payment_terms: po.paymentTerms ?? null,
-    currency: "INR",
-    total_amount: Number(po.grandTotal) || 0,
-    tax_amount: 0,
-    base_amount: Number(po.grandTotal) || 0,
-    cgst_percent: items[0]?.cgstPct ?? 0,
-    cgst_amount: 0,
-    sgst_percent: items[0]?.sgstPct ?? 0,
-    sgst_amount: 0,
-    igst_percent: 0,
-    igst_amount: 0,
-    line_items: items.map((i) => ({
-      description: i.description ?? "",
-      hsn_code: i.hsn ?? "",
-      qty: Number(i.qty) || 0,
-      uom: i.uom ?? "NOS",
-      unit_price: Number(i.rate) || 0,
-      amount: Number(i.totalValue) || 0,
-      suggested_product_type: "Other",
-    })),
+    ...li,
+    base_amount: Math.round(base * 100) / 100,
+    cgst_amount: Math.round(cgst * 100) / 100,
+    sgst_amount: Math.round(sgst * 100) / 100,
+    igst_amount: Math.round(igst * 100) / 100,
+    total_amount: Math.round((base + cgst + sgst + igst) * 100) / 100,
   };
 }
 
@@ -103,6 +97,7 @@ export default function ImportPO() {
   const [showSuccess, setShowSuccess] = useState(false);
   const [createdOrders, setCreatedOrders] = useState<string[]>([]);
   const [importTab, setImportTab] = useState("pdf");
+  const [editHeader, setEditHeader] = useState<Partial<ParsedPO>>({});
 
   // Manual PO entry form state
   const [manualPO, setManualPO] = useState({
@@ -121,17 +116,14 @@ export default function ImportPO() {
     const f = e.target.files?.[0];
     if (!f) return;
     if (f.size > MAX_PO_FILE_BYTES) {
-      toast.error(
-        `File too large: ${(f.size / 1024 / 1024).toFixed(1)}MB. Max 4MB for parsing.`
-      );
+      toast.error(`File too large: ${(f.size / 1024 / 1024).toFixed(1)}MB. Max 10MB.`);
       return;
     }
-    const valid =
-      f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf");
-    if (valid) {
+    if (f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf")) {
       setFile(f);
       setParsed(null);
       setLineItems([]);
+      setEditHeader({});
     } else {
       toast.error("Please select a PDF file.");
     }
@@ -142,17 +134,14 @@ export default function ImportPO() {
     const f = e.dataTransfer.files[0];
     if (!f) return;
     if (f.size > MAX_PO_FILE_BYTES) {
-      toast.error(
-        `File too large: ${(f.size / 1024 / 1024).toFixed(1)}MB. Max 4MB for parsing.`
-      );
+      toast.error(`File too large: ${(f.size / 1024 / 1024).toFixed(1)}MB. Max 10MB.`);
       return;
     }
-    const valid =
-      f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf");
-    if (valid) {
+    if (f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf")) {
       setFile(f);
       setParsed(null);
       setLineItems([]);
+      setEditHeader({});
     } else {
       toast.error("Please drop a PDF file.");
     }
@@ -162,29 +151,84 @@ export default function ImportPO() {
     if (!file) return;
     setParsing(true);
     try {
-      const result = await parseDocument(file, "purchase_order");
-      if (!result.success) {
-        toast.error(result.error ?? "Parsing failed");
+      // Step 1: Extract text client-side
+      const { text: pdfText } = await extractTextFromPdf(file);
+      if (!pdfText || pdfText.trim().length < 30) {
+        toast.error("Could not extract text from PDF. File may be scanned/image-based.");
         return;
       }
-      const poData = mapPODataToParsedPO(
-        (result.data ?? {}) as PurchaseOrderData
-      );
-      setParsed(poData);
 
-      const mappedItems = (poData.line_items || []).map((item) => {
-        const matched = productTypes.find(
-          (pt) =>
-            pt.name.toLowerCase() === item.suggested_product_type?.toLowerCase() ||
-            pt.hsn_code === item.hsn_code
-        );
-        return {
-          ...item,
-          mapped_product_type_id: matched?.id,
-          suggested_product_type: matched?.name || item.suggested_product_type || "Other",
-        };
+      // Step 2: Send to AI edge function for structured parsing
+      const { data: result, error } = await supabase.functions.invoke("parse-po", {
+        body: { pdfText },
       });
-      setLineItems(mappedItems);
+
+      if (error) {
+        toast.error("Parsing failed: " + (error.message || "Unknown error"));
+        return;
+      }
+
+      if (!result?.success || !result?.data) {
+        toast.error(result?.error || "AI parsing returned no data");
+        return;
+      }
+
+      const d = result.data;
+      const poData: ParsedPO = {
+        po_number: d.po_number || "",
+        po_date: d.po_date || null,
+        vendor_name: d.vendor_name || "",
+        contact_no: d.contact_no || null,
+        contact_person: d.contact_person || null,
+        contact_email: d.contact_email || null,
+        gstin: d.gstin || null,
+        vendor_gstin: d.vendor_gstin || null,
+        delivery_address: d.delivery_address || d.buyer_address || null,
+        buyer_address: d.buyer_address || null,
+        delivery_date: d.delivery_date || null,
+        payment_terms: d.payment_terms || null,
+        currency: d.currency || "INR",
+        gst_extra: d.gst_extra || false,
+        total_amount: d.total_amount || 0,
+        tax_amount: d.tax_amount || 0,
+        base_amount: d.base_amount || 0,
+        cgst_percent: d.cgst_percent || 0,
+        cgst_amount: d.cgst_amount || 0,
+        sgst_percent: d.sgst_percent || 0,
+        sgst_amount: d.sgst_amount || 0,
+        igst_percent: d.igst_percent || 0,
+        igst_amount: d.igst_amount || 0,
+        remarks: d.remarks || null,
+        line_items: (d.line_items || []).map((li: any) => {
+          const matched = productTypes.find(
+            (pt) =>
+              pt.name.toLowerCase() === (li.suggested_product_type || "").toLowerCase() ||
+              pt.hsn_code === li.hsn_code
+          );
+          return {
+            description: li.description || "",
+            item_code: li.item_code || "",
+            hsn_code: li.hsn_code || "",
+            qty: li.qty || 0,
+            uom: li.uom || "NOS",
+            unit_price: li.unit_price || 0,
+            base_amount: li.base_amount || (li.qty || 0) * (li.unit_price || 0),
+            cgst_percent: li.cgst_percent || 0,
+            cgst_amount: li.cgst_amount || 0,
+            sgst_percent: li.sgst_percent || 0,
+            sgst_amount: li.sgst_amount || 0,
+            igst_percent: li.igst_percent || 0,
+            igst_amount: li.igst_amount || 0,
+            total_amount: li.total_amount || li.base_amount || (li.qty || 0) * (li.unit_price || 0),
+            suggested_product_type: matched?.name || li.suggested_product_type || "Other",
+            mapped_product_type_id: matched?.id,
+          };
+        }),
+      };
+
+      setParsed(poData);
+      setLineItems(poData.line_items);
+      setEditHeader({});
       toast.success("PO parsed successfully!");
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -193,6 +237,11 @@ export default function ImportPO() {
       setParsing(false);
     }
   };
+
+  const getHeader = (field: keyof ParsedPO) =>
+    editHeader[field] !== undefined ? editHeader[field] : parsed?.[field];
+  const setHeader = (field: keyof ParsedPO, value: any) =>
+    setEditHeader((h) => ({ ...h, [field]: value }));
 
   const updateLineItem = (idx: number, field: string, value: any) => {
     setLineItems((items) =>
@@ -203,6 +252,10 @@ export default function ImportPO() {
           const pt = productTypes.find((p) => p.name === value);
           updated.mapped_product_type_id = pt?.id;
         }
+        // Recalc on qty/price/gst change
+        if (["qty", "unit_price", "cgst_percent", "sgst_percent", "igst_percent"].includes(field)) {
+          return recalcLineItem(updated);
+        }
         return updated;
       })
     );
@@ -211,6 +264,41 @@ export default function ImportPO() {
   const removeLineItem = (idx: number) => {
     setLineItems((items) => items.filter((_, i) => i !== idx));
   };
+
+  const addLineItem = () => {
+    setLineItems((items) => [
+      ...items,
+      {
+        description: "",
+        item_code: "",
+        hsn_code: "",
+        qty: 0,
+        uom: "NOS",
+        unit_price: 0,
+        base_amount: 0,
+        cgst_percent: 0,
+        cgst_amount: 0,
+        sgst_percent: 0,
+        sgst_amount: 0,
+        igst_percent: 0,
+        igst_amount: 0,
+        total_amount: 0,
+        suggested_product_type: "Other",
+      },
+    ]);
+  };
+
+  // Computed totals from line items
+  const totals = lineItems.reduce(
+    (acc, li) => ({
+      base: acc.base + (li.base_amount || 0),
+      cgst: acc.cgst + (li.cgst_amount || 0),
+      sgst: acc.sgst + (li.sgst_amount || 0),
+      igst: acc.igst + (li.igst_amount || 0),
+      total: acc.total + (li.total_amount || 0),
+    }),
+    { base: 0, cgst: 0, sgst: 0, igst: 0, total: 0 }
+  );
 
   const handleAutoCreate = async () => {
     if (!parsed || lineItems.length === 0) return;
@@ -223,21 +311,79 @@ export default function ImportPO() {
         return;
       }
 
+      const customerName = (getHeader("vendor_name") as string) || parsed.vendor_name;
+      const customerGstin = (getHeader("gstin") as string) || parsed.gstin;
+      const customerAddress = (getHeader("buyer_address") as string) || parsed.buyer_address;
+      const contactNo = (getHeader("contact_no") as string) || parsed.contact_no || "";
+      const contactPerson = (getHeader("contact_person") as string) || parsed.contact_person || "";
+      const contactEmail = (getHeader("contact_email") as string) || parsed.contact_email || "";
+      const poNumber = (getHeader("po_number") as string) || parsed.po_number;
+      const poDate = (getHeader("po_date") as string) || parsed.po_date;
+      const deliveryDate = (getHeader("delivery_date") as string) || parsed.delivery_date;
+      const paymentTerms = (getHeader("payment_terms") as string) || parsed.payment_terms;
+
+      // Auto-create customer if not exists
+      let customerId: string | null = null;
+      const { data: existingByName } = await supabase
+        .from("customers")
+        .select("*")
+        .ilike("name", customerName)
+        .maybeSingle();
+
+      if (existingByName) {
+        customerId = existingByName.id;
+      } else if (contactNo && contactNo.length >= 10) {
+        const { data: existingByPhone } = await supabase
+          .from("customers")
+          .select("*")
+          .eq("contact_no", contactNo)
+          .maybeSingle();
+        if (existingByPhone) {
+          customerId = existingByPhone.id;
+          // Update GSTIN/address if missing
+          if (!existingByPhone.gstin && customerGstin) {
+            await supabase.from("customers").update({ gstin: customerGstin, address: customerAddress || existingByPhone.address }).eq("id", existingByPhone.id);
+          }
+        }
+      }
+
+      if (!customerId) {
+        const { data: newCust, error: custErr } = await supabase
+          .from("customers")
+          .insert({
+            name: customerName,
+            contact_no: contactNo || "0000000000",
+            email: contactEmail || null,
+            gstin: customerGstin || null,
+            address: customerAddress || null,
+            total_orders: 0,
+            total_spend: 0,
+          })
+          .select()
+          .single();
+        if (custErr) {
+          console.error("Customer creation error:", custErr);
+        } else {
+          customerId = newCust.id;
+          toast.success(`✅ New customer '${customerName}' created automatically`);
+        }
+      }
+
       const poRecord = await createPO.mutateAsync({
-        po_number: parsed.po_number,
-        po_date: parsed.po_date,
-        vendor_name: parsed.vendor_name,
-        contact_no: parsed.contact_no,
-        contact_person: parsed.contact_person,
-        gstin: parsed.gstin,
-        delivery_address: parsed.delivery_address,
-        delivery_date: parsed.delivery_date,
-        payment_terms: parsed.payment_terms,
+        po_number: poNumber,
+        po_date: poDate,
+        vendor_name: customerName,
+        contact_no: contactNo,
+        contact_person: contactPerson,
+        gstin: customerGstin,
+        delivery_address: (getHeader("delivery_address") as string) || parsed.delivery_address,
+        delivery_date: deliveryDate,
+        payment_terms: paymentTerms,
         currency: parsed.currency || "INR",
-        total_amount: parsed.total_amount || 0,
-        tax_amount: parsed.tax_amount || 0,
+        total_amount: totals.total || parsed.total_amount || 0,
+        tax_amount: (totals.cgst + totals.sgst + totals.igst) || parsed.tax_amount || 0,
         po_file_url: null,
-        parsed_data: parsed,
+        parsed_data: { ...parsed, ...editHeader, line_items: lineItems },
         status: "processed",
       } as any);
 
@@ -252,7 +398,7 @@ export default function ImportPO() {
           qty: li.qty,
           uom: li.uom || "NOS",
           unit_price: li.unit_price,
-          amount: li.amount,
+          amount: li.total_amount || li.base_amount,
           mapped_product_type_id: li.mapped_product_type_id || null,
           status: "ordered",
         }))
@@ -263,35 +409,35 @@ export default function ImportPO() {
         const li = lineItems[i];
         const pt = productTypes.find((p) => p.id === li.mapped_product_type_id);
         const order = await createOrder.mutateAsync({
-          customer_name: parsed.vendor_name,
-          contact_no: parsed.contact_no || "",
-          email: null,
+          customer_name: customerName,
+          contact_no: contactNo || "0000000000",
+          email: contactEmail || null,
           source: "purchase_order" as any,
           product_type: pt?.name || li.suggested_product_type || "Other",
           quantity: li.qty,
           size: pt?.default_size || "",
           color_mode: (pt?.default_color_mode || "full_color") as any,
           paper_type: pt?.default_paper_type || "",
-          special_instructions: `Created from PO #${parsed.po_number} — ${li.description}`,
-          order_date: parsed.po_date || format(new Date(), "yyyy-MM-dd"),
-          delivery_date: parsed.delivery_date || format(new Date(), "yyyy-MM-dd"),
-          amount: parsed.total_amount || li.amount || 0,
+          special_instructions: `PO #${poNumber} — ${li.description}`,
+          order_date: poDate || format(new Date(), "yyyy-MM-dd"),
+          delivery_date: deliveryDate || format(new Date(), "yyyy-MM-dd"),
+          amount: li.total_amount || li.base_amount || 0,
           advance_paid: 0,
           assigned_to: "",
           po_id: poId,
           po_line_item_id: lineItemRecords[i]?.id || null,
-          po_number: parsed.po_number,
-          po_contact_person: parsed.contact_person || "",
-          gstin: parsed.gstin,
+          po_number: poNumber,
+          po_contact_person: contactPerson,
+          gstin: customerGstin,
           hsn_code: li.hsn_code,
-          base_amount: parsed.base_amount || li.amount || 0,
-          cgst_percent: parsed.cgst_percent || 0,
-          cgst_amount: parsed.cgst_amount || 0,
-          sgst_percent: parsed.sgst_percent || 0,
-          sgst_amount: parsed.sgst_amount || 0,
-          igst_percent: parsed.igst_percent || 0,
-          igst_amount: parsed.igst_amount || 0,
-          total_tax_amount: parsed.tax_amount || 0,
+          base_amount: li.base_amount || 0,
+          cgst_percent: li.cgst_percent || 0,
+          cgst_amount: li.cgst_amount || 0,
+          sgst_percent: li.sgst_percent || 0,
+          sgst_amount: li.sgst_amount || 0,
+          igst_percent: li.igst_percent || 0,
+          igst_amount: li.igst_amount || 0,
+          total_tax_amount: (li.cgst_amount || 0) + (li.sgst_amount || 0) + (li.igst_amount || 0),
         } as any);
 
         orderNos.push(order.order_no);
@@ -335,7 +481,7 @@ export default function ImportPO() {
         size: "",
         color_mode: "full_color" as any,
         paper_type: "",
-        special_instructions: `Created from PO #${manualPO.po_number} — ${manualPO.description}`,
+        special_instructions: `PO #${manualPO.po_number} — ${manualPO.description}`,
         order_date: manualPO.po_date,
         delivery_date: manualPO.delivery_date,
         amount: grandTotal,
@@ -369,8 +515,10 @@ export default function ImportPO() {
   const manualRate = parseFloat(manualPO.rate) || 0;
   const manualGst = parseFloat(manualPO.gst_percent) || 0;
 
+  const grandTotalWords = totals.total > 0 ? numberToWords(totals.total) : "";
+
   return (
-    <div className="max-w-4xl mx-auto space-y-6 animate-fade-in">
+    <div className="max-w-5xl mx-auto space-y-6 animate-fade-in">
       <h1 className="text-2xl font-bold text-foreground">Import Order from Purchase Order (PO)</h1>
 
       <Tabs value={importTab} onValueChange={setImportTab}>
@@ -425,7 +573,7 @@ export default function ImportPO() {
                 >
                   <Upload className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
                   <p className="text-lg font-medium text-foreground">Drag PDF purchase order or click to browse</p>
-                  <p className="text-sm text-muted-foreground mt-1">Accepts .pdf up to 10MB (parsed in browser)</p>
+                  <p className="text-sm text-muted-foreground mt-1">Supports: Fujitec, Guindy Machine Tools, Contemporary Leather, and other PO formats</p>
                   <input
                     id="po-file-input"
                     type="file"
@@ -446,44 +594,113 @@ export default function ImportPO() {
                         <X className="h-4 w-4" />
                       </Button>
                       <Button onClick={handleParse} disabled={parsing} size="sm">
-                        {parsing ? <><Loader2 className="h-4 w-4 mr-1 animate-spin" />Parsing...</> : "Upload & Parse PO"}
+                        {parsing ? <><Loader2 className="h-4 w-4 mr-1 animate-spin" />AI Parsing...</> : "Upload & Parse PO"}
                       </Button>
                     </div>
                   </div>
                 )}
                 <p className="text-xs text-muted-foreground mt-3">
-                  If PDF parsing fails, switch to the "Manual PO Entry" tab to enter PO details by hand.
+                  PDF text is extracted in-browser, then parsed by AI. If parsing fails, use "Manual PO Entry" tab.
                 </p>
               </CardContent>
             </Card>
           )}
 
-          {/* Parsed Data Preview */}
+          {/* ===== Parsed Data Review Screen ===== */}
           {parsed && (
             <>
+              {/* Order Header */}
               <Card className="shadow-card">
-                <CardHeader><CardTitle className="text-sm">Parsed PO Data</CardTitle></CardHeader>
+                <CardHeader><CardTitle className="text-sm">📋 Order Header</CardTitle></CardHeader>
                 <CardContent>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-                    <Field label="PO Number" value={parsed.po_number} />
-                    <Field label="PO Date" value={parsed.po_date} />
-                    <Field label="Customer (Buyer)" value={parsed.vendor_name} />
-                    <Field label="Contact No" value={parsed.contact_no} />
-                    <Field label="PO Contact Person" value={parsed.contact_person} />
-                    <Field label="Buyer GSTIN" value={parsed.gstin} />
-                    <Field label="Delivery Date" value={parsed.delivery_date} />
-                    <Field label="Payment Terms" value={parsed.payment_terms} />
-                    <Field label="Base Amount" value={`₹${(parsed.base_amount || 0).toLocaleString("en-IN")}`} />
-                    {parsed.cgst_amount > 0 && <Field label={`CGST (${parsed.cgst_percent}%)`} value={`₹${parsed.cgst_amount.toLocaleString("en-IN")}`} />}
-                    {parsed.sgst_amount > 0 && <Field label={`SGST (${parsed.sgst_percent}%)`} value={`₹${parsed.sgst_amount.toLocaleString("en-IN")}`} />}
-                    {parsed.igst_amount > 0 && <Field label={`IGST (${parsed.igst_percent}%)`} value={`₹${parsed.igst_amount.toLocaleString("en-IN")}`} />}
-                    <Field label="Total Tax" value={`₹${(parsed.tax_amount || 0).toLocaleString("en-IN")}`} />
-                    <Field label="Grand Total" value={`₹${(parsed.total_amount || 0).toLocaleString("en-IN")}`} />
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 text-sm">
+                    <div>
+                      <Label className="text-xs text-muted-foreground">PO Number</Label>
+                      <Input
+                        value={(getHeader("po_number") as string) || ""}
+                        onChange={(e) => setHeader("po_number", e.target.value)}
+                        className="h-8 text-sm mt-1"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs text-muted-foreground">PO Date</Label>
+                      <Input
+                        type="date"
+                        value={(getHeader("po_date") as string) || ""}
+                        onChange={(e) => setHeader("po_date", e.target.value)}
+                        className="h-8 text-sm mt-1"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs text-muted-foreground">Customer Name</Label>
+                      <Input
+                        value={(getHeader("vendor_name") as string) || ""}
+                        onChange={(e) => setHeader("vendor_name", e.target.value)}
+                        className="h-8 text-sm mt-1"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs text-muted-foreground">Customer GST No.</Label>
+                      <p className="text-sm font-medium mt-1 font-mono">{parsed.gstin || "—"}</p>
+                    </div>
+                    <div>
+                      <Label className="text-xs text-muted-foreground">Delivery Date</Label>
+                      <Input
+                        type="date"
+                        value={(getHeader("delivery_date") as string) || ""}
+                        onChange={(e) => setHeader("delivery_date", e.target.value)}
+                        className="h-8 text-sm mt-1"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs text-muted-foreground">Payment Terms</Label>
+                      <Input
+                        value={(getHeader("payment_terms") as string) || ""}
+                        onChange={(e) => setHeader("payment_terms", e.target.value)}
+                        className="h-8 text-sm mt-1"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs text-muted-foreground">Contact Person</Label>
+                      <Input
+                        value={(getHeader("contact_person") as string) || ""}
+                        onChange={(e) => setHeader("contact_person", e.target.value)}
+                        className="h-8 text-sm mt-1"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs text-muted-foreground">Contact No.</Label>
+                      <Input
+                        value={(getHeader("contact_no") as string) || ""}
+                        onChange={(e) => setHeader("contact_no", e.target.value)}
+                        className="h-8 text-sm mt-1"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs text-muted-foreground">Contact Email</Label>
+                      <Input
+                        value={(getHeader("contact_email") as string) || ""}
+                        onChange={(e) => setHeader("contact_email", e.target.value)}
+                        className="h-8 text-sm mt-1"
+                      />
+                    </div>
                   </div>
                   {parsed.delivery_address && (
                     <div className="mt-3">
                       <Label className="text-muted-foreground text-xs">Delivery Address</Label>
-                      <p className="text-sm">{parsed.delivery_address}</p>
+                      <p className="text-sm mt-0.5">{parsed.delivery_address}</p>
+                    </div>
+                  )}
+                  {parsed.gst_extra && (
+                    <div className="mt-3 flex items-center gap-2 p-2 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-md">
+                      <AlertTriangle className="h-4 w-4 text-amber-600" />
+                      <span className="text-xs text-amber-700 dark:text-amber-400 font-medium">GST is EXTRA — taxes are not included in line item totals</span>
+                    </div>
+                  )}
+                  {parsed.remarks && (
+                    <div className="mt-2">
+                      <Label className="text-muted-foreground text-xs">Remarks</Label>
+                      <p className="text-xs text-muted-foreground mt-0.5">{parsed.remarks}</p>
                     </div>
                   )}
                 </CardContent>
@@ -493,59 +710,76 @@ export default function ImportPO() {
               <Card className="shadow-card mt-4">
                 <CardHeader>
                   <CardTitle className="text-sm flex items-center justify-between">
-                    <span>Line Items ({lineItems.length})</span>
-                    <span className="text-xs font-normal text-muted-foreground">
-                      Total: ₹{lineItems.reduce((s, li) => s + (li.amount || 0), 0).toLocaleString("en-IN")}
-                    </span>
+                    <span>📦 Line Items ({lineItems.length})</span>
+                    <Button variant="outline" size="sm" onClick={addLineItem} className="h-7 text-xs">
+                      <PlusCircle className="h-3.5 w-3.5 mr-1" />Add Row
+                    </Button>
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="p-0">
                   <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
+                    <table className="w-full text-xs">
                       <thead>
                         <tr className="border-b bg-muted/50">
-                          <th className="text-left p-3 font-medium text-muted-foreground">S.No</th>
-                          <th className="text-left p-3 font-medium text-muted-foreground">Description</th>
-                          <th className="text-left p-3 font-medium text-muted-foreground">HSN</th>
-                          <th className="text-left p-3 font-medium text-muted-foreground">QTY</th>
-                          <th className="text-left p-3 font-medium text-muted-foreground">UOM</th>
-                          <th className="text-left p-3 font-medium text-muted-foreground">Unit Price</th>
-                          <th className="text-left p-3 font-medium text-muted-foreground">Amount</th>
-                          <th className="text-left p-3 font-medium text-muted-foreground">Product Type</th>
-                          <th className="text-left p-3 font-medium text-muted-foreground">Actions</th>
+                          <th className="text-left p-2 font-medium text-muted-foreground w-8">#</th>
+                          <th className="text-left p-2 font-medium text-muted-foreground min-w-[180px]">Description</th>
+                          <th className="text-left p-2 font-medium text-muted-foreground w-20">HSN</th>
+                          <th className="text-right p-2 font-medium text-muted-foreground w-16">Qty</th>
+                          <th className="text-left p-2 font-medium text-muted-foreground w-14">UOM</th>
+                          <th className="text-right p-2 font-medium text-muted-foreground w-20">Unit Price</th>
+                          <th className="text-right p-2 font-medium text-muted-foreground w-24">Base Amt</th>
+                          <th className="text-right p-2 font-medium text-muted-foreground w-14">CGST%</th>
+                          <th className="text-right p-2 font-medium text-muted-foreground w-20">CGST</th>
+                          <th className="text-right p-2 font-medium text-muted-foreground w-14">SGST%</th>
+                          <th className="text-right p-2 font-medium text-muted-foreground w-20">SGST</th>
+                          <th className="text-right p-2 font-medium text-muted-foreground w-24 font-bold">Total</th>
+                          <th className="text-left p-2 font-medium text-muted-foreground w-28">Product Type</th>
+                          <th className="p-2 w-8"></th>
                         </tr>
                       </thead>
                       <tbody>
                         {lineItems.map((li, idx) => (
-                          <tr key={idx} className="border-b">
-                            <td className="p-3">{idx + 1}</td>
-                            <td className="p-3">
-                              <Input value={li.description} onChange={(e) => updateLineItem(idx, "description", e.target.value)} className="h-8 text-xs" />
+                          <tr key={idx} className="border-b hover:bg-muted/30">
+                            <td className="p-2 text-muted-foreground">{idx + 1}</td>
+                            <td className="p-2">
+                              <Input value={li.description} onChange={(e) => updateLineItem(idx, "description", e.target.value)} className="h-7 text-xs" />
                             </td>
-                            <td className="p-3">
-                              <Input value={li.hsn_code || ""} onChange={(e) => updateLineItem(idx, "hsn_code", e.target.value)} className="h-8 text-xs w-20" />
+                            <td className="p-2">
+                              <Input value={li.hsn_code || ""} onChange={(e) => updateLineItem(idx, "hsn_code", e.target.value)} className="h-7 text-xs" />
                             </td>
-                            <td className="p-3">
-                              <Input type="number" value={li.qty} onChange={(e) => updateLineItem(idx, "qty", parseInt(e.target.value) || 0)} className="h-8 text-xs w-16" />
+                            <td className="p-2">
+                              <Input type="number" value={li.qty} onChange={(e) => updateLineItem(idx, "qty", parseInt(e.target.value) || 0)} className="h-7 text-xs text-right" />
                             </td>
-                            <td className="p-3 text-muted-foreground">{li.uom || "NOS"}</td>
-                            <td className="p-3">
-                              <Input type="number" value={li.unit_price} onChange={(e) => updateLineItem(idx, "unit_price", parseFloat(e.target.value) || 0)} className="h-8 text-xs w-20" />
+                            <td className="p-2">
+                              <Input value={li.uom || "NOS"} onChange={(e) => updateLineItem(idx, "uom", e.target.value)} className="h-7 text-xs" />
                             </td>
-                            <td className="p-3 font-semibold">₹{li.amount?.toLocaleString("en-IN")}</td>
-                            <td className="p-3">
+                            <td className="p-2">
+                              <Input type="number" step="0.01" value={li.unit_price} onChange={(e) => updateLineItem(idx, "unit_price", parseFloat(e.target.value) || 0)} className="h-7 text-xs text-right" />
+                            </td>
+                            <td className="p-2 text-right font-medium">₹{li.base_amount?.toLocaleString("en-IN")}</td>
+                            <td className="p-2">
+                              <Input type="number" step="0.5" value={li.cgst_percent} onChange={(e) => updateLineItem(idx, "cgst_percent", parseFloat(e.target.value) || 0)} className="h-7 text-xs text-right w-12" />
+                            </td>
+                            <td className="p-2 text-right text-muted-foreground">₹{li.cgst_amount?.toLocaleString("en-IN")}</td>
+                            <td className="p-2">
+                              <Input type="number" step="0.5" value={li.sgst_percent} onChange={(e) => updateLineItem(idx, "sgst_percent", parseFloat(e.target.value) || 0)} className="h-7 text-xs text-right w-12" />
+                            </td>
+                            <td className="p-2 text-right text-muted-foreground">₹{li.sgst_amount?.toLocaleString("en-IN")}</td>
+                            <td className="p-2 text-right font-bold">₹{li.total_amount?.toLocaleString("en-IN")}</td>
+                            <td className="p-2">
                               <Select value={li.suggested_product_type} onValueChange={(v) => updateLineItem(idx, "suggested_product_type", v)}>
-                                <SelectTrigger className="h-8 text-xs w-32"><SelectValue /></SelectTrigger>
+                                <SelectTrigger className="h-7 text-xs w-28"><SelectValue /></SelectTrigger>
                                 <SelectContent>
                                   {productTypes.map((pt) => (
                                     <SelectItem key={pt.id} value={pt.name}>{pt.name}</SelectItem>
                                   ))}
+                                  <SelectItem value="Other">Other</SelectItem>
                                 </SelectContent>
                               </Select>
                             </td>
-                            <td className="p-3">
-                              <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => removeLineItem(idx)}>
-                                <Trash2 className="h-3.5 w-3.5" />
+                            <td className="p-2">
+                              <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive" onClick={() => removeLineItem(idx)}>
+                                <Trash2 className="h-3 w-3" />
                               </Button>
                             </td>
                           </tr>
@@ -556,13 +790,54 @@ export default function ImportPO() {
                 </CardContent>
               </Card>
 
+              {/* Summary */}
+              <Card className="shadow-card mt-4">
+                <CardHeader><CardTitle className="text-sm">💰 Summary</CardTitle></CardHeader>
+                <CardContent>
+                  <div className="max-w-sm ml-auto space-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Taxable Value</span>
+                      <span className="font-medium">₹{totals.base.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
+                    </div>
+                    {totals.cgst > 0 && (
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Total CGST</span>
+                        <span>₹{totals.cgst.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
+                      </div>
+                    )}
+                    {totals.sgst > 0 && (
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Total SGST</span>
+                        <span>₹{totals.sgst.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
+                      </div>
+                    )}
+                    {totals.igst > 0 && (
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Total IGST</span>
+                        <span>₹{totals.igst.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
+                      </div>
+                    )}
+                    <div className="border-t pt-2 flex justify-between font-bold text-base">
+                      <span>Grand Total</span>
+                      <span>₹{totals.total.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
+                    </div>
+                    {grandTotalWords && (
+                      <p className="text-xs text-muted-foreground italic">
+                        Rupees {grandTotalWords} Only
+                      </p>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+
               {/* Actions */}
               <div className="flex gap-3 mt-4">
-                <Button onClick={handleAutoCreate} disabled={creating || lineItems.length === 0}>
-                  {creating ? <><Loader2 className="h-4 w-4 mr-1 animate-spin" />Creating...</> : `Auto-Create ${lineItems.length} Order(s)`}
+                <Button onClick={handleAutoCreate} disabled={creating || lineItems.length === 0} className="gap-2">
+                  {creating ? <><Loader2 className="h-4 w-4 animate-spin" />Creating...</> : <><CheckCircle2 className="h-4 w-4" />Import as {lineItems.length} Order(s)</>}
                 </Button>
-                <Button variant="outline" onClick={() => navigate("/orders/new")}>Edit & Create Manually</Button>
-                <Button variant="outline" onClick={() => { setFile(null); setParsed(null); setLineItems([]); }}>Cancel</Button>
+                <Button variant="outline" onClick={() => { setFile(null); setParsed(null); setLineItems([]); setEditHeader({}); }}>
+                  Cancel
+                </Button>
               </div>
             </>
           )}
@@ -580,7 +855,7 @@ export default function ImportPO() {
           </DialogHeader>
           <div className="space-y-3">
             <p className="text-sm text-muted-foreground">
-              {createdOrders.length} order(s) created from PO #{parsed?.po_number}
+              {createdOrders.length} order(s) created from PO #{(getHeader("po_number") as string) || parsed?.po_number}
             </p>
             <div className="flex flex-wrap gap-2">
               {createdOrders.map((no) => (
@@ -590,22 +865,13 @@ export default function ImportPO() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => navigate("/orders")}>View Orders</Button>
-            <Button variant="outline" onClick={() => { setShowSuccess(false); setFile(null); setParsed(null); setLineItems([]); setCreatedOrders([]); }}>
+            <Button variant="outline" onClick={() => { setShowSuccess(false); setFile(null); setParsed(null); setLineItems([]); setEditHeader({}); setCreatedOrders([]); }}>
               Import Another PO
             </Button>
             <Button onClick={() => navigate("/")}>Dashboard</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
-  );
-}
-
-function Field({ label, value }: { label: string; value: string | null | undefined }) {
-  return (
-    <div>
-      <Label className="text-muted-foreground text-xs">{label}</Label>
-      <p className="text-sm font-medium">{value || "—"}</p>
     </div>
   );
 }
