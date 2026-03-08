@@ -190,7 +190,7 @@ function parseTabularTransactions(lines: string[]): Transaction[] {
 }
 
 function parsePipeTableTransactions(lines: string[]): Transaction[] {
-  const DATE_PREFIX = /^(\d{1,2}[-/\s](?:[A-Za-z]{3}|\d{1,2})[-/\s]\d{4})\b/i;
+  const DATE_PREFIX = /^(\d{1,2}[-/\s](?:[A-Za-z]{3}|\d{1,2})[-/\s]?\d{4})/i;
   const out: Transaction[] = [];
 
   for (const rawLine of lines) {
