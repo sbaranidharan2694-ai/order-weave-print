@@ -526,8 +526,9 @@ function tryContemporary(text: string): ParsedPOData | null {
       // Extract parts before UOM
       const beforeUom = line.slice(0, uomIdx).trim();
       
-      // Find qty: look for a number followed by optional ".00" before UNIT/WHSE
-      const qtyMatch = beforeUom.match(/([\d,]+(?:\.\d+)?)\s+(?:UNIT|WHSE|\d)/i)
+      // Find qty: the number with decimals just before "UNIT" or "WHSE"
+      // Pattern: "4820  2400.00  UNIT" → HSN=4820, QTY=2400
+      const qtyMatch = beforeUom.match(/([\d,]+\.\d{2})\s+(?:UNIT|WHSE)/i)
         || beforeUom.match(/([\d,]+\.\d{2})\s*$/);
       
       // Find HSN: 4-digit number
