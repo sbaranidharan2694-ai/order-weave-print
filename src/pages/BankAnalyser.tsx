@@ -34,6 +34,7 @@ import {
   saveTransaction,
   saveTransactionsBatch,
   deleteStatement as deleteStatementStorage,
+  deleteTransactionsByStatement,
   loadCustomLookup,
   saveCustomLookup,
   getStatement,
@@ -78,6 +79,22 @@ function detectAccountFromBankStatementData(data: BankStatementData): string | n
   return null;
 }
 
+function buildTxnId(
+  statementId: string,
+  index: number,
+  date: string,
+  refNo: string,
+  debit: number,
+  credit: number,
+  details: string,
+): string {
+  const amountPaise = Math.round((debit || credit || 0) * 100);
+  const safeDate = (date || "").replace(/[^0-9A-Za-z]/g, "").slice(0, 16);
+  const safeRef = (refNo || "").replace(/[^0-9A-Za-z]/g, "").slice(-16);
+  const safeDetails = (details || "").toUpperCase().replace(/[^0-9A-Z]/g, "").slice(0, 24);
+  return `${statementId}_${index}_${safeDate}_${safeRef}_${amountPaise}_${safeDetails || "TXN"}`;
+}
+
 /** Map BankStatementData (PDF.js parser) to our statement + transactions. */
 function mapBankStatementDataToStatementAndTransactions(
   data: BankStatementData,
@@ -90,10 +107,8 @@ function mapBankStatementDataToStatementAndTransactions(
     const date = t.date ?? "";
     const debit = Number(t.debit) || 0;
     const credit = Number(t.credit) || 0;
-    const txnId = btoa(statementId + String(i) + refNo + date + String(debit || credit))
-      .replace(/[^a-zA-Z0-9]/g, "")
-      .substring(0, 40);
     const counterpartyVal = (t as { counterparty?: string }).counterparty ?? extractParty(t.details ?? "");
+    const txnId = buildTxnId(statementId, i, date, refNo, debit, credit, t.details ?? "");
     return {
       id: txnId,
       statementId,
@@ -427,8 +442,7 @@ function parseTransactions(lines, statementId, customLookup = {}) {
 
     const { name, type } = extractCounterparty(details || "Unknown", customLookup);
 
-    const txnId = btoa(statementId + (refNo || "") + date + String(debit || credit))
-      .replace(/[^a-zA-Z0-9]/g, "").substring(0, 40);
+    const txnId = buildTxnId(statementId, txns.length, date, refNo, debit, credit, details || "");
 
     txns.push({
       id: txnId, date, details: details || "Transaction", refNo,
@@ -495,9 +509,8 @@ async function migrateOldData() {
       };
       await saveStatement(newStmt);
       if (s.transactions) {
-        for (const t of s.transactions) {
-          const txnId = btoa(s.id + (t.refNo || "") + t.date + String(t.debit || t.credit))
-            .replace(/[^a-zA-Z0-9]/g, "").substring(0, 40);
+        for (const [idx, t] of s.transactions.entries()) {
+          const txnId = buildTxnId(s.id, idx, t.date, t.refNo || "", t.debit || 0, t.credit || 0, t.details || "");
           await saveTransaction({ ...t, id: txnId, statementId: s.id });
         }
       }
@@ -1084,63 +1097,72 @@ function AccountTab({ account, onRefresh, customLookup, onUpdateLookup }) {
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [parsedPreview, setParsedPreview] = useState<{ statementId: string; data: BankStatementData } | null>(null);
   const [isParsingPreview, setIsParsingPreview] = useState(false);
-  const [reprocessing, setReprocessing] = useState(false);
+  const [repairingStatementId, setRepairingStatementId] = useState<string | null>(null);
+  const [reuploadTargetStatementId, setReuploadTargetStatementId] = useState<string | null>(null);
 
-  // Detect if statements have transaction_count > 0 but no actual transactions in DB
-  const needsReprocess = useMemo(() => {
-    return statements.some(s => (s.transactionCount ?? 0) > 0) && hookTransactions.length === 0;
-  }, [statements, hookTransactions.length]);
+  const statementTxnCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    hookTransactions.forEach((t) => {
+      const prev = m.get(t.statement_id) ?? 0;
+      m.set(t.statement_id, prev + 1);
+    });
+    return m;
+  }, [hookTransactions]);
 
-  const handleReprocessAll = useCallback(async () => {
-    setReprocessing(true);
-    let totalSaved = 0;
-    try {
-      for (const s of statements) {
-        if ((s.transactionCount ?? 0) === 0) continue;
-        // Try to get PDF from storage and re-parse
-        const url = await pdfStorage.retrieve(s.id);
-        if (!url) {
-          console.warn(`[Reprocess] No PDF in storage for statement ${s.id} (${s.fileName})`);
-          toast.error(`Cannot reprocess ${s.fileName} — PDF not in storage. Please re-upload.`);
-          continue;
-        }
-        toast.loading(`Reprocessing ${s.fileName}…`, { id: `reprocess-${s.id}` });
-        try {
-          const { text } = await extractTextFromPdf(url);
-          if (!text || text.trim().length < 30) {
-            toast.error(`No text in ${s.fileName}`, { id: `reprocess-${s.id}` });
-            continue;
-          }
-          const data = parseBankStatement(text);
-          if (data.transactions.length === 0) {
-            toast.error(`No transactions parsed from ${s.fileName}`, { id: `reprocess-${s.id}` });
-            continue;
-          }
-          const accountKey = account.key;
-          const { transactions: txns } = mapBankStatementDataToStatementAndTransactions(data, s.id, accountKey, s.fileName);
-          console.log(`[Reprocess] Inserting ${txns.length} transactions for statement ${s.id}`);
-          await saveTransactionsBatch(txns);
-          totalSaved += txns.length;
-          toast.success(`Reprocessed ${s.fileName}: ${txns.length} transactions saved`, { id: `reprocess-${s.id}` });
-        } catch (err) {
-          console.error(`[Reprocess] Error for ${s.fileName}:`, err);
-          toast.error(`Failed to reprocess ${s.fileName}: ${toErrorMessage(err)}`, { id: `reprocess-${s.id}` });
-        }
-      }
-      if (totalSaved > 0) {
-        toast.success(`Reprocess complete: ${totalSaved} total transactions saved`);
-        await refetch();
-        await onRefresh();
-      }
-    } catch (err) {
-      toast.error(`Reprocess failed: ${toErrorMessage(err)}`);
-    } finally {
-      setReprocessing(false);
-    }
-  }, [statements, account.key, refetch, onRefresh]);
+  const missingTxStatements = useMemo(
+    () => statements.filter((s) => (s.transactionCount ?? 0) > 0 && (statementTxnCounts.get(s.id) ?? 0) === 0),
+    [statements, statementTxnCounts],
+  );
 
   const fileInputRef = useRef(null);
   const dropRef = useRef(null);
+
+  const handleReuploadStatement = useCallback(
+    async (statementId: string, file: File) => {
+      const target = statements.find((s) => s.id === statementId);
+      if (!target) {
+        toast.error("Statement not found");
+        return;
+      }
+
+      setRepairingStatementId(statementId);
+      toast.loading(`Re-uploading ${target.fileName}…`, { id: `repair-${statementId}` });
+
+      try {
+        const result = await parseDocument(file, "bank_statement");
+        if (!result.success || !result.data) {
+          throw new Error(typeof result.error === "string" ? result.error : "Failed to parse PDF");
+        }
+
+        const parsed = result.data as BankStatementData;
+        const accountKey = account.key;
+        const { transactions: txns } = mapBankStatementDataToStatementAndTransactions(parsed, statementId, accountKey, target.fileName);
+
+        if (txns.length === 0) {
+          throw new Error("No transactions found in uploaded PDF");
+        }
+
+        // Statement already exists; only refill transactions.
+        await deleteTransactionsByStatement(statementId);
+        await saveTransactionsBatch(txns);
+        await updateStatementTransactionCount(statementId, txns.length);
+
+        toast.success(`Recovered ${txns.length} transactions for ${target.fileName}`, { id: `repair-${statementId}` });
+        await refetch();
+        await onRefresh();
+      } catch (err) {
+        toast.error(toErrorMessage(err), { id: `repair-${statementId}` });
+      } finally {
+        setRepairingStatementId(null);
+      }
+    },
+    [statements, account.key, refetch, onRefresh],
+  );
+
+  const openReuploadPicker = useCallback((statementId: string) => {
+    setReuploadTargetStatementId(statementId);
+    fileInputRef.current?.click();
+  }, []);
 
   const transactions = useMemo(
     () =>
@@ -1365,7 +1387,20 @@ function AccountTab({ account, onRefresh, customLookup, onUpdateLookup }) {
   }, [handleFiles]);
 
   const handleFileInput = (e) => {
-    if (e.target.files.length) handleFiles(e.target.files);
+    const files = e.target.files;
+    if (!files?.length) {
+      e.target.value = "";
+      return;
+    }
+
+    if (reuploadTargetStatementId) {
+      void handleReuploadStatement(reuploadTargetStatementId, files[0]);
+      setReuploadTargetStatementId(null);
+      e.target.value = "";
+      return;
+    }
+
+    handleFiles(files);
     e.target.value = "";
   };
 
@@ -1690,9 +1725,24 @@ function AccountTab({ account, onRefresh, customLookup, onUpdateLookup }) {
                         )}
                       </td>
                       <td className="px-3 py-2 text-center">
-                        <Button variant="ghost" size="sm" className="h-6 px-1 text-destructive" onClick={() => setDeleteConfirm(s.id)}>
-                          <Trash2 className="h-3 w-3" />
-                        </Button>
+                        <div className="flex items-center justify-center gap-1">
+                          {(s.transactionCount ?? 0) > 0 && (statementTxnCounts.get(s.id) ?? 0) === 0 && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-6 px-2 text-[11px]"
+                              onClick={() => openReuploadPicker(s.id)}
+                              disabled={repairingStatementId === s.id}
+                              title="Re-upload this statement PDF to recover missing transactions"
+                            >
+                              <Upload className="h-3 w-3 mr-1" />
+                              {repairingStatementId === s.id ? "Re-uploading…" : "Re-upload PDF"}
+                            </Button>
+                          )}
+                          <Button variant="ghost" size="sm" className="h-6 px-1 text-destructive" onClick={() => setDeleteConfirm(s.id)}>
+                            <Trash2 className="h-3 w-3" />
+                          </Button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -1832,20 +1882,29 @@ function AccountTab({ account, onRefresh, customLookup, onUpdateLookup }) {
           />
         </>
       )}
-      {hookTransactions.length === 0 && needsReprocess && (
+      {hookTransactions.length === 0 && missingTxStatements.length > 0 && (
         <div className="text-center py-8 rounded-xl border border-dashed border-warning/50 bg-warning/5 space-y-3">
           <AlertTriangle className="h-6 w-6 mx-auto text-warning" />
           <p className="text-sm text-muted-foreground">
-            Transactions were counted ({statements.reduce((s, st) => s + (st.transactionCount ?? 0), 0)} total) but not saved to the database.
-            <br />This usually happens if the upload occurred before the database was set up.
+            Transactions are missing for existing statements. Re-upload the exact PDF for each file below to refill transaction rows.
           </p>
-          <Button variant="default" size="sm" onClick={handleReprocessAll} disabled={reprocessing}>
-            <RefreshCw className={cn("h-3.5 w-3.5 mr-1.5", reprocessing && "animate-spin")} />
-            {reprocessing ? "Reprocessing…" : "Reprocess & Save Transactions"}
-          </Button>
+          <div className="flex flex-wrap justify-center gap-2">
+            {missingTxStatements.map((s) => (
+              <Button
+                key={s.id}
+                variant="outline"
+                size="sm"
+                onClick={() => openReuploadPicker(s.id)}
+                disabled={repairingStatementId === s.id}
+              >
+                <Upload className={cn("h-3.5 w-3.5 mr-1.5", repairingStatementId === s.id && "animate-pulse")} />
+                {repairingStatementId === s.id ? "Re-uploading…" : `Re-upload ${s.fileName}`}
+              </Button>
+            ))}
+          </div>
         </div>
       )}
-      {hookTransactions.length === 0 && !needsReprocess && (
+      {hookTransactions.length === 0 && missingTxStatements.length === 0 && (
         <div className="text-center text-muted-foreground py-12 rounded-xl border border-dashed">
           No transactions yet. Upload a PDF above.
         </div>

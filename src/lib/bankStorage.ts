@@ -223,6 +223,17 @@ export async function deleteTransaction(statementId: string, txnId: string): Pro
   }
 }
 
+/** Delete all transactions for a statement. No-op if not configured. */
+export async function deleteTransactionsByStatement(statementId: string): Promise<void> {
+  if (!isSupabaseConfigured) return;
+  try {
+    const { error } = await supabase.from("bank_transactions").delete().eq("statement_id", statementId);
+    if (error) throw new Error(getErrorMessage(error));
+  } catch {
+    /* noop when table missing or not configured */
+  }
+}
+
 /** Load transactions for a statement. Returns [] if not configured or table missing. */
 export async function loadTransactions(statementId: string): Promise<BankTransaction[]> {
   if (!isSupabaseConfigured) return [];
@@ -292,14 +303,21 @@ export async function saveTransaction(txn: BankTransaction): Promise<void> {
 export async function saveTransactionsBatch(txns: BankTransaction[]): Promise<void> {
   if (!isSupabaseConfigured) throw new Error("Supabase not configured. Connect Supabase in Lovable or add .env.");
   if (txns.length === 0) return;
+
   const rows = txns.map(transactionToRow);
-  console.log(`[bankStorage] saveTransactionsBatch: inserting ${rows.length} transactions for statement ${rows[0]?.statement_id}`);
-  const { error } = await supabase.from("bank_transactions").upsert(rows, { onConflict: "id" });
+  const dedupedRows = Array.from(new Map(rows.map((row) => [row.id, row])).values()); // keep LAST duplicate id
+
+  console.log(
+    `[bankStorage] saveTransactionsBatch: inserting ${dedupedRows.length}/${rows.length} deduped transactions for statement ${dedupedRows[0]?.statement_id}`,
+  );
+
+  const { error } = await supabase.from("bank_transactions").upsert(dedupedRows, { onConflict: "id" });
   if (error) {
     console.error("[bankStorage] saveTransactionsBatch error:", error);
     throw new Error(getErrorMessage(error));
   }
-  console.log(`[bankStorage] saveTransactionsBatch: SUCCESS — ${rows.length} rows inserted/upserted`);
+
+  console.log(`[bankStorage] saveTransactionsBatch: SUCCESS — ${dedupedRows.length} rows inserted/upserted`);
 }
 
 /** Delete statement and its transactions. No-op if not configured. */
