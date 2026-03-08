@@ -1070,7 +1070,7 @@ function OverviewTab({
       )}
 
       <p className="text-xs text-muted-foreground text-center">
-        🔒 Passwords never stored. All processing in-browser. Statements and transactions are saved permanently to your Supabase database when the Bank Analyser tables are set up; otherwise saved locally. PDFs stay on this device only.
+        🔒 Passwords never stored. All processing in-browser. Statements, transactions, and PDFs are stored in the cloud — accessible from any device.
       </p>
     </div>
   );
