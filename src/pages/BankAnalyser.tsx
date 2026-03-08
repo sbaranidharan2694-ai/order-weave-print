@@ -797,7 +797,7 @@ function OverviewTab({
         throw new Error("No text extracted — PDF may be image/scanned only");
       }
       const parsed = parseBankStatement(text);
-      const assignedTab = getTabForAccount(parsed.accountNumber ?? "");
+      const assignedTab = getTabForAccount(parsed.accountNumber ?? "") || detectAccountFromBankStatementData(parsed);
       if (!assignedTab) {
         throw new Error(`Unknown account: ${parsed.accountNumber ?? "—"}. Add to ACCOUNT_TAB_MAP if needed.`);
       }
