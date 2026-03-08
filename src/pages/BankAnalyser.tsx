@@ -1308,16 +1308,18 @@ function AccountTab({ account, onRefresh, customLookup, onUpdateLookup }) {
           continue;
         }
 
-        // Parse PDF in browser with PDF.js (no API keys)
-        setQueue(prev => prev.map((p, i) => i === qi ? { ...p, progress: "Parsing PDF…" } : p));
-        const result = await parseDocument(item.file, "bank_statement");
-        if (!result.success || !result.data) {
-          const errStr = typeof result.error === "string" ? result.error : toErrorMessage(result.error ?? "Parsing failed");
+        // Parse PDF with Gemini AI
+        setQueue(prev => prev.map((p, i) => i === qi ? { ...p, progress: "Parsing PDF with AI…" } : p));
+        let data: BankStatementData;
+        try {
+          const aiResult = await parseBankStatementWithAI(item.file);
+          data = aiResult.data;
+        } catch (parseErr) {
+          const errStr = toErrorMessage(parseErr);
           setQueue(prev => prev.map((p, i) => i === qi ? { ...p, status: "error", error: errStr } : p));
           toast.error(errStr);
           continue;
         }
-        const data = result.data as BankStatementData;
         const detected = detectAccountFromBankStatementData(data);
         const finalAccount = detected || item.account;
         const finalStmtId = btoa(finalAccount + item.file.name + item.file.size)
