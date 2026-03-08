@@ -66,13 +66,20 @@ function normalizeAccountNumber(raw: string): string {
 
 function normalizeDateToken(raw: string): string {
   const s = raw.trim().replace(/[\s/]+/g, "-");
-  // Handle DD-MONYYYY (no separator between month and year) → DD-MON-YYYY
+  // DD-MM-YY → YYYY-MM-DD (assume 20xx)
+  let m = s.match(/^(\d{1,2})-(\d{1,2})-(\d{2})$/);
+  if (m) {
+    const [, d, mon, yy] = m;
+    const y = parseInt(yy, 10) < 50 ? "20" + yy : "19" + yy;
+    return `${y}-${mon.padStart(2, "0")}-${d.padStart(2, "0")}`;
+  }
+  // DD-MONYYYY (no separator between month and year) → DD-MON-YYYY
   const fixed = s.replace(/^(\d{1,2})-([A-Za-z]{3})(\d{4})$/, "$1-$2-$3");
-  const m = fixed.match(/^(\d{1,2})-([A-Za-z]{3}|\d{1,2})-(\d{4})$/);
+  m = fixed.match(/^(\d{1,2})-([A-Za-z]{3}|\d{1,2})-(\d{4})$/);
   if (!m) return raw.trim();
   const [, d, mon, y] = m;
-  if (/^\d{1,2}$/.test(mon)) return `${d.padStart(2, "0")}-${mon.padStart(2, "0")}-${y}`;
-  return `${d.padStart(2, "0")}-${mon.slice(0, 1).toUpperCase()}${mon.slice(1, 3).toLowerCase()}-${y}`;
+  if (/^\d{1,2}$/.test(mon)) return `${y}-${mon.padStart(2, "0")}-${d.padStart(2, "0")}`;
+  return `${y}-${mon.slice(0, 1).toUpperCase()}${mon.slice(1, 3).toLowerCase()}-${d.padStart(2, "0")}`;
 }
 
 function categorise(detail: string): string {
@@ -114,8 +121,21 @@ function parseSummaryTotals(joined: string): {
   };
 }
 
+/** Match transaction date at start: DD-MM-YYYY, DD/MM/YYYY, DD-Mon-YYYY, DD-MM-YY */
+const DATE_PREFIX = /^(\d{1,2}[-/\s](?:[A-Za-z]{3}|\d{1,2})[-/\s]?\d{2,4})/i;
+
+/** True if line is a section/column header, not transaction content */
+function isTransactionHeaderLine(line: string): boolean {
+  const t = line.trim();
+  if (t.length > 120) return false;
+  return (
+    /^(TRANS\s+DATE|VALUE\s+DATE|DEBITS?|CREDITS?|BALANCE|Date\s+Details|Ref\s+No)\s*$/i.test(t) ||
+    /^CSB\s+24x7|^PAGE\s+\d+/i.test(t) ||
+    (/^(SUPER\s+PRINTERS|SUPER\s+SCREENS|REVATHY|PALLAVARAM|SARASWATHI|superprntrs)\s*$/i.test(t))
+  );
+}
+
 function parseTabularTransactions(lines: string[]): Transaction[] {
-  const DATE_PREFIX = /^(\d{1,2}[-/\s](?:[A-Za-z]{3}|\d{1,2})[-/\s]?\d{4})/i;
   const blocks: string[] = [];
   let current: string[] = [];
 
@@ -129,15 +149,13 @@ function parseTabularTransactions(lines: string[]): Transaction[] {
       continue;
     }
 
-    if (
-      current.length > 0 &&
-      !/^(TRANS\s+DATE|VALUE\s+DATE|DEBITS?|CREDITS?|BALANCE|CSB\s+24x7|PAGE\s+\d+|Date\s+Details|Ref\s+No|SUPER\s+PRINTERS|SUPER\s+SCREENS|REVATHY|PALLAVARAM|SARASWATHI|superprntrs)/i.test(line)
-    ) {
+    if (current.length > 0 && !isTransactionHeaderLine(line)) {
       current.push(line);
     }
   }
   if (current.length) blocks.push(current.join(" "));
 
+  const AMOUNT_RE = /[\d,]+\.\d{2}/g;
   const out: Transaction[] = [];
 
   for (const block of blocks) {
@@ -153,13 +171,28 @@ function parseTabularTransactions(lines: string[]): Transaction[] {
       rest = rest.slice(valueDate[0].length).trim();
     }
 
-    const endNums = rest.match(/([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})$/);
-    if (!endNums) continue;
+    const strictMatch = rest.match(/([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})$/);
+    let debit = 0;
+    let credit = 0;
+    let balance = 0;
+    let bodyEndIndex = rest.length;
 
-    const debit = toNum(endNums[1]);
-    const credit = toNum(endNums[2]);
-    const balance = toNum(endNums[3]);
-    let body = rest.slice(0, endNums.index).trim();
+    if (strictMatch) {
+      debit = toNum(strictMatch[1]);
+      credit = toNum(strictMatch[2]);
+      balance = toNum(strictMatch[3]);
+      bodyEndIndex = strictMatch.index ?? rest.length;
+    } else {
+      const allAmounts = [...rest.matchAll(AMOUNT_RE)];
+      if (allAmounts.length < 3) continue;
+      const lastThree = allAmounts.slice(-3);
+      debit = toNum(lastThree[0][0]);
+      credit = toNum(lastThree[1][0]);
+      balance = toNum(lastThree[2][0]);
+      bodyEndIndex = lastThree[0].index ?? rest.length;
+    }
+
+    let body = rest.slice(0, bodyEndIndex).trim();
 
     const refMatches = [...body.matchAll(/\b([A-Z0-9]{6,20})\b/g)];
     const refNo = refMatches.length ? (refMatches[refMatches.length - 1][1] ?? "") : "";
@@ -190,7 +223,6 @@ function parseTabularTransactions(lines: string[]): Transaction[] {
 }
 
 function parsePipeTableTransactions(lines: string[]): Transaction[] {
-  const DATE_PREFIX = /^(\d{1,2}[-/\s](?:[A-Za-z]{3}|\d{1,2})[-/\s]?\d{4})/i;
   const out: Transaction[] = [];
 
   for (const rawLine of lines) {
@@ -247,7 +279,7 @@ function parsePipeTableTransactions(lines: string[]): Transaction[] {
 }
 
 function parseLooseTransactions(lines: string[]): Transaction[] {
-  const DATE_RE = /(\d{1,2}[-/\s](?:[A-Za-z]{3}|\d{1,2})[-/\s]?\d{4})/i;
+  const DATE_RE = /(\d{1,2}[-/\s](?:[A-Za-z]{3}|\d{1,2})[-/\s]?\d{2,4})/i;
   const MONEY_RE = /[\d,]+\.\d{2}/g;
   const out: Transaction[] = [];
 
