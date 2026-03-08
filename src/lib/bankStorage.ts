@@ -223,6 +223,17 @@ export async function deleteTransaction(statementId: string, txnId: string): Pro
   }
 }
 
+/** Delete all transactions for a statement. No-op if not configured. */
+export async function deleteTransactionsByStatement(statementId: string): Promise<void> {
+  if (!isSupabaseConfigured) return;
+  try {
+    const { error } = await supabase.from("bank_transactions").delete().eq("statement_id", statementId);
+    if (error) throw new Error(getErrorMessage(error));
+  } catch {
+    /* noop when table missing or not configured */
+  }
+}
+
 /** Load transactions for a statement. Returns [] if not configured or table missing. */
 export async function loadTransactions(statementId: string): Promise<BankTransaction[]> {
   if (!isSupabaseConfigured) return [];
