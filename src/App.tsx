@@ -7,6 +7,7 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { isSupabaseConfigured } from "@/integrations/supabase/client";
 import { ThemeProvider } from "next-themes";
+import { AuthProvider, useAuth } from "@/hooks/useAuth";
 
 const Dashboard = lazy(() => import("@/pages/Dashboard"));
 const OrderHistory = lazy(() => import("@/pages/OrderHistory"));
@@ -20,6 +21,7 @@ const ImportPO = lazy(() => import("@/pages/ImportPO"));
 const BankAnalyser = lazy(() => import("@/pages/BankAnalyser"));
 const Attendance = lazy(() => import("@/pages/Attendance"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
+const Login = lazy(() => import("@/pages/Login"));
 
 function PageLoader() {
   return (
@@ -69,6 +71,36 @@ function SetupRequired() {
   );
 }
 
+function AuthGate() {
+  const { user, loading } = useAuth();
+
+  if (loading) return <PageLoader />;
+  if (!user) return <Suspense fallback={<PageLoader />}><Login /></Suspense>;
+
+  return (
+    <BrowserRouter>
+      <AppLayout>
+        <Suspense fallback={<PageLoader />}>
+          <Routes>
+            <Route path="/" element={<Dashboard />} />
+            <Route path="/orders" element={<OrderHistory />} />
+            <Route path="/orders/new" element={<NewOrder />} />
+            <Route path="/orders/:id" element={<OrderDetail />} />
+            <Route path="/orders/:id/edit" element={<EditOrder />} />
+            <Route path="/import-po" element={<ImportPO />} />
+            <Route path="/bank-analyser" element={<BankAnalyser />} />
+            <Route path="/attendance" element={<Attendance />} />
+            <Route path="/customers" element={<Customers />} />
+            <Route path="/customers/:id" element={<CustomerDetail />} />
+            <Route path="/settings" element={<SettingsPage />} />
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+        </Suspense>
+      </AppLayout>
+    </BrowserRouter>
+  );
+}
+
 const App = () => (
   <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false}>
     <QueryClientProvider client={queryClient}>
@@ -78,26 +110,9 @@ const App = () => (
         {!isSupabaseConfigured ? (
           <SetupRequired />
         ) : (
-          <BrowserRouter>
-            <AppLayout>
-              <Suspense fallback={<PageLoader />}>
-                <Routes>
-                  <Route path="/" element={<Dashboard />} />
-                  <Route path="/orders" element={<OrderHistory />} />
-                  <Route path="/orders/new" element={<NewOrder />} />
-                  <Route path="/orders/:id" element={<OrderDetail />} />
-                  <Route path="/orders/:id/edit" element={<EditOrder />} />
-                  <Route path="/import-po" element={<ImportPO />} />
-                  <Route path="/bank-analyser" element={<BankAnalyser />} />
-                  <Route path="/attendance" element={<Attendance />} />
-                  <Route path="/customers" element={<Customers />} />
-                  <Route path="/customers/:id" element={<CustomerDetail />} />
-                  <Route path="/settings" element={<SettingsPage />} />
-                  <Route path="*" element={<NotFound />} />
-                </Routes>
-              </Suspense>
-            </AppLayout>
-          </BrowserRouter>
+          <AuthProvider>
+            <AuthGate />
+          </AuthProvider>
         )}
       </TooltipProvider>
     </QueryClientProvider>
