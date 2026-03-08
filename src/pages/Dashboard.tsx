@@ -89,18 +89,6 @@ export default function Dashboard() {
     { label: "Overdue", value: stats.overdue, icon: AlertCircle, color: "text-destructive", bgColor: "bg-destructive/10" },
   ];
 
-  if (isLoading) {
-    return (
-      <div className="space-y-6 animate-fade-in">
-        <Skeleton className="h-8 w-40" />
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-24" />)}
-        </div>
-        <Skeleton className="h-64" />
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-8 animate-fade-in">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -113,6 +101,16 @@ export default function Dashboard() {
           New Order
         </Button>
       </div>
+
+      {isLoading ? (
+        <div className="space-y-6">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-24" />)}
+          </div>
+          <Skeleton className="h-64" />
+        </div>
+      ) : (
+      <>
 
       {/* KPI Cards */}
       <section>
@@ -272,6 +270,8 @@ export default function Dashboard() {
           </Card>
         </div>
       </section>
+      </>
+      )}
     </div>
   );
 }
