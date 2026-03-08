@@ -1450,14 +1450,8 @@ function AccountTab({ account, onRefresh, customLookup, onUpdateLookup }) {
         toast.error("PDF not found in storage");
         return;
       }
-      toast.loading("Extracting text from PDF…", { id: "parse-pdf" });
-      const { text, pageCount } = await extractTextFromPdf(url);
-      if (!text || text.trim().length < 30) {
-        toast.error("No text found in PDF — file may be image-based", { id: "parse-pdf" });
-        return;
-      }
-      toast.loading(`Parsing ${pageCount} page(s)…`, { id: "parse-pdf" });
-      const data = parseBankStatement(text);
+      toast.loading("Parsing PDF with AI…", { id: "parse-pdf" });
+      const { data, pageCount } = await parseBankStatementWithAI(url);
       setParsedPreview({ statementId, data });
       toast.success(
         `Parsed: ${data.transactions.length} transactions | Closing ₹${data.closingBalance.toLocaleString("en-IN", { minimumFractionDigits: 2 })}`,
