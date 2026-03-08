@@ -17,6 +17,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { format } from "date-fns";
 import { extractTextFromPdf } from "@/utils/extractPdfText";
+import { extractTextFromExcel } from "@/utils/extractExcelText";
 import { numberToWords } from "@/lib/numberToWords";
 
 const MAX_PO_FILE_BYTES = 10 * 1024 * 1024;
@@ -120,13 +121,13 @@ export default function ImportPO() {
       toast.error(`File too large: ${(f.size / 1024 / 1024).toFixed(1)}MB. Max 10MB.`);
       return;
     }
-    if (f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf")) {
+    if (f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf") || f.type === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" || f.name.toLowerCase().endsWith(".xlsx")) {
       setFile(f);
       setParsed(null);
       setLineItems([]);
       setEditHeader({});
     } else {
-      toast.error("Please select a PDF file.");
+      toast.error("Please select a PDF or Excel (.xlsx) file.");
     }
   };
 
@@ -138,13 +139,13 @@ export default function ImportPO() {
       toast.error(`File too large: ${(f.size / 1024 / 1024).toFixed(1)}MB. Max 10MB.`);
       return;
     }
-    if (f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf")) {
+    if (f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf") || f.type === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" || f.name.toLowerCase().endsWith(".xlsx")) {
       setFile(f);
       setParsed(null);
       setLineItems([]);
       setEditHeader({});
     } else {
-      toast.error("Please drop a PDF file.");
+      toast.error("Please drop a PDF or Excel (.xlsx) file.");
     }
   }, []);
 
@@ -152,15 +153,18 @@ export default function ImportPO() {
     if (!file) return;
     setParsing(true);
     try {
-      const { text: pdfText } = await extractTextFromPdf(file);
-      if (!pdfText || pdfText.trim().length < 30) {
-        toast.error("Could not extract text from PDF. File may be scanned/image-based.");
+      const isExcel = file.name.toLowerCase().endsWith(".xlsx");
+      const { text: rawText } = isExcel
+        ? await extractTextFromExcel(file)
+        : await extractTextFromPdf(file);
+      if (!rawText || rawText.trim().length < 30) {
+        toast.error(isExcel ? "Could not extract data from Excel file." : "Could not extract text from PDF. File may be scanned/image-based.");
         return;
       }
 
-      const parsed = parsePOText(pdfText);
+      const parsed = parsePOText(rawText);
       if (!parsed.line_items?.length) {
-        toast.error("Could not parse line items from this PDF. Try Manual PO Entry or use a supported format (Fujitec, Guindy, Contemporary).");
+        toast.error("Could not parse line items from this file. Try Manual PO Entry or use a supported format (Fujitec, Guindy, Contemporary, Wipro, CGRD Chemicals).");
         return;
       }
 
@@ -538,7 +542,7 @@ export default function ImportPO() {
 
       <Tabs value={importTab} onValueChange={setImportTab}>
         <TabsList>
-          <TabsTrigger value="pdf">Upload PDF</TabsTrigger>
+          <TabsTrigger value="pdf">Upload PDF / Excel</TabsTrigger>
           <TabsTrigger value="manual">Manual PO Entry</TabsTrigger>
         </TabsList>
 
@@ -587,12 +591,12 @@ export default function ImportPO() {
                   onClick={() => document.getElementById("po-file-input")?.click()}
                 >
                   <Upload className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-                  <p className="text-lg font-medium text-foreground">Drag PDF purchase order or click to browse</p>
-                  <p className="text-sm text-muted-foreground mt-1">Supports: Fujitec, Guindy Machine Tools, Contemporary Leather, and other PO formats</p>
+                  <p className="text-lg font-medium text-foreground">Drag PDF or Excel purchase order or click to browse</p>
+                  <p className="text-sm text-muted-foreground mt-1">Supports: Fujitec, Guindy Machine Tools, Contemporary Leather, Wipro Enterprises, CGRD Chemicals, and other formats</p>
                   <input
                     id="po-file-input"
                     type="file"
-                    accept=".pdf"
+                    accept=".pdf,.xlsx"
                     className="hidden"
                     onChange={handleFileChange}
                   />
@@ -615,7 +619,7 @@ export default function ImportPO() {
                   </div>
                 )}
                 <p className="text-xs text-muted-foreground mt-3">
-                  PDF text is extracted in-browser and parsed with built-in rules (Fujitec, Guindy, Contemporary). If parsing fails, use "Manual PO Entry" tab.
+                  PDF and Excel files are parsed in-browser with built-in rules. If parsing fails, use Manual PO Entry tab.
                 </p>
               </CardContent>
             </Card>

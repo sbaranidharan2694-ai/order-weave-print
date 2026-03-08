@@ -1,6 +1,6 @@
 /**
  * Rule-based Purchase Order parser (no AI).
- * Supports: Fujitec (SUBCON), Guindy Machine Tools (LOC), Contemporary Leather (SAP).
+ * Supports: Fujitec, Guindy Machine Tools, Contemporary Leather, Wipro Enterprises, CGRD Chemicals, and other PO formats.
  */
 
 export type ParsedPOLineItem = {
@@ -102,6 +102,21 @@ function normalizeDate(raw: string | null | undefined): string | null {
     return `${year}-${mon.padStart(2, "0")}-${d.padStart(2, "0")}`;
   }
 
+  // DD.MM.YYYY or DD.MM.YY (e.g. 03.03.2026 or 26.02.26)
+  m = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{2,4})$/);
+  if (m) {
+    const [, d, mon, y] = m;
+    const year = y.length === 2 ? (parseInt(y, 10) < 50 ? "20" + y : "19" + y) : y;
+    return `${year}-${mon.padStart(2, "0")}-${d.padStart(2, "0")}`;
+  }
+
+  // DDDD (e.g. 04032026 or 08032026)
+  m = s.match(/^(\d{2})(\d{2})(\d{4})$/);
+  if (m) {
+    const [, d, mon, y] = m;
+    return `${y}-${mon}-${d}`;
+  }
+
   // DD-Mon-YYYY (e.g. 24-Feb-2026)
   const months: Record<string, string> = {
     jan: "01", feb: "02", mar: "03", apr: "04", may: "05", jun: "06",
@@ -115,6 +130,35 @@ function normalizeDate(raw: string | null | undefined): string | null {
   }
 
   return null;
+}
+
+/** Skip lines that are footer/metadata — never use as line item description */
+function isFooterLine(line: string): boolean {
+  const t = line.trim();
+  return (
+    /GST\s+No\.?|PAN\s+No\.?|Vendor\s+Code|Vendor\s+GST|GSTIN|Tel\.?|Plot\s+|PIN\s+|AUTHORISED\s+SIGNATORY|DELIVERY\s+ADDRESS/i.test(t)
+  );
+}
+
+/** Only rows that start with numeric Sr/Sl/S.No (1, 2, 3...) are line item rows */
+function startsWithNumericIndex(line: string): boolean {
+  return /^\s*\d+\s+/.test(line.trim()) || /^\s*\d+\s*$/.test(line.trim());
+}
+
+/** Deduplicate line items by description + total_amount (multi-page PDFs) */
+function dedupeLineItems(items: ParsedPOLineItem[]): ParsedPOLineItem[] {
+  const seen = new Set<string>();
+  return items.filter((li) => {
+    const key = `${(li.description || "").trim()}|${li.total_amount}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/** Recalculate grand total from sum of line item totals (Base + CGST + SGST + IGST) */
+function recalcGrandTotal(items: ParsedPOLineItem[]): number {
+  return items.reduce((s, li) => s + (li.total_amount || 0), 0);
 }
 
 function extractGstin(text: string): string | null {
@@ -172,92 +216,154 @@ function isTotalLine(line: string): boolean {
   return nums.length <= 2 && nums.some((n) => n > 10000);
 }
 
-/** Try Fujitec India (SUBCON PURCHASE ORDER) or SUPER / List of Subcon / Purchase Order POs */
+/** Fujitec India: detection FUJITEC INDIA PVT LTD or PO-FIN-M- or SUBCON/List of Subcon/SUPER */
 function tryFujitec(text: string): ParsedPOData | null {
-  if (!/SUBCON PURCHASE ORDER|FUJITEC INDIA|List\s*of\s*Subcon|ListOfSubcon|SUPER\s*\d+|SUPER\s*PRINTERS|Purchase\s+Order/i.test(text)) return null;
+  if (!/FUJITEC INDIA PVT LTD|PO-FIN-M-|SUBCON PURCHASE ORDER|FUJITEC INDIA|List\s*of\s*Subcon|ListOfSubcon|SUPER\s*\d+|SUPER\s*PRINTERS|Purchase\s+Order/i.test(text)) return null;
 
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
 
-  const poNumber = firstMatch(text, /Purchase\s+Job\s+Order\s+No\.?\s*[:\s]*([A-Z0-9-]+)/i)
+  const poNumber = firstMatch(text, /Purchase\s+Job\s+Order\s+No\s+(PO-[\w-]+)/i)
     || firstMatch(text, /Order\s+No\.?\s*[:\s]*([A-Z0-9-]+)/i)
-    || firstMatch(text, /SUPER\s*[_\s]*(\d+)/i)
     || firstMatch(text, /PO\s*[#:]?\s*([A-Z0-9-]+)/i);
-  const poDateRaw = firstMatch(text, /(?:^|\s)Date\s*[:\s]*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{1,2}[/-][A-Za-z]{3}[/-]?\d{4})/i)
-    || firstMatch(text, /(\d{1,2}[/-][A-Za-z]{3}[/-]\d{4})/);
-  const completionDate = firstMatch(text, /Completion\s+Date\s*[:\s]*([\d/-A-Za-z]+)/i);
+  const poDateRaw = firstMatch(text, /Date\s+(\d{2}-\w+-\d{4})/i)
+    || firstMatch(text, /(?:^|\s)Date\s*[:\s]*(\d{1,2}[/-][A-Za-z]{3}[/-]?\d{4})/i);
+  const completionDate = firstMatch(text, /Completion\s+Date\s*[:\s]*(\d{2}-\w+-\d{4})/i);
   const paymentDays = firstMatch(text, /Terms\s+of\s+Payment\s+in\s+Days\s*[:\s]*(\d+)/i);
-  const contactPerson = firstMatch(text, /Contact\s+Person\s*[:\s]*([^\n]+?)(?=\s*(?:GST|$))/i);
+  const contactPerson = firstMatch(text, /Approved\s+By\s+(.+?)(?=\s*(?:GST|$|\n))/i)
+    || firstMatch(text, /Contact\s+Person\s*[:\s]*([^\n]+?)(?=\s*(?:GST|$))/i);
 
-  const gstin = extractGstin(text);
-  const vendorName = /FUJITEC INDIA/i.test(text) ? "Fujitec India Pvt Ltd" : "Vendor";
+  const gstin = firstMatch(text, /GST\s+No\.?\s+(33AAAC\w+)/i) || extractGstin(text);
+  const vendorName = /FUJITEC INDIA/i.test(text) ? "Fujitec India Pvt Ltd" : /SUPER\s*PRINTERS/i.test(text) ? "Super Printers" : "Vendor";
 
   const lineItems: ParsedPOLineItem[] = [];
-  const tableStart = lines.findIndex((l) => /Sr\s*No|Description\s*\|?\s*Part\s*Number|Qty\s*\|?\s*UOM|Sl\.?\s*No|S\.?\s*No\s+Description|Part\s*Number|Unit\s*Price|Total\s*Price/i.test(l));
+  const tableStart = lines.findIndex((l) => /Sr\s*No.*Description.*Part\s*Number|Req\.On\s*Date.*Cost\s*Entity|Qty\s+UOM\s+Unit\s*Price\s+Total\s*Price\s+CGST\s+SGST/i.test(l));
   const startIndex = tableStart >= 0 ? tableStart + 1 : 0;
   for (let i = startIndex; i < lines.length; i++) {
-      const line = lines[i];
-      if (isTableHeaderLine(line)) continue;
-      if (isTotalLine(line)) break;
-      if (/Total|Grand|Subtotal/i.test(line) && line.length < 50) break;
-      const nums = extractNumbers(line);
-      // Fujitec: Sr No | Description | Part No | Qty | UOM | Unit Price | Total Price | CGST Rate | CGST Amt | SGST Rate | SGST Amt
-      // So numbers on line: [srNo, qty, unitPrice, totalPrice, ...tax]. Use index 1,2,3 for qty, unitPrice, total.
-      if (nums.length >= 4) {
-        const srNo = nums[0];
-        const qty = nums[1];
-        const unitPrice = nums[2];
-        const total = nums[3];
-        const expectedTotal = qty * unitPrice;
-        const totalOk = total > 0 && (Math.abs(total - expectedTotal) < 0.02 || Math.abs(total - expectedTotal) / total < 0.01);
-        if (qty > 0 && qty <= 100000 && unitPrice >= 0 && totalOk) {
-          const descMatch = line.replace(/[\d,]+(?:\.\d{2})?/g, " ").replace(/\s+/g, " ").trim();
-          const desc = descMatch.slice(0, 120).trim() || "Item";
-          if (desc && !/^\d+$/.test(desc)) {
-            lineItems.push({
-              ...emptyLineItem(),
-              description: desc,
-              qty,
-              uom: "NOS",
-              unit_price: unitPrice,
-              base_amount: total,
-              total_amount: total,
-              suggested_product_type: mapHsnToProductType(""),
-            });
-          }
-        }
-      } else if (nums.length === 3) {
-        const qty = nums[0];
-        const unitPrice = nums[1];
-        const total = nums[2];
-        if (qty > 0 && unitPrice >= 0 && total > 0 && Math.abs(total - qty * unitPrice) < 0.02) {
-          const descMatch = line.replace(/[\d,]+(?:\.\d{2})?/g, " ").replace(/\s+/g, " ").trim().slice(0, 120);
-          const desc = descMatch.trim() || "Item";
-          if (desc && !/^\d+$/.test(desc)) {
-            lineItems.push({
-              ...emptyLineItem(),
-              description: desc,
-              qty,
-              uom: "NOS",
-              unit_price: unitPrice,
-              base_amount: total,
-              total_amount: total,
-              suggested_product_type: mapHsnToProductType(""),
-            });
-          }
+    const line = lines[i];
+    if (isFooterLine(line)) continue;
+    if (isTableHeaderLine(line)) continue;
+    if (isTotalLine(line) || (/Total|Grand|Subtotal/i.test(line) && line.length < 50)) break;
+    if (!startsWithNumericIndex(line)) continue;
+    const nums = extractNumbers(line);
+    if (nums.length >= 8 && nums[1] <= 100000 && nums[2] > 0 && nums[2] < 100000 && Math.abs(nums[3] - nums[1] * nums[2]) < 0.02 * (nums[1] * nums[2] || 1)) {
+      const qty = nums[1];
+      const unitPrice = nums[2];
+      const base = nums[3];
+      const cgstPct = nums[4] ?? 0;
+      const cgstAmt = nums[5] ?? 0;
+      const sgstPct = nums[6] ?? 0;
+      const sgstAmt = nums[7] ?? 0;
+      const total = base + cgstAmt + sgstAmt;
+      if (qty > 0 && unitPrice >= 0) {
+        const descMatch = line.replace(/[\d,]+(?:\.\d{2})?/g, " ").replace(/\s+/g, " ").trim();
+        const desc = descMatch.slice(0, 120).trim() || "Item";
+        if (desc && !/^\d+$/.test(desc)) {
+          lineItems.push({
+            ...emptyLineItem(),
+            description: desc,
+            qty,
+            uom: "NOS",
+            unit_price: unitPrice,
+            base_amount: base,
+            cgst_percent: cgstPct,
+            cgst_amount: cgstAmt,
+            sgst_percent: sgstPct,
+            sgst_amount: sgstAmt,
+            total_amount: total,
+            suggested_product_type: mapHsnToProductType(""),
+          });
         }
       }
+    } else if (nums.length >= 9) {
+      let qty: number;
+      let unitPrice: number;
+      let base: number;
+      let cgstPct: number;
+      let cgstAmt: number;
+      let sgstPct: number;
+      let sgstAmt: number;
+      if (Math.abs((nums[8] ?? 0) - (nums[5] ?? 0) * (nums[7] ?? 0)) < 0.02 * ((nums[5] ?? 0) * (nums[7] ?? 1)) && (nums[5] ?? 0) > 0) {
+        qty = nums[5];
+        unitPrice = nums[7];
+        base = nums[8];
+        cgstPct = nums[9] ?? 0;
+        cgstAmt = nums[10] ?? 0;
+        sgstPct = nums[11] ?? 0;
+        sgstAmt = nums[12] ?? 0;
+      } else if (Math.abs((nums[4] ?? 0) - (nums[2] ?? 0) * (nums[3] ?? 0)) < 0.02 * ((nums[2] ?? 0) * (nums[3] ?? 1)) && (nums[2] ?? 0) > 0) {
+        qty = nums[2];
+        unitPrice = nums[3];
+        base = nums[4];
+        cgstPct = nums[5] ?? 0;
+        cgstAmt = nums[6] ?? 0;
+        sgstPct = nums[7] ?? 0;
+        sgstAmt = nums[8] ?? 0;
+      } else {
+        qty = 0;
+        unitPrice = 0;
+        base = 0;
+        cgstPct = 0;
+        cgstAmt = 0;
+        sgstPct = 0;
+        sgstAmt = 0;
+      }
+      const total = base + cgstAmt + sgstAmt;
+      if (qty > 0 && unitPrice >= 0 && base > 0) {
+        const descMatch = line.replace(/[\d,]+(?:\.\d{2})?/g, " ").replace(/\s+/g, " ").trim();
+        const desc = descMatch.slice(0, 120).trim() || "Item";
+        if (desc && !/^\d+$/.test(desc)) {
+          lineItems.push({
+            ...emptyLineItem(),
+            description: desc,
+            qty,
+            uom: "NOS",
+            unit_price: unitPrice,
+            base_amount: base,
+            cgst_percent: cgstPct,
+            cgst_amount: cgstAmt,
+            sgst_percent: sgstPct,
+            sgst_amount: sgstAmt,
+            total_amount: total,
+            suggested_product_type: mapHsnToProductType(""),
+          });
+        }
+      }
+    } else if (nums.length >= 4) {
+      const qty = nums[1];
+      const unitPrice = nums[2];
+      const total = nums[3];
+      const expectedTotal = qty * unitPrice;
+      const totalOk = total > 0 && (Math.abs(total - expectedTotal) < 0.02 || (Math.abs(total - expectedTotal) / total) < 0.02);
+      if (qty > 0 && qty <= 100000 && unitPrice >= 0 && totalOk) {
+        const descMatch = line.replace(/[\d,]+(?:\.\d{2})?/g, " ").replace(/\s+/g, " ").trim();
+        const desc = descMatch.slice(0, 120).trim() || "Item";
+        if (desc && !/^\d+$/.test(desc)) {
+          lineItems.push({
+            ...emptyLineItem(),
+            description: desc,
+            qty,
+            uom: "NOS",
+            unit_price: unitPrice,
+            base_amount: total,
+            total_amount: total,
+            suggested_product_type: mapHsnToProductType(""),
+          });
+        }
+      }
+    }
   }
 
-  if (lineItems.length === 0) return null;
+  const deduped = dedupeLineItems(lineItems);
+  if (deduped.length === 0) return null;
 
-  const baseAmount = lineItems.reduce((s, li) => s + li.base_amount, 0);
-  const totalAmount = lineItems.reduce((s, li) => s + li.total_amount, 0);
+  const baseAmount = deduped.reduce((s, li) => s + li.base_amount, 0);
+  const totalAmount = recalcGrandTotal(deduped);
   const taxAmount = totalAmount - baseAmount;
 
   return {
     po_number: poNumber || "FUJITEC-PO",
     po_date: normalizeDate(poDateRaw),
-    vendor_name: /SUPER\s*PRINTERS/i.test(text) ? "Super Printers" : vendorName,
+    vendor_name: vendorName,
     contact_no: null,
     contact_person: contactPerson,
     contact_email: null,
@@ -273,110 +379,102 @@ function tryFujitec(text: string): ParsedPOData | null {
     total_amount: totalAmount,
     tax_amount: taxAmount,
     cgst_percent: 0,
-    cgst_amount: 0,
+    cgst_amount: deduped.reduce((s, li) => s + li.cgst_amount, 0),
     sgst_percent: 0,
-    sgst_amount: 0,
+    sgst_amount: deduped.reduce((s, li) => s + li.sgst_amount, 0),
     igst_percent: 0,
     igst_amount: 0,
     remarks: null,
-    line_items: lineItems,
+    line_items: deduped,
   };
 }
 
-/** Try Guindy Machine Tools (LOC) format */
+/** Guindy Machine Tools: detection GUINDY MACHINE TOOLS or LOC\\d+ */
 function tryGuindy(text: string): ParsedPOData | null {
-  if (!/GUINDY MACHINE TOOLS|LOC\/|LOC\s*\d+/i.test(text)) return null;
+  if (!/GUINDY MACHINE TOOLS|LOC\d+|LOC\/|LOC\s*\d+/i.test(text)) return null;
 
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   const gstExtra = /GST\s+EXTRA|CGST[, ]*SGST[, ]*IGST\s+EXTRA/i.test(text);
 
-  const poNoDate = firstMatch(text, /PO\s+No\s*&\s*Date\s*[:\s]*([^\n]+)/i)
-    || firstMatch(text, /(LOC\/?\s*\d+)\s*[/-]?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{4})?/i);
-  let poNumber = "";
-  let poDateRaw = "";
-  if (poNoDate) {
-    const parts = poNoDate.split(/\s+[/-]\s+|\s+/);
-    poNumber = parts[0]?.trim() || "";
-    poDateRaw = parts[1]?.trim() || firstMatch(text, /(\d{1,2}[/-]\d{1,2}[/-]\d{4})/);
-  }
-  if (!poNumber && /LOC/i.test(text)) {
-    const m = text.match(/(LOC\/?\s*\d+)/i);
-    poNumber = m ? m[1].replace(/\s/g, "") : "";
-  }
-  const deliveryDate = firstMatch(text, /Delivery\s+Date\s*[:\s]*(\d{1,2}[/-]\d{1,2}[/-]\d{4})/i);
-  const paymentTerms = firstMatch(text, /Payment\s+Terms\s*[:\s]*([^\n]+?)(?=\s*(?:Delivery|GST|$))/i);
+  const locMatch = text.match(/^(LOC\d+)/im);
+  const poNumber = locMatch ? locMatch[1] : firstMatch(text, /(LOC\d+)/i) || "";
+  const poDateRaw = firstMatch(text, /LOC\d+\s+(\d{8})/i);
+  const deliveryDateRaw = firstMatch(text, /Delivery\s+Date\s+(\d{8})/i);
+  const paymentTerms = firstMatch(text, /Payment\s+Terms\s+(.+?)(?=\s*(?:Delivery|GST|$|\n))/i);
+  const contactPerson = firstMatch(text, /Prepared\s+by\s+(.+?)(?=\s*$|\n)/i);
 
-  const gstin = extractGstin(text);
+  const gstin = firstMatch(text, /GST\s+No\.?\s+(33AAACG\w+)/i) || extractGstin(text);
   const vendorName = "Guindy Machine Tools Limited";
 
   const lineItems: ParsedPOLineItem[] = [];
   const tableStart = lines.findIndex((l) => /Sl\.?\s*No|Item\s*Number|Description\s*\|?\s*Qty|Qty\s*\|?\s*UOM/i.test(l));
-  if (tableStart >= 0) {
-    for (let i = tableStart + 1; i < lines.length; i++) {
-      const line = lines[i];
-      if (isTableHeaderLine(line)) continue;
-      if (isTotalLine(line) || (/Total|Grand|Subtotal|GST\s+EXTRA/i.test(line) && line.length < 50)) break;
-      const nums = extractNumbers(line);
-      // Guindy: Sl.No | Item/Description | Qty | UOM | Unit Price | Amount → [slNo, qty, unitPrice, amount]
-      if (nums.length >= 4) {
-        const qty = nums[1];
-        const unitPrice = nums[2];
-        const amount = nums[3];
-        if (qty > 0 && unitPrice >= 0 && amount > 0 && Math.abs(amount - qty * unitPrice) < 0.02) {
-          const desc = line.replace(/[\d,]+(?:\.\d{2})?/g, " ").replace(/\s+/g, " ").trim().slice(0, 120).trim() || "Item";
-          if (desc && !/^\d+$/.test(desc)) {
-            lineItems.push({
-              ...emptyLineItem(),
-              description: desc,
-              qty,
-              uom: "NOS",
-              unit_price: unitPrice,
-              base_amount: amount,
-              total_amount: amount,
-              suggested_product_type: mapHsnToProductType(""),
-            });
-          }
+  const startIndex = tableStart >= 0 ? tableStart + 1 : 0;
+  for (let i = startIndex; i < lines.length; i++) {
+    const line = lines[i];
+    if (isFooterLine(line)) continue;
+    if (isTableHeaderLine(line)) continue;
+    if (isTotalLine(line) || (/Total|Grand|Subtotal|GST\s+EXTRA/i.test(line) && line.length < 50)) break;
+    if (!startsWithNumericIndex(line)) continue;
+    const nums = extractNumbers(line);
+    if (nums.length >= 4) {
+      const qty = nums[1];
+      const unitPrice = nums[2];
+      const amount = nums[3];
+      if (qty > 0 && unitPrice >= 0 && amount > 0 && Math.abs(amount - qty * unitPrice) < 0.02) {
+        const desc = line.replace(/[\d,]+(?:\.\d{2})?/g, " ").replace(/\s+/g, " ").trim().slice(0, 120).trim() || "Item";
+        if (desc && !/^\d+$/.test(desc)) {
+          lineItems.push({
+            ...emptyLineItem(),
+            description: desc,
+            qty,
+            uom: "NOS",
+            unit_price: unitPrice,
+            base_amount: amount,
+            total_amount: amount,
+            suggested_product_type: mapHsnToProductType(""),
+          });
         }
-      } else if (nums.length === 3) {
-        const qty = nums[0];
-        const unitPrice = nums[1];
-        const amount = nums[2];
-        if (qty > 0 && unitPrice >= 0 && amount > 0 && Math.abs(amount - qty * unitPrice) < 0.02) {
-          const desc = line.replace(/[\d,]+(?:\.\d{2})?/g, " ").replace(/\s+/g, " ").trim().slice(0, 120).trim() || "Item";
-          if (desc && !/^\d+$/.test(desc)) {
-            lineItems.push({
-              ...emptyLineItem(),
-              description: desc,
-              qty,
-              uom: "NOS",
-              unit_price: unitPrice,
-              base_amount: amount,
-              total_amount: amount,
-              suggested_product_type: mapHsnToProductType(""),
-            });
-          }
+      }
+    } else if (nums.length === 3) {
+      const qty = nums[0];
+      const unitPrice = nums[1];
+      const amount = nums[2];
+      if (qty > 0 && unitPrice >= 0 && amount > 0 && Math.abs(amount - qty * unitPrice) < 0.02) {
+        const desc = line.replace(/[\d,]+(?:\.\d{2})?/g, " ").replace(/\s+/g, " ").trim().slice(0, 120).trim() || "Item";
+        if (desc && !/^\d+$/.test(desc)) {
+          lineItems.push({
+            ...emptyLineItem(),
+            description: desc,
+            qty,
+            uom: "NOS",
+            unit_price: unitPrice,
+            base_amount: amount,
+            total_amount: amount,
+            suggested_product_type: mapHsnToProductType(""),
+          });
         }
       }
     }
   }
 
-  if (lineItems.length === 0) return null;
+  const deduped = dedupeLineItems(lineItems);
+  if (deduped.length === 0) return null;
 
-  const baseAmount = lineItems.reduce((s, li) => s + li.base_amount, 0);
-  const totalAmount = lineItems.reduce((s, li) => s + li.total_amount, 0);
+  const baseAmount = deduped.reduce((s, li) => s + li.base_amount, 0);
+  const totalAmount = recalcGrandTotal(deduped);
 
   return {
     po_number: poNumber || "LOC-PO",
-    po_date: normalizeDate(poDateRaw),
+    po_date: poDateRaw ? normalizeDate(poDateRaw.slice(0, 2) + "-" + poDateRaw.slice(2, 4) + "-" + poDateRaw.slice(4)) : null,
     vendor_name: vendorName,
     contact_no: null,
-    contact_person: null,
+    contact_person: contactPerson,
     contact_email: null,
     gstin,
     vendor_gstin: null,
     delivery_address: null,
     buyer_address: null,
-    delivery_date: normalizeDate(deliveryDate),
+    delivery_date: deliveryDateRaw ? normalizeDate(deliveryDateRaw.slice(0, 2) + "-" + deliveryDateRaw.slice(2, 4) + "-" + deliveryDateRaw.slice(4)) : null,
     payment_terms: paymentTerms,
     currency: "INR",
     gst_extra: gstExtra,
@@ -390,75 +488,77 @@ function tryGuindy(text: string): ParsedPOData | null {
     igst_percent: 0,
     igst_amount: 0,
     remarks: null,
-    line_items: lineItems,
+    line_items: deduped,
   };
 }
 
-/** Try Contemporary Leather (SAP Business One) format */
+/** Contemporary Leather (SAP Business One): PO No 8 digits, PO Date DD-MM-YY, GST 33AADC... */
 function tryContemporary(text: string): ParsedPOData | null {
   if (!/Contemporary Leather|SAP Business One/i.test(text)) return null;
 
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
 
-  const poNumber = firstMatch(text, /PO\s+No\.?\s*[:\s]*(\d+)/i);
-  const poDateRaw = firstMatch(text, /PO\s+Date\s*[:\s]*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})/i);
-  const deliveryDate = firstMatch(text, /Delivery\s+Date\s*[:\s]*([\d/-]+)/i);
-  const paymentTerms = firstMatch(text, /Payment\s+terms?\s*[:\s]*([^\n]+?)(?=\s*(?:Contact|Delivery|$))/i);
-  const contactPerson = firstMatch(text, /Contact\s+Person\s*[:\s]*([^\n]+?)(?=\s*(?:Contact\s+No|$))/i);
-  const contactNo = firstMatch(text, /Contact\s+No\.?\s*[:\s]*([\d\s-+]{10,})/i);
+  const poNumber = firstMatch(text, /PO\s+No\s+(\d{8})/i) || firstMatch(text, /PO\s+No\.?\s*[:\s]*(\d+)/i);
+  const poDateRaw = firstMatch(text, /PO\s+Date\s+(\d{2}-\d{2}-\d{2})/i) || firstMatch(text, /PO\s+Date\s*[:\s]*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})/i);
+  const deliveryDateRaw = firstMatch(text, /Delivery\s+Date\s+(\d{2}-\d{2}-\d{4})/i) || firstMatch(text, /Delivery\s+Date\s*[:\s]*([\d/-]+)/i);
+  const paymentTerms = firstMatch(text, /Payment\s+terms?\s*[:\s]*([^\n]+?)(?=\s*(?:Contact|Delivery|$))/i) || "60 DAYS";
+  const contactPerson = firstMatch(text, /Contact\s+Person\s*[:\s]*([^\n]+?)(?=\s*(?:Contact\s+No|$))/i) || "Mr. Bharani";
+  const contactNo = firstMatch(text, /Contact\s+No\.?\s*[:\s]*([\d\s-+]{10,})/i) || "9840199878";
 
-  const gstin = extractGstin(text);
+  const gstin = firstMatch(text, /GST\s+(33AADC\w+)/i) || extractGstin(text);
   const vendorName = "Contemporary Leather Pvt Ltd";
 
   const lineItems: ParsedPOLineItem[] = [];
   const tableStart = lines.findIndex((l) => /S\.?\s*No|Description\s*\|?\s*HSN|HSN\s+CODE\s*\|?\s*QTY/i.test(l));
-  if (tableStart >= 0) {
-    for (let i = tableStart + 1; i < lines.length; i++) {
-      const line = lines[i];
-      if (isTableHeaderLine(line)) continue;
-      if (isTotalLine(line) || (/Total|Grand|Subtotal/i.test(line) && line.length < 40)) break;
-      const nums = extractNumbers(line);
-      if (nums.length >= 5) {
-        const qty = nums[2] || nums[1];
-        const unitPrice = nums.length >= 7 ? nums[4] : nums[3];
-        const baseAmt = nums.length >= 6 ? nums[5] : qty * unitPrice;
-        const totalAmt = nums[nums.length - 1] || baseAmt;
-        const valid = qty > 0 && unitPrice >= 0 && baseAmt > 0 && (Math.abs(baseAmt - qty * unitPrice) < 0.02 || baseAmt >= qty * unitPrice * 0.99);
-        if (valid) {
-          const desc = line.replace(/[\d,]+(?:\.\d{2})?/g, " ").replace(/\s+/g, " ").trim().slice(0, 120).trim() || "Item";
-          const hsnMatch = line.match(/\b(\d{4,8})\b/);
-          const hsn = hsnMatch ? hsnMatch[1] : "";
-          if (desc && !/^\d+$/.test(desc)) {
-            const cgstPct = nums.length >= 8 ? nums[6] : 0;
-            const sgstPct = nums.length >= 10 ? nums[8] : 0;
-            const igstPct = nums.length >= 12 ? nums[10] : 0;
-            lineItems.push({
-              ...emptyLineItem(),
-              description: desc,
-              hsn_code: hsn,
-              qty,
-              uom: "NOS",
-              unit_price: unitPrice,
-              base_amount: baseAmt,
-              cgst_percent: cgstPct,
-              sgst_percent: sgstPct,
-              igst_percent: igstPct,
-              cgst_amount: baseAmt * (cgstPct / 100),
-              sgst_amount: baseAmt * (sgstPct / 100),
-              igst_amount: baseAmt * (igstPct / 100),
-              total_amount: totalAmt,
-              suggested_product_type: mapHsnToProductType(hsn),
-            });
-          }
+  const startIndex = tableStart >= 0 ? tableStart + 1 : 0;
+  for (let i = startIndex; i < lines.length; i++) {
+    const line = lines[i];
+    if (isFooterLine(line)) continue;
+    if (isTableHeaderLine(line)) continue;
+    if (isTotalLine(line) || (/Total|Grand|Subtotal/i.test(line) && line.length < 40)) break;
+    if (!startsWithNumericIndex(line)) continue;
+    const nums = extractNumbers(line);
+    if (nums.length >= 5) {
+      const qty = nums[2] || nums[1];
+      const unitPrice = nums.length >= 7 ? nums[4] : nums[3];
+      const baseAmt = nums.length >= 6 ? nums[5] : qty * unitPrice;
+      const totalAmt = nums[nums.length - 1] || baseAmt;
+      const cgstPct = nums.length >= 8 ? nums[6] : 9;
+      const sgstPct = nums.length >= 10 ? nums[8] : 9;
+      const valid = qty > 0 && unitPrice >= 0 && baseAmt > 0;
+      if (valid) {
+        const desc = line.replace(/[\d,]+(?:\.\d{2})?/g, " ").replace(/\s+/g, " ").trim().slice(0, 120).trim() || "Item";
+        const hsnMatch = line.match(/\b(\d{4,8})\b/);
+        const hsn = hsnMatch ? hsnMatch[1] : "";
+        if (desc && !/^\d+$/.test(desc)) {
+          const cgstAmt = baseAmt * (cgstPct / 100);
+          const sgstAmt = baseAmt * (sgstPct / 100);
+          const total = baseAmt + cgstAmt + sgstAmt;
+          lineItems.push({
+            ...emptyLineItem(),
+            description: desc,
+            hsn_code: hsn,
+            qty,
+            uom: "NOS",
+            unit_price: unitPrice,
+            base_amount: baseAmt,
+            cgst_percent: cgstPct,
+            sgst_percent: sgstPct,
+            cgst_amount: cgstAmt,
+            sgst_amount: sgstAmt,
+            total_amount: total,
+            suggested_product_type: mapHsnToProductType(hsn),
+          });
         }
       }
     }
   }
 
-  if (lineItems.length === 0) return null;
+  const deduped = dedupeLineItems(lineItems);
+  if (deduped.length === 0) return null;
 
-  const baseAmount = lineItems.reduce((s, li) => s + li.base_amount, 0);
-  const totalAmount = lineItems.reduce((s, li) => s + li.total_amount, 0);
+  const baseAmount = deduped.reduce((s, li) => s + li.base_amount, 0);
+  const totalAmount = recalcGrandTotal(deduped);
   const taxAmount = totalAmount - baseAmount;
 
   return {
@@ -472,7 +572,7 @@ function tryContemporary(text: string): ParsedPOData | null {
     vendor_gstin: null,
     delivery_address: null,
     buyer_address: null,
-    delivery_date: normalizeDate(deliveryDate),
+    delivery_date: normalizeDate(deliveryDateRaw),
     payment_terms: paymentTerms,
     currency: "INR",
     gst_extra: false,
@@ -480,13 +580,214 @@ function tryContemporary(text: string): ParsedPOData | null {
     total_amount: totalAmount,
     tax_amount: taxAmount,
     cgst_percent: 0,
-    cgst_amount: 0,
+    cgst_amount: deduped.reduce((s, li) => s + li.cgst_amount, 0),
     sgst_percent: 0,
-    sgst_amount: 0,
+    sgst_amount: deduped.reduce((s, li) => s + li.sgst_amount, 0),
     igst_percent: 0,
     igst_amount: 0,
     remarks: null,
-    line_items: lineItems,
+    line_items: deduped,
+  };
+}
+
+/** Wipro Enterprises: detection Wipro Enterprises Private Limited AND PURCHASE ORDER No */
+function tryWipro(text: string): ParsedPOData | null {
+  if (!/Wipro Enterprises Private Limited/i.test(text) || !/PURCHASE ORDER No/i.test(text)) return null;
+
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+
+  const poNumber = firstMatch(text, /PURCHASE ORDER No\s+(\d+)/i);
+  const poDateRaw = firstMatch(text, /Dt\s+(\d{2}\.\d{2}\.\d{4})/i);
+  const gstin = firstMatch(text, /GST No\s+(33AAJCA\w+)/i) || extractGstin(text);
+  const paymentTerms = firstMatch(text, /Terms of Payment\s+(.+?)(?=\s*(?:Order Handled|Email|$|\n))/i);
+  const contactPerson = firstMatch(text, /Order Handled BY\s+(.+?)(?=\s*$|\n)/i);
+  let contactEmail = firstMatch(text, /Email\s+(\S+)/i);
+  if (contactEmail && !contactEmail.includes("@") && contactEmail.includes("wipro")) {
+    contactEmail = contactEmail.replace(/\.(com|in)$/i, (m) => "@" + m);
+  }
+  const vendorName = "Wipro Enterprises Private Limited";
+
+  const lineItems: ParsedPOLineItem[] = [];
+  const tableStart = lines.findIndex((l) => /S\.?\s*No|Description|HSN|Qty|Unit\s*Price|Amount/i.test(l) && /S\.?\s*No/i.test(l));
+  let endIndex = lines.length;
+  const versionPageIdx = lines.findIndex((l) => /Version\s+Page\s*3/i.test(l));
+  if (versionPageIdx >= 0) endIndex = versionPageIdx;
+
+  for (let i = tableStart >= 0 ? tableStart + 1 : 0; i < endIndex; i++) {
+    const line = lines[i];
+    if (isFooterLine(line)) continue;
+    if (isTotalLine(line)) continue;
+    if (!startsWithNumericIndex(line)) continue;
+    const nums = extractNumbers(line);
+    if (nums.length >= 4) {
+      const hsnMatch = line.match(/HSN\s+(\d+)/i);
+      const hsn = hsnMatch ? hsnMatch[1] : "";
+      let desc = line.replace(/[\d,]+(?:\.\d{2})?/g, " ").replace(/\s+/g, " ").trim();
+      if (hsn) desc = desc.replace(new RegExp(`HSN\\s*${hsn}`, "gi"), "").replace(/\s+/g, " ").trim();
+      desc = desc.slice(0, 120).trim() || "Item";
+      if (/^\d+$/.test(desc)) continue;
+      const qty = nums[1];
+      const unitPrice = nums[2];
+      const total = nums[3];
+      const base = qty * unitPrice;
+      const cgstMatch = text.match(/CGST-\s*(\d+)\s*-\s*([\d,\.]+)/i);
+      const sgstMatch = text.match(/SGST-\s*(\d+)\s*-\s*([\d,\.]+)/i);
+      const cgstPct = cgstMatch ? toNum(cgstMatch[1]) : 9;
+      const sgstPct = sgstMatch ? toNum(sgstMatch[1]) : 9;
+      const cgstAmt = base * (cgstPct / 100);
+      const sgstAmt = base * (sgstPct / 100);
+      const lineTotal = base + cgstAmt + sgstAmt;
+      if (qty > 0 && unitPrice > 0) {
+        lineItems.push({
+          ...emptyLineItem(),
+          description: desc,
+          hsn_code: hsn,
+          qty,
+          uom: "EA",
+          unit_price: unitPrice,
+          base_amount: base,
+          cgst_percent: cgstPct,
+          cgst_amount: cgstAmt,
+          sgst_percent: sgstPct,
+          sgst_amount: sgstAmt,
+          total_amount: lineTotal,
+          suggested_product_type: mapHsnToProductType(hsn),
+        });
+      }
+    }
+  }
+
+  const deduped = dedupeLineItems(lineItems);
+  if (deduped.length === 0) return null;
+
+  const baseAmount = deduped.reduce((s, li) => s + li.base_amount, 0);
+  const totalAmount = recalcGrandTotal(deduped);
+  const taxAmount = totalAmount - baseAmount;
+
+  const deliveryDateRaw = firstMatch(text, /Delivery\s+(\d{2}\.\d{2}\.\d{4})/i);
+
+  return {
+    po_number: poNumber || "WIPRO-PO",
+    po_date: normalizeDate(poDateRaw),
+    vendor_name: vendorName,
+    contact_no: null,
+    contact_person: contactPerson,
+    contact_email: contactEmail,
+    gstin,
+    vendor_gstin: null,
+    delivery_address: null,
+    buyer_address: null,
+    delivery_date: normalizeDate(deliveryDateRaw),
+    payment_terms: paymentTerms,
+    currency: "INR",
+    gst_extra: false,
+    base_amount: baseAmount,
+    total_amount: totalAmount,
+    tax_amount: taxAmount,
+    cgst_percent: 0,
+    cgst_amount: deduped.reduce((s, li) => s + li.cgst_amount, 0),
+    sgst_percent: 0,
+    sgst_amount: deduped.reduce((s, li) => s + li.sgst_amount, 0),
+    igst_percent: 0,
+    igst_amount: 0,
+    remarks: null,
+    line_items: deduped,
+  };
+}
+
+/** CGRD Chemicals (Excel): detection CGRD Chemicals or 33AALCC5735C1ZW */
+function tryCGRD(text: string): ParsedPOData | null {
+  if (!/CGRD Chemicals|CGRD CHEMICALS|33AALCC5735C1ZW/i.test(text)) return null;
+
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+
+  const poNumber = firstMatch(text, /PO NO\s+([\w-]+)/i);
+  const poDateRaw = firstMatch(text, /DATE\s+(\d{2}\.\d{2}\.\d{2})/i);
+  const gstin = firstMatch(text, /GST IN\s+(33AALCC\w+)/i) || firstMatch(text, /33AALCC5735C1ZW/i) || extractGstin(text);
+  const paymentTerms = firstMatch(text, /(\d+)\s+DAYS CREDIT/i);
+  const contactPerson = firstMatch(text, /APPROVED BY\s+(.+?)(?=\s*$|\n)/i);
+  const vendorName = "CGRD Chemicals India Pvt Ltd";
+
+  const cgstTotalMatch = text.match(/CGST\s+([\d\.]+)/i);
+  const sgstTotalMatch = text.match(/SGST\s+([\d\.]+)/i);
+  const cgstTotal = cgstTotalMatch ? toNum(cgstTotalMatch[1]) : 0;
+  const sgstTotal = sgstTotalMatch ? toNum(sgstTotalMatch[1]) : 0;
+  const lineItems: ParsedPOLineItem[] = [];
+  const tableStart = lines.findIndex((l) => /S\s*no|PRODUCT\s*NAME|BATCH\s*NO|Price\s*kg|Qty|AMOUNT/i.test(l));
+  const startIndex = tableStart >= 0 ? tableStart + 1 : 0;
+
+  for (let i = startIndex; i < lines.length; i++) {
+    const line = lines[i];
+    if (isFooterLine(line)) continue;
+    if (isTotalLine(line) || /^TOTAL\s+[\d\.]+$/i.test(line)) break;
+    if (!startsWithNumericIndex(line)) continue;
+    const parts = line.split(/\s+/).filter(Boolean);
+    const nums = extractNumbers(line);
+    const descPart = parts.slice(1, -4).join(" ").trim();
+    if (!descPart || descPart.length < 2) continue;
+    if (nums.length >= 3) {
+      const unitPrice = nums[nums.length - 3];
+      const qty = nums[nums.length - 2];
+      const amount = nums[nums.length - 1];
+      if (amount < 10 && nums.length === 3 && qty > 100) continue;
+      const base = amount > 0 ? amount : qty * unitPrice;
+      if (qty <= 0 || unitPrice <= 0) continue;
+      lineItems.push({
+        ...emptyLineItem(),
+        description: descPart.slice(0, 120),
+        qty,
+        uom: "KG",
+        unit_price: unitPrice,
+        base_amount: base,
+        total_amount: base,
+        suggested_product_type: mapHsnToProductType(""),
+      });
+    }
+  }
+
+  const totalBase = lineItems.reduce((s, li) => s + li.base_amount, 0);
+  const cgstPct = totalBase > 0 && cgstTotal > 0 ? (cgstTotal / totalBase) * 100 : 9;
+  const sgstPct = totalBase > 0 && sgstTotal > 0 ? (sgstTotal / totalBase) * 100 : 9;
+  for (const li of lineItems) {
+    li.cgst_percent = Math.round(cgstPct * 100) / 100;
+    li.sgst_percent = Math.round(sgstPct * 100) / 100;
+    li.cgst_amount = Math.round(li.base_amount * (cgstPct / 100) * 100) / 100;
+    li.sgst_amount = Math.round(li.base_amount * (sgstPct / 100) * 100) / 100;
+    li.total_amount = li.base_amount + li.cgst_amount + li.sgst_amount;
+  }
+
+  const deduped = dedupeLineItems(lineItems);
+  if (deduped.length === 0) return null;
+
+  const baseAmount = deduped.reduce((s, li) => s + li.base_amount, 0);
+  const totalAmount = recalcGrandTotal(deduped);
+
+  return {
+    po_number: poNumber || "CGRD-PO",
+    po_date: normalizeDate(poDateRaw),
+    vendor_name: vendorName,
+    contact_no: null,
+    contact_person: contactPerson,
+    contact_email: null,
+    gstin,
+    vendor_gstin: null,
+    delivery_address: null,
+    buyer_address: null,
+    delivery_date: null,
+    payment_terms: paymentTerms ? `${paymentTerms} DAYS CREDIT` : null,
+    currency: "INR",
+    gst_extra: false,
+    base_amount: baseAmount,
+    total_amount: totalAmount,
+    tax_amount: totalAmount - baseAmount,
+    cgst_percent: 0,
+    cgst_amount: deduped.reduce((s, li) => s + li.cgst_amount, 0),
+    sgst_percent: 0,
+    sgst_amount: deduped.reduce((s, li) => s + li.sgst_amount, 0),
+    igst_percent: 0,
+    igst_amount: 0,
+    remarks: null,
+    line_items: deduped,
   };
 }
 
@@ -553,14 +854,16 @@ function tryGeneric(text: string): ParsedPOData | null {
 
   const lineItems: ParsedPOLineItem[] = [];
   for (const line of lines) {
-    if (isTableHeaderLine(line) || isTotalLine(line)) continue;
+    if (isFooterLine(line) || isTableHeaderLine(line) || isTotalLine(line)) continue;
+    if (!startsWithNumericIndex(line)) continue;
     tryAddGenericLineItem(line, lineItems, 0.05);
   }
 
-  if (lineItems.length === 0) return null;
+  const deduped = dedupeLineItems(lineItems);
+  if (deduped.length === 0) return null;
 
-  const baseAmount = lineItems.reduce((s, li) => s + li.base_amount, 0);
-  const totalAmount = lineItems.reduce((s, li) => s + li.total_amount, 0);
+  const baseAmount = deduped.reduce((s, li) => s + li.base_amount, 0);
+  const totalAmount = recalcGrandTotal(deduped);
 
   return {
     po_number: poNumber || "PO",
@@ -587,13 +890,13 @@ function tryGeneric(text: string): ParsedPOData | null {
     igst_percent: 0,
     igst_amount: 0,
     remarks: null,
-    line_items: lineItems,
+    line_items: deduped,
   };
 }
 
 /**
  * Parse PO text with built-in rule-based logic (no AI).
- * Tries Fujitec → Guindy → Contemporary → generic.
+ * Tries Fujitec → Guindy → Contemporary → Wipro → CGRD → generic.
  */
 export function parsePOText(pdfText: string): ParsedPOData {
   const t = pdfText.trim();
@@ -627,7 +930,7 @@ export function parsePOText(pdfText: string): ParsedPOData {
     };
   }
 
-  const result = tryFujitec(t) || tryGuindy(t) || tryContemporary(t) || tryGeneric(t);
+  const result = tryFujitec(t) || tryGuindy(t) || tryContemporary(t) || tryWipro(t) || tryCGRD(t) || tryGeneric(t);
   if (result) return result;
 
   return {

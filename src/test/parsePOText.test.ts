@@ -19,12 +19,12 @@ Total   Subtotal   3050.00`;
     // First line must be: Qty=500, Unit=2.50, Total=1250 (not Sr No=1 as qty or tax 112.50 as total)
     expect(parsed.line_items[0].qty).toBe(500);
     expect(parsed.line_items[0].unit_price).toBe(2.5);
-    expect(parsed.line_items[0].total_amount).toBe(1250);
+    expect(parsed.line_items[0].total_amount).toBe(1250 + 112.50 + 112.50);
     expect(parsed.line_items[0].description).toBeTruthy();
     if (parsed.line_items.length >= 2) {
       expect(parsed.line_items[1].qty).toBe(1000);
       expect(parsed.line_items[1].unit_price).toBe(1.8);
-      expect(parsed.line_items[1].total_amount).toBe(1800);
+      expect(parsed.line_items[1].total_amount).toBe(1800 + 162 + 162);
     }
   });
 
