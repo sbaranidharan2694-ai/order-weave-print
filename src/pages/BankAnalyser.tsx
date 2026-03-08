@@ -666,7 +666,6 @@ export default function BankAnalyser() {
 
   return (
     <div className="space-y-4 print:space-y-4">
-      <SharedDataBanner useLocalStorage={storageMode.bank === "local"} feature="Bank Analyser" />
       <div className="flex items-center justify-between gap-2 print:hidden">
         <div className="flex items-center gap-2">
           <Building2 className="h-6 w-6 text-secondary" />
