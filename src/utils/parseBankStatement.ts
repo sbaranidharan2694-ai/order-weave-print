@@ -387,10 +387,10 @@ function parseLegacyTransactions(lines: string[]): Transaction[] {
 function cleanPageBoundary(text: string): string {
   // Remove "Page X of Y" and everything after it (header/footer text from next page)
   return text
-    .replace(/\s*Page\s+\d+\s+of\s+\d+\b[\s\S]*/i, "")
-    .replace(/\s*CSB\s+24x7[\s\S]*/i, "")
-    .replace(/\s*customercare@csb[\s\S]*/i, "")
-    .replace(/\s*CIN:\s*[A-Z0-9]+[\s\S]*/i, "")
+    .replace(/\s*Page\s+\d+\s+of\s+\d+.*/i, "")
+    .replace(/\s*CSB\s+24x7.*/i, "")
+    .replace(/\s*customercare@csb.*/i, "")
+    .replace(/\s*CIN:\s*[A-Z0-9]+.*/i, "")
     .trim();
 }
 
