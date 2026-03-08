@@ -293,8 +293,13 @@ export async function saveTransactionsBatch(txns: BankTransaction[]): Promise<vo
   if (!isSupabaseConfigured) throw new Error("Supabase not configured. Connect Supabase in Lovable or add .env.");
   if (txns.length === 0) return;
   const rows = txns.map(transactionToRow);
-  const { error } = await supabase.from("bank_transactions").insert(rows);
-  if (error) throw new Error(getErrorMessage(error));
+  console.log(`[bankStorage] saveTransactionsBatch: inserting ${rows.length} transactions for statement ${rows[0]?.statement_id}`);
+  const { error } = await supabase.from("bank_transactions").upsert(rows, { onConflict: "id" });
+  if (error) {
+    console.error("[bankStorage] saveTransactionsBatch error:", error);
+    throw new Error(getErrorMessage(error));
+  }
+  console.log(`[bankStorage] saveTransactionsBatch: SUCCESS — ${rows.length} rows inserted/upserted`);
 }
 
 /** Delete statement and its transactions. No-op if not configured. */
