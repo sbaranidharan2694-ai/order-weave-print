@@ -159,9 +159,20 @@ export default function ImportPO() {
       }
 
       // Step 2: Send to AI edge function for structured parsing
-      const { data: result, error } = await supabase.functions.invoke("parse-po", {
-        body: { pdfText },
+      const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID || "luguzwkgjgcgygpmcopg";
+      const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1Z3V6d2tnamdjZ3lncG1jb3BnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzIzNzE4NzAsImV4cCI6MjA4Nzk0Nzg3MH0.so7JRVSmhaZyVHZ_lvpDDI6vpq-PqjUzaVbaRWEY6Ok";
+      const fnUrl = `https://${projectId}.supabase.co/functions/v1/parse-po`;
+      const fnResponse = await fetch(fnUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "apikey": anonKey,
+          "Authorization": `Bearer ${anonKey}`,
+        },
+        body: JSON.stringify({ pdfText }),
       });
+      const result = await fnResponse.json();
+      const error = fnResponse.ok ? null : { message: result?.error || "Edge function error" };
 
       if (error) {
         toast.error("Parsing failed: " + (error.message || "Unknown error"));
