@@ -133,7 +133,7 @@ serve(async (req: Request) => {
     console.error("Edge Function error:", message);
 
     return new Response(
-      JSON.stringify({ success: false, error: message }),
+      JSON.stringify({ success: false, error: "Document parsing failed. Please try again." }),
       {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },

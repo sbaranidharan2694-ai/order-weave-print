@@ -193,7 +193,7 @@ If you can't determine a field, use null. Always extract as much as possible.`;
     });
   } catch (e) {
     console.error("parse-po error:", e);
-    return new Response(JSON.stringify({ error: e instanceof Error ? e.message : "Unknown error" }), {
+    return new Response(JSON.stringify({ error: "PO parsing failed. Please try again." }), {
       status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
