@@ -23,6 +23,7 @@ const Attendance = lazy(() => import("@/pages/Attendance"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
 const Login = lazy(() => import("@/pages/Login"));
 const ResetPassword = lazy(() => import("@/pages/ResetPassword"));
+const AuthCallback = lazy(() => import("@/pages/AuthCallback"));
 
 function PageLoader() {
   return (
