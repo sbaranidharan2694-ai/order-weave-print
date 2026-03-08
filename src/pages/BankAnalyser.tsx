@@ -160,7 +160,7 @@ const ACCOUNTS = [
   { key: "revathy", label: "Revathy B.", shortLabel: "Revathy", color: "#16A34A", icon: "👤", accountNumber: "0244011477662" },
 ];
 
-function detectAccount(text) {
+function detectAccount(text: string): string | null {
   const t = text.toUpperCase();
   if (t.includes("REVATHY BHARANIDHARAN") || t.includes("0244011477662")) return "revathy";
   if (t.includes("SUPER SCREENS") || t.includes("0244020080155")) return "superscreens";
@@ -193,11 +193,11 @@ function parseTransactionDateGlobal(dateStr: string): Date | null {
   return isNaN(iso.getTime()) ? null : iso;
 }
 
-function titleCase(s) {
+function titleCase(s: string): string {
   return s.toLowerCase().replace(/(?:^|\s)\S/g, (c) => c.toUpperCase());
 }
 
-function cleanName(raw) {
+function cleanName(raw: string): string {
   let n = raw.replace(/^[\s-]+|[\s-]+$/g, "").replace(/\s+/g, " ").trim();
   n = n.replace(/\s+[A-Z]{4}0[A-Z0-9]{6}$/, "");
   n = n.replace(/(\s+[A-Z0-9]{5,})+\s*$/, "").trim();
@@ -207,7 +207,7 @@ function cleanName(raw) {
   return n || "Unknown";
 }
 
-function extractCounterparty(details, customLookup = {}) {
+function extractCounterparty(details: string, customLookup: Record<string, string> = {}): { name: string; type: string } {
   const d = details.trim();
   // Check custom lookup first
   for (const [pattern, name] of Object.entries(customLookup)) {
@@ -282,14 +282,14 @@ function extractCounterparty(details, customLookup = {}) {
   return { name: cleanName(d.substring(0, 40)), type: "OTHER" };
 }
 
-function parseAmount(s) {
+function parseAmount(s: string): number {
   if (!s || s.trim() === "-" || s.trim() === "") return 0;
   const cleaned = s.replace(/[₹,\sINR]/gi, "").replace(/Cr|Dr/gi, "");
   const n = parseFloat(cleaned);
   return isNaN(n) ? 0 : n;
 }
 
-function parseCsbDate(s) {
+function parseCsbDate(s: string): string {
   const m = s.trim().match(/(\d{1,2})\s+(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\s+(\d{4})/i);
   if (m) {
     const months = { JAN:"01",FEB:"02",MAR:"03",APR:"04",MAY:"05",JUN:"06",JUL:"07",AUG:"08",SEP:"09",OCT:"10",NOV:"11",DEC:"12" };
@@ -322,12 +322,15 @@ const SKIP_PATTERNS = [
   /^CLR/i, /^DW/i, /^ABB/i, /^MB -/i, /^NB -/i,
 ];
 
-function shouldSkipLine(line) {
+function shouldSkipLine(line: string): boolean {
   return SKIP_PATTERNS.some(p => p.test(line));
 }
 
-function parseTransactions(lines, statementId, customLookup = {}) {
-  const txns = [];
+function parseTransactions(lines: string[], statementId: string, customLookup: Record<string, string> = {}): {
+  transactions: Array<{ id: string; date: string; details: string; refNo: string; debit: number; credit: number; balance: number; counterparty: string; type: string; statementId: string }>;
+  meta: { accountNumber: string; period: string; periodStart: string; periodEnd: string; openingBalance: number; closingBalance: number; totalCredits: number; totalDebits: number };
+} {
+  const txns: Array<{ id: string; date: string; details: string; refNo: string; debit: number; credit: number; balance: number; counterparty: string; type: string; statementId: string }> = [];
   let accountNumber = "";
   let period = "";
   let periodStart = "";
@@ -547,9 +550,9 @@ const PIE_COLORS = ["#3B82F6", "#10B981", "#8B5CF6", "#F59E0B", "#EF4444", "#6B7
 export default function BankAnalyser() {
   const [activeTab, setActiveTab] = useState("overview");
   const [loading, setLoading] = useState(true);
-  const [statements, setStatements] = useState([]);
-  const [allTransactions, setAllTransactions] = useState([]);
-  const [customLookup, setCustomLookup] = useState({});
+  const [statements, setStatements] = useState<BankStatement[]>([]);
+  const [allTransactions, setAllTransactions] = useState<BankTransaction[]>([]);
+  const [customLookup, setCustomLookup] = useState<Record<string, string>>({});
   const [duplicateDialog, setDuplicateDialog] = useState<{
     existingId: string;
     periodLabel: string;
@@ -564,7 +567,7 @@ export default function BankAnalyser() {
     try {
       const stmts = await loadStatements();
       setStatements(stmts);
-      const txns: Array<Record<string, unknown>> = [];
+      const txns: BankTransaction[] = [];
       for (const s of stmts) {
         const st = await loadTransactions(s.id);
         txns.push(...st);

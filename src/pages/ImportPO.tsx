@@ -641,7 +641,12 @@ export default function ImportPO() {
                     </div>
                     <div>
                       <Label className="text-xs text-muted-foreground">Customer GST No.</Label>
-                      <p className="text-sm font-medium mt-1 font-mono">{parsed.gstin || "—"}</p>
+                      <Input
+                        value={(getHeader("gstin") as string) ?? parsed.gstin ?? ""}
+                        onChange={(e) => setHeader("gstin", e.target.value)}
+                        placeholder="15-char GSTIN"
+                        className="h-8 text-sm mt-1 font-mono"
+                      />
                     </div>
                     <div>
                       <Label className="text-xs text-muted-foreground">Delivery Date</Label>
