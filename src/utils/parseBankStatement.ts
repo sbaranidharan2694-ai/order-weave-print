@@ -66,7 +66,9 @@ function normalizeAccountNumber(raw: string): string {
 
 function normalizeDateToken(raw: string): string {
   const s = raw.trim().replace(/[\s/]+/g, "-");
-  const m = s.match(/^(\d{1,2})-([A-Za-z]{3}|\d{1,2})-(\d{4})$/);
+  // Handle DD-MONYYYY (no separator between month and year) → DD-MON-YYYY
+  const fixed = s.replace(/^(\d{1,2})-([A-Za-z]{3})(\d{4})$/, "$1-$2-$3");
+  const m = fixed.match(/^(\d{1,2})-([A-Za-z]{3}|\d{1,2})-(\d{4})$/);
   if (!m) return raw.trim();
   const [, d, mon, y] = m;
   if (/^\d{1,2}$/.test(mon)) return `${d.padStart(2, "0")}-${mon.padStart(2, "0")}-${y}`;
@@ -113,7 +115,7 @@ function parseSummaryTotals(joined: string): {
 }
 
 function parseTabularTransactions(lines: string[]): Transaction[] {
-  const DATE_PREFIX = /^(\d{1,2}[-/\s](?:[A-Za-z]{3}|\d{1,2})[-/\s]\d{4})\b/i;
+  const DATE_PREFIX = /^(\d{1,2}[-/\s](?:[A-Za-z]{3}|\d{1,2})[-/\s]?\d{4})/i;
   const blocks: string[] = [];
   let current: string[] = [];
 
@@ -188,7 +190,7 @@ function parseTabularTransactions(lines: string[]): Transaction[] {
 }
 
 function parsePipeTableTransactions(lines: string[]): Transaction[] {
-  const DATE_PREFIX = /^(\d{1,2}[-/\s](?:[A-Za-z]{3}|\d{1,2})[-/\s]\d{4})\b/i;
+  const DATE_PREFIX = /^(\d{1,2}[-/\s](?:[A-Za-z]{3}|\d{1,2})[-/\s]?\d{4})/i;
   const out: Transaction[] = [];
 
   for (const rawLine of lines) {
@@ -245,7 +247,7 @@ function parsePipeTableTransactions(lines: string[]): Transaction[] {
 }
 
 function parseLooseTransactions(lines: string[]): Transaction[] {
-  const DATE_RE = /(\d{1,2}[-/\s](?:[A-Za-z]{3}|\d{1,2})[-/\s]\d{4})/i;
+  const DATE_RE = /(\d{1,2}[-/\s](?:[A-Za-z]{3}|\d{1,2})[-/\s]?\d{4})/i;
   const MONEY_RE = /[\d,]+\.\d{2}/g;
   const out: Transaction[] = [];
 
@@ -314,7 +316,7 @@ function parseLooseTransactions(lines: string[]): Transaction[] {
 }
 
 function parseLegacyTransactions(lines: string[]): Transaction[] {
-  const DATE_RE = /^(\d{1,2}(?:[-/\s])[A-Z]{3}(?:[-/\s])\d{4})\s+(.*)/i;
+  const DATE_RE = /^(\d{1,2}(?:[-/\s])[A-Z]{3}(?:[-/\s])?\d{4})\s*(.*)/i;
   const BAL_RE = /INR\s+([\d,]+\.\d{2})\s*Cr/i;
   const AMOUNT_RE = /\b(\d{1,3}(?:,\d{3})*\.\d{2})\b/g;
 
@@ -385,10 +387,10 @@ function parseLegacyTransactions(lines: string[]): Transaction[] {
 function cleanPageBoundary(text: string): string {
   // Remove "Page X of Y" and everything after it (header/footer text from next page)
   return text
-    .replace(/\s*Page\s+\d+\s+of\s+\d+\b[\s\S]*/i, "")
-    .replace(/\s*CSB\s+24x7[\s\S]*/i, "")
-    .replace(/\s*customercare@csb[\s\S]*/i, "")
-    .replace(/\s*CIN:\s*[A-Z0-9]+[\s\S]*/i, "")
+    .replace(/\s*Page\s+\d+\s+of\s+\d+.*/i, "")
+    .replace(/\s*CSB\s+24x7.*/i, "")
+    .replace(/\s*customercare@csb.*/i, "")
+    .replace(/\s*CIN:\s*[A-Z0-9]+.*/i, "")
     .trim();
 }
 
@@ -407,7 +409,7 @@ export function parseBankStatement(rawText: string): BankStatementData {
   const joined = lines.join(" ");
   // Also filter out lines that are just page headers/footers
   const filteredLines = lines.filter(
-    (l) => !/^(CSB\s+Bank|Trusted\s+Heritage|1800\s+266|customercare@|CIN:|www\.csbbank)/i.test(l)
+    (l) => !/^(CSB\s+Bank|Trusted\s+Heritage|1800\s+266|customercare@|CIN:|www\.csb|Website:|Nominee\s+Details|Legends\s+for\s+Trans|Disclaimer:|Statement\s+Generated|END\s+OF\s+STATEMENT|\*{3,})/i.test(l)
   );
 
   const rawLinesFilt = rawLines.filter(
@@ -433,7 +435,7 @@ export function parseBankStatement(rawText: string): BankStatementData {
   const ifsc = joined.match(/IFSC\s+Code\s*[:\s]+([A-Z0-9]{11})/i)?.[1] ?? "";
 
   const periodMatch = joined.match(
-    /period\s*:?[\s]+(\d{1,2}[-/\s][A-Za-z]{3}[-/\s]\d{4})\s+to\s+(\d{1,2}[-/\s][A-Za-z]{3}[-/\s]\d{4})/i,
+    /period\s*:?[\s]+(\d{1,2}[-/\s][A-Za-z]{3}[-/\s]?\d{4})\s+to\s+(\d{1,2}[-/\s][A-Za-z]{3}[-/\s]?\d{4})/i,
   );
 
   const periodFrom = periodMatch ? normalizeDateToken(periodMatch[1]) : "";
