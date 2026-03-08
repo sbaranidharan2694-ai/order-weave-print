@@ -360,9 +360,71 @@ function tryFujitec(text: string): ParsedPOData | null {
             cgst_amount: cgstAmt,
             sgst_percent: sgstPct,
             sgst_amount: sgstAmt,
-            total_amount: totalPrice + cgstAmt + sgstAmt,
+            total_amount: totalPrice,
             suggested_product_type: mapHsnToProductType(""),
           });
+        }
+      }
+    }
+  }
+
+  // Fallback: parse table rows without UOM markers (simple Qty / Unit Price / Amount)
+  if (lineItems.length === 0 && tableStart >= 0) {
+    for (let i = tableStart + 1; i < lines.length; i++) {
+      const line = lines[i];
+      if (/^(Total|Grand|Subtotal|GST|Remarks|INR|Rupees|Chennai|Plot|Delivery|Terms)/i.test(line)) break;
+      if (line.length < 5) continue;
+      
+      // Extract all numbers from the line
+      const allNums: { val: number; idx: number }[] = [];
+      const numRe = /(?<![.\d])([\d,]+(?:\.\d{1,2})?)(?![.\d])/g;
+      let nm: RegExpExecArray | null;
+      while ((nm = numRe.exec(line)) !== null) {
+        allNums.push({ val: toNum(nm[1]), idx: nm.index });
+      }
+      
+      if (allNums.length >= 3) {
+        // Skip first number (likely Sr No), then find qty*price=amount triplet
+        // Try from index 1 onwards
+        let found = false;
+        for (let a = 1; a < allNums.length - 2 && !found; a++) {
+          for (let b = a + 1; b < allNums.length - 1 && !found; b++) {
+            for (let c = b + 1; c < allNums.length && !found; c++) {
+              const qty = allNums[a].val;
+              const price = allNums[b].val;
+              const total = allNums[c].val;
+              if (qty > 0 && qty < 100000 && price > 0 && total > 0 && Math.abs(total - qty * price) < 1) {
+                // Get description: text between sr no and qty
+                const descEnd = allNums[a].idx;
+                let desc = line.slice(0, descEnd).replace(/^\d+\s+/, "").trim();
+                desc = desc.replace(/\s{2,}/g, " ").trim();
+                if (desc.length > 1 && !/^(Total|Subtotal)$/i.test(desc)) {
+                  // Check for tax columns after total
+                  let cgstPct = 0, cgstAmt = 0, sgstPct = 0, sgstAmt = 0;
+                  if (c + 4 < allNums.length) {
+                    cgstPct = allNums[c + 1].val;
+                    cgstAmt = allNums[c + 2].val;
+                    sgstPct = allNums[c + 3].val;
+                    sgstAmt = allNums[c + 4].val;
+                  }
+                  lineItems.push({
+                    ...emptyLineItem(),
+                    description: desc,
+                    qty,
+                    unit_price: price,
+                    base_amount: total,
+                    cgst_percent: cgstPct,
+                    cgst_amount: cgstAmt,
+                    sgst_percent: sgstPct,
+                    sgst_amount: sgstAmt,
+                    total_amount: total,
+                    suggested_product_type: mapHsnToProductType(""),
+                  });
+                  found = true;
+                }
+              }
+            }
+          }
         }
       }
     }
