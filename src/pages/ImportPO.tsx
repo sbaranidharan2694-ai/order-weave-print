@@ -363,6 +363,21 @@ export default function ImportPO() {
         }
       }
 
+      // Upload PDF to storage
+      let poFileUrl: string | null = null;
+      if (file) {
+        const filePath = `po-${poNumber.replace(/[^a-zA-Z0-9-]/g, "_")}-${Date.now()}.pdf`;
+        const { error: uploadErr } = await supabase.storage
+          .from("po-files")
+          .upload(filePath, file, { contentType: "application/pdf", upsert: false });
+        if (uploadErr) {
+          console.warn("PO file upload failed (non-blocking):", uploadErr.message);
+        } else {
+          const { data: urlData } = supabase.storage.from("po-files").getPublicUrl(filePath);
+          poFileUrl = urlData?.publicUrl || filePath;
+        }
+      }
+
       let poRecord: { id: string };
       try {
         poRecord = await createPO.mutateAsync({
@@ -378,7 +393,7 @@ export default function ImportPO() {
           currency: parsed.currency || "INR",
           total_amount: totals.total || parsed.total_amount || 0,
           tax_amount: (totals.cgst + totals.sgst + totals.igst) || parsed.tax_amount || 0,
-          po_file_url: null,
+          po_file_url: poFileUrl,
           parsed_data: { ...parsed, ...editHeader, line_items: lineItems },
           status: "processed",
         } as any);
