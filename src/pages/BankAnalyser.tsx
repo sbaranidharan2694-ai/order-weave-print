@@ -838,6 +838,9 @@ function OverviewTab({
       const parsed = parseBankStatement(text);
       const assignedTab = getTabForAccount(parsed.accountNumber ?? "") || detectAccountFromBankStatementData(parsed);
       if (!assignedTab) throw new Error(`Unknown account: ${parsed.accountNumber ?? "—"}`);
+      if (hasSummaryWithoutRows(parsed)) {
+        throw new Error("Could not parse transaction rows from this PDF yet. I’ve updated the parser—please re-upload once.");
+      }
       setUploads(prev => prev.map(u => u.id === entry.id ? { ...u, status: "done", data: parsed, assignedTab } : u));
       toast.success(`${parsed.transactions.length} transactions saved`);
       await onSaveParsedStatement(assignedTab, parsed, entry.file);
