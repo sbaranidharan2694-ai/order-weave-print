@@ -22,33 +22,16 @@ export default function Login() {
     }
     setLoading(true);
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({
+      const { error } = await supabase.auth.signInWithPassword({
         email: trimmedEmail,
         password,
       });
       if (error) throw error;
-
-      // Verify we actually got a session back
-      const session = data?.session;
-      if (!session) {
-        // Fallback: some browsers delay session storage — wait and retry
-        await new Promise((r) => setTimeout(r, 500));
-        const { data: retryData } = await supabase.auth.getSession();
-        if (!retryData?.session) {
-          throw new Error("Login succeeded but session could not be established. Please try again.");
-        }
-      }
-
       toast.success("Welcome back!");
-
-      // Use replace so back button doesn't return to login
-      // Small delay ensures session is persisted to storage before reload
-      setTimeout(() => {
-        window.location.replace("/");
-      }, 300);
+      // AuthProvider's onAuthStateChange will update session state,
+      // and PublicOnly wrapper will redirect to "/" automatically.
     } catch (err: any) {
       const msg = err?.message || "Authentication failed";
-      // Provide user-friendly messages for common errors
       if (msg.includes("Invalid login")) {
         toast.error("Invalid email or password. Please try again.");
       } else if (msg.includes("rate") || msg.includes("too many")) {

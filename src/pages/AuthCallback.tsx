@@ -11,25 +11,25 @@ export default function AuthCallback() {
 
     const run = async () => {
       try {
-        const code = new URLSearchParams(window.location.search).get("code");
+        const params = new URLSearchParams(window.location.search);
+        const code = params.get("code");
 
         if (code) {
           const { error } = await supabase.auth.exchangeCodeForSession(code);
           if (error) throw error;
         }
 
+        // Small delay to let onAuthStateChange propagate
+        await new Promise((r) => setTimeout(r, 200));
         if (active) navigate("/", { replace: true });
       } catch (err: any) {
         toast.error(err?.message || "Authentication callback failed");
-        if (active) navigate("/", { replace: true });
+        if (active) navigate("/login", { replace: true });
       }
     };
 
     run();
-
-    return () => {
-      active = false;
-    };
+    return () => { active = false; };
   }, [navigate]);
 
   return (
