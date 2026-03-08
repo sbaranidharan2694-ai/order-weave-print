@@ -5,7 +5,6 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AppLayout } from "@/components/layout/AppLayout";
-import { isSupabaseConfigured } from "@/integrations/supabase/client";
 import { ThemeProvider } from "next-themes";
 
 const Dashboard = lazy(() => import("@/pages/Dashboard"));
@@ -25,35 +24,6 @@ function PageLoader() {
   return (
     <div className="flex min-h-[50vh] items-center justify-center">
       <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-    </div>
-  );
-}
-
-function SetupRequired() {
-  return (
-    <div style={{
-      minHeight: "100vh", display: "flex", flexDirection: "column",
-      alignItems: "center", justifyContent: "center", padding: "1.5rem",
-      backgroundColor: "#f1f5f9", fontFamily: "system-ui, sans-serif"
-    }}>
-      <div style={{
-        maxWidth: "480px", width: "100%", borderRadius: "16px",
-        border: "1px solid #e2e8f0", backgroundColor: "#ffffff",
-        padding: "2rem", boxShadow: "0 4px 24px rgba(0,0,0,0.08)",
-        textAlign: "center"
-      }}>
-        <div style={{ fontSize: "2.5rem", marginBottom: "0.75rem" }}>🖨️</div>
-        <h1 style={{
-          fontSize: "1.25rem", fontWeight: "700",
-          color: "#1e293b", marginBottom: "0.5rem", margin: "0 0 0.5rem 0"
-        }}>
-          Super Printers OMS
-        </h1>
-        <p style={{ fontSize: "0.875rem", color: "#64748b", marginBottom: "1.25rem" }}>
-          <strong>Supabase is not connected.</strong><br />
-          In Lovable: Project Settings → Integrations → Supabase → Connect your project.
-        </p>
-      </div>
     </div>
   );
 }
@@ -89,13 +59,9 @@ const App = () => (
       <TooltipProvider>
         <Toaster />
         <Sonner />
-        {!isSupabaseConfigured ? (
-          <SetupRequired />
-        ) : (
-          <BrowserRouter>
-            <AppContent />
-          </BrowserRouter>
-        )}
+        <BrowserRouter>
+          <AppContent />
+        </BrowserRouter>
       </TooltipProvider>
     </QueryClientProvider>
   </ThemeProvider>
