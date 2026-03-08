@@ -247,7 +247,7 @@ function parsePipeTableTransactions(lines: string[]): Transaction[] {
 }
 
 function parseLooseTransactions(lines: string[]): Transaction[] {
-  const DATE_RE = /(\d{1,2}[-/\s](?:[A-Za-z]{3}|\d{1,2})[-/\s]\d{4})/i;
+  const DATE_RE = /(\d{1,2}[-/\s](?:[A-Za-z]{3}|\d{1,2})[-/\s]?\d{4})/i;
   const MONEY_RE = /[\d,]+\.\d{2}/g;
   const out: Transaction[] = [];
 
