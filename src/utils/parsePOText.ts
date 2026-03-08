@@ -172,9 +172,9 @@ function isTotalLine(line: string): boolean {
   return nums.length <= 2 && nums.some((n) => n > 10000);
 }
 
-/** Try Fujitec India (SUBCON PURCHASE ORDER) or SUPER / List of Subcon POs */
+/** Try Fujitec India (SUBCON PURCHASE ORDER) or SUPER / List of Subcon / Purchase Order POs */
 function tryFujitec(text: string): ParsedPOData | null {
-  if (!/SUBCON PURCHASE ORDER|FUJITEC INDIA|List\s*of\s*Subcon|ListOfSubcon|SUPER\s*\d+/i.test(text)) return null;
+  if (!/SUBCON PURCHASE ORDER|FUJITEC INDIA|List\s*of\s*Subcon|ListOfSubcon|SUPER\s*\d+|SUPER\s*PRINTERS|Purchase\s+Order/i.test(text)) return null;
 
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
 
@@ -192,9 +192,9 @@ function tryFujitec(text: string): ParsedPOData | null {
   const vendorName = /FUJITEC INDIA/i.test(text) ? "Fujitec India Pvt Ltd" : "Vendor";
 
   const lineItems: ParsedPOLineItem[] = [];
-  const tableStart = lines.findIndex((l) => /Sr\s*No|Description\s*\|?\s*Part\s*Number|Qty\s*\|?\s*UOM|Sl\.?\s*No|S\.?\s*No\s+Description/i.test(l));
-  if (tableStart >= 0) {
-    for (let i = tableStart + 1; i < lines.length; i++) {
+  const tableStart = lines.findIndex((l) => /Sr\s*No|Description\s*\|?\s*Part\s*Number|Qty\s*\|?\s*UOM|Sl\.?\s*No|S\.?\s*No\s+Description|Part\s*Number|Unit\s*Price|Total\s*Price/i.test(l));
+  const startIndex = tableStart >= 0 ? tableStart + 1 : 0;
+  for (let i = startIndex; i < lines.length; i++) {
       const line = lines[i];
       if (isTableHeaderLine(line)) continue;
       if (isTotalLine(line)) break;
@@ -246,7 +246,6 @@ function tryFujitec(text: string): ParsedPOData | null {
           }
         }
       }
-    }
   }
 
   if (lineItems.length === 0) return null;
@@ -258,7 +257,7 @@ function tryFujitec(text: string): ParsedPOData | null {
   return {
     po_number: poNumber || "FUJITEC-PO",
     po_date: normalizeDate(poDateRaw),
-    vendor_name: vendorName,
+    vendor_name: /SUPER\s*PRINTERS/i.test(text) ? "Super Printers" : vendorName,
     contact_no: null,
     contact_person: contactPerson,
     contact_email: null,
@@ -491,6 +490,57 @@ function tryContemporary(text: string): ParsedPOData | null {
   };
 }
 
+/** Try to add one line item from numbers; returns true if added */
+function tryAddGenericLineItem(
+  line: string,
+  lineItems: ParsedPOLineItem[],
+  tolerance = 0.02
+): boolean {
+  const nums = extractNumbers(line);
+  const descRaw = line.replace(/[\d,]+(?:\.\d{2})?/g, " ").replace(/\s+/g, " ").trim().slice(0, 120).trim();
+  if (descRaw.length < 2 || /^(Total|Subtotal|Grand|Page|\d+)$/i.test(descRaw) || /^\d+$/.test(descRaw)) return false;
+
+  const validTotal = (qty: number, unitPrice: number, total: number) =>
+    total > 0 && qty > 0 && unitPrice >= 0 &&
+    (Math.abs(total - qty * unitPrice) < 0.02 || (Math.abs(total - qty * unitPrice) / total) <= tolerance);
+
+  if (nums.length >= 4) {
+    const qty1 = nums[1];
+    const unitPrice1 = nums[2];
+    const total1 = nums[3];
+    if (qty1 > 0 && qty1 < 100000 && unitPrice1 >= 0 && validTotal(qty1, unitPrice1, total1)) {
+      lineItems.push({
+        ...emptyLineItem(),
+        description: descRaw || "Item",
+        qty: qty1,
+        unit_price: unitPrice1,
+        base_amount: total1,
+        total_amount: total1,
+        suggested_product_type: mapHsnToProductType(""),
+      });
+      return true;
+    }
+  }
+  if (nums.length >= 3) {
+    const qty = nums[0];
+    const unitPrice = nums[1];
+    const total = nums[2];
+    if (qty > 0 && qty < 100000 && unitPrice > 0 && validTotal(qty, unitPrice, total)) {
+      lineItems.push({
+        ...emptyLineItem(),
+        description: descRaw || "Item",
+        qty,
+        unit_price: unitPrice,
+        base_amount: total,
+        total_amount: total,
+        suggested_product_type: mapHsnToProductType(""),
+      });
+      return true;
+    }
+  }
+  return false;
+}
+
 /** Generic fallback: try to get PO number, dates, and any table rows with qty/price */
 function tryGeneric(text: string): ParsedPOData | null {
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
@@ -504,28 +554,7 @@ function tryGeneric(text: string): ParsedPOData | null {
   const lineItems: ParsedPOLineItem[] = [];
   for (const line of lines) {
     if (isTableHeaderLine(line) || isTotalLine(line)) continue;
-    const nums = extractNumbers(line);
-    if (nums.length >= 3) {
-      const qty = nums[0];
-      const unitPrice = nums[1];
-      const total = nums[2];
-      const expected = qty * unitPrice;
-      const validTotal = total > 0 && (Math.abs(total - expected) < 0.02 || Math.abs(total - expected) / total < 0.02);
-      if (qty > 0 && qty < 100000 && unitPrice > 0 && validTotal) {
-        const desc = line.replace(/[\d,]+(?:\.\d{2})?/g, " ").replace(/\s+/g, " ").trim().slice(0, 120).trim();
-        if (desc.length > 2 && !/^(Total|Subtotal|Grand|Page|\d+)$/i.test(desc) && !/^\d+$/.test(desc)) {
-          lineItems.push({
-            ...emptyLineItem(),
-            description: desc || "Item",
-            qty,
-            unit_price: unitPrice,
-            base_amount: total,
-            total_amount: total,
-            suggested_product_type: mapHsnToProductType(""),
-          });
-        }
-      }
-    }
+    tryAddGenericLineItem(line, lineItems, 0.05);
   }
 
   if (lineItems.length === 0) return null;

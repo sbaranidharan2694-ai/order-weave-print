@@ -60,4 +60,25 @@ Total              Subtotal        200.00
     expect(parsed.line_items[0].qty).toBe(2);
     expect(parsed.line_items[0].total_amount).toBe(200);
   });
+
+  it("parses SUPER PRINTERS / Purchase Order format and extracts line items", () => {
+    const raw = `
+SUPER PRINTERS
+Purchase Order
+Date: 01-Mar-2026
+
+Part Number  Description       Qty  Unit Price  Total
+1            Visiting Cards    100  5.00        500.00
+2            Brochure          200  2.50        500.00
+`;
+    const parsed = parsePOText(raw);
+    expect(parsed.line_items.length).toBeGreaterThanOrEqual(1);
+    expect(parsed.vendor_name).toBe("Super Printers");
+    if (parsed.line_items.length >= 2) {
+      expect(parsed.line_items[0].qty).toBe(100);
+      expect(parsed.line_items[0].total_amount).toBe(500);
+      expect(parsed.line_items[1].qty).toBe(200);
+      expect(parsed.line_items[1].total_amount).toBe(500);
+    }
+  });
 });
