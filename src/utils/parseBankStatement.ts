@@ -381,13 +381,38 @@ function parseLegacyTransactions(lines: string[]): Transaction[] {
   return transactions;
 }
 
+/** Strip page-boundary contamination from extracted text lines. */
+function cleanPageBoundary(text: string): string {
+  // Remove "Page X of Y" and everything after it (header/footer text from next page)
+  return text
+    .replace(/\s*Page\s+\d+\s+of\s+\d+\b[\s\S]*/i, "")
+    .replace(/\s*CSB\s+24x7[\s\S]*/i, "")
+    .replace(/\s*customercare@csb[\s\S]*/i, "")
+    .replace(/\s*CIN:\s*[A-Z0-9]+[\s\S]*/i, "")
+    .trim();
+}
+
 export function parseBankStatement(rawText: string): BankStatementData {
-  const lines = rawText
+  // Clean each line of page-boundary contamination BEFORE parsing
+  const rawLines = rawText
     .split("\n")
-    .map((l) => l.replace(/[|#]/g, " ").replace(/\s+/g, " ").trim())
+    .map((l) => cleanPageBoundary(l))
     .filter((l) => l.length > 0);
 
+  // Keep pipe-containing lines for pipeTableTransactions
+  const pipeLines = rawLines.map((l) => l.replace(/#/g, " ").replace(/\s+/g, " ").trim()).filter(Boolean);
+  // Stripped version (no pipes) for other parsers
+  const lines = rawLines.map((l) => l.replace(/[|#]/g, " ").replace(/\s+/g, " ").trim()).filter(Boolean);
+
   const joined = lines.join(" ");
+  // Also filter out lines that are just page headers/footers
+  const filteredLines = lines.filter(
+    (l) => !/^(CSB\s+Bank|Trusted\s+Heritage|1800\s+266|customercare@|CIN:|www\.csbbank)/i.test(l)
+  );
+
+  const rawLinesFilt = rawLines.filter(
+    (l) => !/^(CSB\s+Bank|Trusted\s+Heritage|1800\s+266|customercare@|CIN:|www\.csbbank)/i.test(l.replace(/[|#]/g, " ").trim())
+  );
 
   const accountHolderMatch =
     joined.match(/\b(SUPER\s+PRINTERS|SUPER\s+SCREENS|REVATHY\s+BHARANIDHARAN)\b/i)?.[1] ?? "";
@@ -416,13 +441,19 @@ export function parseBankStatement(rawText: string): BankStatementData {
 
   const summary = parseSummaryTotals(joined);
 
-  const tabularTransactions = parseTabularTransactions(lines);
-  const pipeTableTransactions = parsePipeTableTransactions(lines);
-  const looseTransactions = parseLooseTransactions(lines);
-  const legacyTransactions = parseLegacyTransactions(lines);
+  const tabularTransactions = parseTabularTransactions(filteredLines);
+  const pipeTableTransactions = parsePipeTableTransactions(pipeLines);
+  const looseTransactions = parseLooseTransactions(filteredLines);
+  const legacyTransactions = parseLegacyTransactions(filteredLines);
 
-  const transactions = [tabularTransactions, pipeTableTransactions, looseTransactions, legacyTransactions]
-    .sort((a, b) => b.length - a.length)[0] ?? [];
+  const allResults = [tabularTransactions, pipeTableTransactions, looseTransactions, legacyTransactions];
+  const transactions = allResults.sort((a, b) => b.length - a.length)[0] ?? [];
+
+  // Clean transaction details of any remaining page-boundary text
+  for (const txn of transactions) {
+    txn.details = cleanPageBoundary(txn.details);
+    if (!txn.details) txn.details = "Transaction";
+  }
 
   const totalCredits = summary.totalCredits > 0 ? summary.totalCredits : transactions.reduce((s, t) => s + (t.credit || 0), 0);
   const totalDebits = summary.totalDebits > 0 ? summary.totalDebits : transactions.reduce((s, t) => s + (t.debit || 0), 0);
