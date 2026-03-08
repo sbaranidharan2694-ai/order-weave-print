@@ -1136,7 +1136,7 @@ function AccountTab({ account, onRefresh, customLookup, onUpdateLookup }) {
         }
 
         const parsed = result.data as BankStatementData;
-        const accountKey = target.accountKey || account.key;
+        const accountKey = account.key;
         const { transactions: txns } = mapBankStatementDataToStatementAndTransactions(parsed, statementId, accountKey, target.fileName);
 
         if (txns.length === 0) {
