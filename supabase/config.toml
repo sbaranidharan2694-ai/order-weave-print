@@ -2,3 +2,6 @@ project_id = "hlpmmdmgdgyzsxnnrdjl"
 
 [functions.parse-po]
 verify_jwt = false
+
+[functions.parse-document]
+verify_jwt = false
