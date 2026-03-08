@@ -78,14 +78,15 @@ function AuthGate() {
 
   if (loading) return <PageLoader />;
 
-  // Allow reset-password route without auth
-  const isResetPassword = window.location.pathname === "/reset-password";
-  if (isResetPassword) {
+  // Allow public auth routes without an existing session
+  const isPublicAuthPath = ["/reset-password", "/auth/callback"].includes(window.location.pathname);
+  if (isPublicAuthPath) {
     return (
       <BrowserRouter>
         <Suspense fallback={<PageLoader />}>
           <Routes>
             <Route path="/reset-password" element={<ResetPassword />} />
+            <Route path="/auth/callback" element={<AuthCallback />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </Suspense>
