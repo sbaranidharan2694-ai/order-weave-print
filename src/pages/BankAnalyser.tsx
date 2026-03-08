@@ -798,11 +798,7 @@ function OverviewTab({
   const parseFile = useCallback(async (entry: OverviewUploadEntry, password?: string) => {
     setUploads(prev => prev.map(u => u.id === entry.id ? { ...u, status: "parsing" as const } : u));
     try {
-      const { text } = await extractTextFromPdf(entry.file, password);
-      if (!text || text.trim().length < 30) {
-        throw new Error("No text extracted — PDF may be image/scanned only");
-      }
-      const parsed = parseBankStatement(text);
+      const { data: parsed } = await parseBankStatementWithAI(entry.file, password);
       const assignedTab = getTabForAccount(parsed.accountNumber ?? "") || detectAccountFromBankStatementData(parsed);
       if (!assignedTab) {
         throw new Error(`Unknown account: ${parsed.accountNumber ?? "—"}. Add to ACCOUNT_TAB_MAP if needed.`);
