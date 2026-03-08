@@ -510,8 +510,7 @@ async function migrateOldData() {
       await saveStatement(newStmt);
       if (s.transactions) {
         for (const t of s.transactions) {
-          const txnId = btoa(s.id + (t.refNo || "") + t.date + String(t.debit || t.credit))
-            .replace(/[^a-zA-Z0-9]/g, "").substring(0, 40);
+          const txnId = buildTxnId(s.id, s.transactions.indexOf(t), t.date, t.refNo || "", t.debit || 0, t.credit || 0, t.details || "");
           await saveTransaction({ ...t, id: txnId, statementId: s.id });
         }
       }
