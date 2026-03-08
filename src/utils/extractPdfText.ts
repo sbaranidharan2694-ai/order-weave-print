@@ -8,6 +8,7 @@ export interface ExtractResult {
   text: string;
   pageCount: number;
   isPasswordProtected: boolean;
+  usedOcr?: boolean;
 }
 
 export async function extractTextFromPdf(

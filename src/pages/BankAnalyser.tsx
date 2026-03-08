@@ -826,7 +826,7 @@ function OverviewTab({
       const { text } = await extractTextFromPdf(entry.file, password);
       if (!text || text.trim().length < 30) throw new Error("No text extracted");
       const parsed = parseBankStatement(text);
-      const assignedTab = getTabForAccount(parsed.accountNumber ?? "");
+      const assignedTab = getTabForAccount(parsed.accountNumber ?? "") || detectAccountFromBankStatementData(parsed);
       if (!assignedTab) throw new Error(`Unknown account: ${parsed.accountNumber ?? "—"}`);
       setUploads(prev => prev.map(u => u.id === entry.id ? { ...u, status: "done", data: parsed, assignedTab } : u));
       toast.success(`${parsed.transactions.length} transactions saved`);
