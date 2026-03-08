@@ -692,9 +692,9 @@ export default function ImportPO() {
                     </div>
                   )}
                   {parsed.gst_extra && (
-                    <div className="mt-3 flex items-center gap-2 p-2 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-md">
-                      <AlertTriangle className="h-4 w-4 text-amber-600" />
-                      <span className="text-xs text-amber-700 dark:text-amber-400 font-medium">GST is EXTRA — taxes are not included in line item totals</span>
+                    <div className="mt-3 flex items-center gap-2 p-2 bg-destructive/10 border border-destructive/30 rounded-md">
+                      <AlertTriangle className="h-4 w-4 text-destructive" />
+                      <span className="text-xs text-destructive font-medium">GST is EXTRA — taxes are not included in line item totals</span>
                     </div>
                   )}
                   {parsed.remarks && (
