@@ -10,6 +10,7 @@ import { useCreatePurchaseOrder, useCreatePOLineItems } from "@/hooks/usePurchas
 import { useCreateOrder } from "@/hooks/useOrders";
 import { supabase } from "@/integrations/supabase/client";
 import { parsePOText } from "@/utils/parsePOText";
+import { invokeEdgeFunction } from "@/utils/invokeEdgeFunction";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import { Upload, Loader2, FileText, Trash2, CheckCircle2, X, PlusCircle, AlertTriangle } from "lucide-react";
