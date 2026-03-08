@@ -268,8 +268,8 @@ export function useSaveAttendanceUpload() {
           month_year: payload.month_year,
           file_name: payload.file_name,
           uploaded_at: new Date().toISOString(),
-          parsed_data: payload.parsed_data as unknown as Record<string, unknown>,
-        })
+          parsed_data: payload.parsed_data as any,
+        } as any)
         .select()
         .single();
       if (error) throw error;

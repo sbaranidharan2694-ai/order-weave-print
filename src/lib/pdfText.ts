@@ -20,7 +20,7 @@ function getPdfJs(): Promise<typeof import("pdfjs-dist")> {
     script.src = `${PDFJS_CDN}/pdf.min.mjs`;
     script.type = "module";
     script.onload = () => {
-      const lib = (window as Window & { pdfjsLib: typeof import("pdfjs-dist") }).pdfjsLib;
+      const lib = (window as any).pdfjsLib;
       lib.GlobalWorkerOptions.workerSrc = `${PDFJS_CDN}/pdf.worker.min.mjs`;
       resolve(lib);
     };

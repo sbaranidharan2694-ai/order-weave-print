@@ -1113,7 +1113,7 @@ function AccountTab({ account, onRefresh, customLookup, onUpdateLookup }) {
   const [showUnparsed, setShowUnparsed] = useState(false);
   const [dateFilter, setDateFilter] = useState("all");
   const [datePage, setDatePage] = useState(0);
-  const [unparsedModal, setUnparsedModal] = useState(false);
+  const [unparsedModal, setUnparsedModal] = useState<any>(false);
   const [validating, setValidating] = useState(false);
   const [dateRangeFrom, setDateRangeFrom] = useState("");
   const [dateRangeTo, setDateRangeTo] = useState("");
