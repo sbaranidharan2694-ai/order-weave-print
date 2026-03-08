@@ -55,7 +55,7 @@ export async function extractTextFromPdf(
   let finalText = pageTexts.join("\n\n").trim();
   let usedOcr = false;
 
-  if (finalText.length < 50) {
+  if (shouldRunOcrFallback(finalText, pdf.numPages)) {
     try {
       const ocrTexts = await extractTextWithOcr(pdf);
       const ocrCombined = ocrTexts.join("\n\n").trim();
