@@ -75,7 +75,7 @@ function detectAccountFromBankStatementData(data: BankStatementData): string | n
   const holder = (data.accountHolder ?? "").toUpperCase();
   if (num.includes("0244020080155") || holder.includes("SUPER SCREENS")) return "superscreens";
   if (num.includes("0244011477662") || holder.includes("REVATHY")) return "revathy";
-  if (holder.includes("SUPER PRINTERS")) return "superprinters";
+  if (num.includes("0244020077280") || holder.includes("SUPER PRINTERS")) return "superprinters";
   return null;
 }
 
