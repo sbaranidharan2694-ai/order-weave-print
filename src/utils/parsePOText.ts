@@ -51,11 +51,22 @@ export type ParsedPOData = {
 
 const GSTIN_RE = /\b\d{2}[A-Z]{5}\d{4}[A-Z][A-Z0-9]{3}[A-Z]\b/;
 
+/** Match numbers that are not part of a hyphenated code (e.g. avoid "001" in "VC-001") */
+const NUMBER_RE = /(?<![-\d.])([\d,]+(?:\.\d{2})?)(?!\d)/g;
+
 function toNum(s: string | number | null | undefined): number {
   if (s == null) return 0;
   if (typeof s === "number") return isNaN(s) ? 0 : s;
   const n = parseFloat(String(s).replace(/[^0-9.]/g, ""));
   return isNaN(n) ? 0 : n;
+}
+
+function extractNumbers(line: string): number[] {
+  const nums: number[] = [];
+  let m: RegExpExecArray | null;
+  const re = new RegExp(NUMBER_RE.source, "g");
+  while ((m = re.exec(line)) !== null) nums.push(toNum(m[1]));
+  return nums;
 }
 
 function firstMatch(text: string, re: RegExp): string | null {
@@ -144,14 +155,33 @@ const emptyLineItem = (): ParsedPOLineItem => ({
   suggested_product_type: "Other",
 });
 
-/** Try Fujitec India (SUBCON PURCHASE ORDER) format */
+/** True if line looks like a table header (column titles, not data) */
+function isTableHeaderLine(line: string): boolean {
+  const lower = line.toLowerCase();
+  return (
+    (/sr\s*no|s\.no|sl\.?\s*no/i.test(lower) && /description|qty|quantity|unit\s*price|amount/i.test(lower)) ||
+    (/part\s*number|item\s*number/i.test(lower) && /qty|uom/i.test(lower) && line.replace(/\d/g, "").length > line.length / 2)
+  );
+}
+
+/** True if line is a total/subtotal/grand row */
+function isTotalLine(line: string): boolean {
+  const t = line.trim();
+  if (/^(Total|Subtotal|Grand\s*Total|Net\s*Amount|Tax|CGST|SGST|IGST)\s*[:.]?\s*[\d,.]*$/i.test(t)) return true;
+  const nums = extractNumbers(t);
+  return nums.length <= 2 && nums.some((n) => n > 10000);
+}
+
+/** Try Fujitec India (SUBCON PURCHASE ORDER) or SUPER / List of Subcon POs */
 function tryFujitec(text: string): ParsedPOData | null {
-  if (!/SUBCON PURCHASE ORDER|FUJITEC INDIA/i.test(text)) return null;
+  if (!/SUBCON PURCHASE ORDER|FUJITEC INDIA|List\s*of\s*Subcon|ListOfSubcon|SUPER\s*\d+/i.test(text)) return null;
 
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
 
   const poNumber = firstMatch(text, /Purchase\s+Job\s+Order\s+No\.?\s*[:\s]*([A-Z0-9-]+)/i)
-    || firstMatch(text, /Order\s+No\.?\s*[:\s]*([A-Z0-9-]+)/i);
+    || firstMatch(text, /Order\s+No\.?\s*[:\s]*([A-Z0-9-]+)/i)
+    || firstMatch(text, /SUPER\s*[_\s]*(\d+)/i)
+    || firstMatch(text, /PO\s*[#:]?\s*([A-Z0-9-]+)/i);
   const poDateRaw = firstMatch(text, /(?:^|\s)Date\s*[:\s]*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{1,2}[/-][A-Za-z]{3}[/-]?\d{4})/i)
     || firstMatch(text, /(\d{1,2}[/-][A-Za-z]{3}[/-]\d{4})/);
   const completionDate = firstMatch(text, /Completion\s+Date\s*[:\s]*([\d/-A-Za-z]+)/i);
@@ -159,32 +189,61 @@ function tryFujitec(text: string): ParsedPOData | null {
   const contactPerson = firstMatch(text, /Contact\s+Person\s*[:\s]*([^\n]+?)(?=\s*(?:GST|$))/i);
 
   const gstin = extractGstin(text);
-  const vendorName = "Fujitec India Pvt Ltd";
+  const vendorName = /FUJITEC INDIA/i.test(text) ? "Fujitec India Pvt Ltd" : "Vendor";
 
   const lineItems: ParsedPOLineItem[] = [];
-  const tableStart = lines.findIndex((l) => /Sr\s*No|Description\s*\|?\s*Part\s*Number|Qty\s*\|?\s*UOM/i.test(l));
+  const tableStart = lines.findIndex((l) => /Sr\s*No|Description\s*\|?\s*Part\s*Number|Qty\s*\|?\s*UOM|Sl\.?\s*No|S\.?\s*No\s+Description/i.test(l));
   if (tableStart >= 0) {
     for (let i = tableStart + 1; i < lines.length; i++) {
       const line = lines[i];
-      if (/Total|Grand|Subtotal|^\d+\s*$/.test(line) && line.length < 30) break;
-      const nums = [...line.matchAll(/([\d,]+(?:\.\d{2})?)/g)].map((n) => toNum(n[1]));
+      if (isTableHeaderLine(line)) continue;
+      if (isTotalLine(line)) break;
+      if (/Total|Grand|Subtotal/i.test(line) && line.length < 50) break;
+      const nums = extractNumbers(line);
+      // Fujitec: Sr No | Description | Part No | Qty | UOM | Unit Price | Total Price | CGST Rate | CGST Amt | SGST Rate | SGST Amt
+      // So numbers on line: [srNo, qty, unitPrice, totalPrice, ...tax]. Use index 1,2,3 for qty, unitPrice, total.
       if (nums.length >= 4) {
+        const srNo = nums[0];
+        const qty = nums[1];
+        const unitPrice = nums[2];
+        const total = nums[3];
+        const expectedTotal = qty * unitPrice;
+        const totalOk = total > 0 && (Math.abs(total - expectedTotal) < 0.02 || Math.abs(total - expectedTotal) / total < 0.01);
+        if (qty > 0 && qty <= 100000 && unitPrice >= 0 && totalOk) {
+          const descMatch = line.replace(/[\d,]+(?:\.\d{2})?/g, " ").replace(/\s+/g, " ").trim();
+          const desc = descMatch.slice(0, 120).trim() || "Item";
+          if (desc && !/^\d+$/.test(desc)) {
+            lineItems.push({
+              ...emptyLineItem(),
+              description: desc,
+              qty,
+              uom: "NOS",
+              unit_price: unitPrice,
+              base_amount: total,
+              total_amount: total,
+              suggested_product_type: mapHsnToProductType(""),
+            });
+          }
+        }
+      } else if (nums.length === 3) {
         const qty = nums[0];
-        const unitPrice = nums.length >= 6 ? nums[nums.length - 5] || nums[2] : nums[1];
-        const total = nums[nums.length - 1] || qty * unitPrice;
-        if (qty > 0) {
-          const descMatch = line.replace(/[\d,]+(?:\.\d{2})?/g, "").replace(/\s+/g, " ").trim();
-          const desc = descMatch.slice(0, 120) || "Item";
-          lineItems.push({
-            ...emptyLineItem(),
-            description: desc,
-            qty,
-            uom: "NOS",
-            unit_price: unitPrice,
-            base_amount: qty * unitPrice,
-            total_amount: total,
-            suggested_product_type: mapHsnToProductType(""),
-          });
+        const unitPrice = nums[1];
+        const total = nums[2];
+        if (qty > 0 && unitPrice >= 0 && total > 0 && Math.abs(total - qty * unitPrice) < 0.02) {
+          const descMatch = line.replace(/[\d,]+(?:\.\d{2})?/g, " ").replace(/\s+/g, " ").trim().slice(0, 120);
+          const desc = descMatch.trim() || "Item";
+          if (desc && !/^\d+$/.test(desc)) {
+            lineItems.push({
+              ...emptyLineItem(),
+              description: desc,
+              qty,
+              uom: "NOS",
+              unit_price: unitPrice,
+              base_amount: total,
+              total_amount: total,
+              suggested_product_type: mapHsnToProductType(""),
+            });
+          }
         }
       }
     }
@@ -256,24 +315,47 @@ function tryGuindy(text: string): ParsedPOData | null {
   if (tableStart >= 0) {
     for (let i = tableStart + 1; i < lines.length; i++) {
       const line = lines[i];
-      if (/Total|Grand|Subtotal|GST\s+EXTRA/.test(line) && line.length < 50) break;
-      const nums = [...line.matchAll(/([\d,]+(?:\.\d{2})?)/g)].map((n) => toNum(n[1]));
-      if (nums.length >= 3) {
+      if (isTableHeaderLine(line)) continue;
+      if (isTotalLine(line) || (/Total|Grand|Subtotal|GST\s+EXTRA/i.test(line) && line.length < 50)) break;
+      const nums = extractNumbers(line);
+      // Guindy: Sl.No | Item/Description | Qty | UOM | Unit Price | Amount → [slNo, qty, unitPrice, amount]
+      if (nums.length >= 4) {
+        const qty = nums[1];
+        const unitPrice = nums[2];
+        const amount = nums[3];
+        if (qty > 0 && unitPrice >= 0 && amount > 0 && Math.abs(amount - qty * unitPrice) < 0.02) {
+          const desc = line.replace(/[\d,]+(?:\.\d{2})?/g, " ").replace(/\s+/g, " ").trim().slice(0, 120).trim() || "Item";
+          if (desc && !/^\d+$/.test(desc)) {
+            lineItems.push({
+              ...emptyLineItem(),
+              description: desc,
+              qty,
+              uom: "NOS",
+              unit_price: unitPrice,
+              base_amount: amount,
+              total_amount: amount,
+              suggested_product_type: mapHsnToProductType(""),
+            });
+          }
+        }
+      } else if (nums.length === 3) {
         const qty = nums[0];
-        const unitPrice = nums.length >= 5 ? nums[nums.length - 3] : nums[1];
-        const amount = nums[nums.length - 1] || qty * unitPrice;
-        if (qty > 0) {
-          const desc = line.replace(/[\d,]+(?:\.\d{2})?/g, "").replace(/\s+/g, " ").trim().slice(0, 120) || "Item";
-          lineItems.push({
-            ...emptyLineItem(),
-            description: desc,
-            qty,
-            uom: "NOS",
-            unit_price: unitPrice,
-            base_amount: amount,
-            total_amount: amount,
-            suggested_product_type: mapHsnToProductType(""),
-          });
+        const unitPrice = nums[1];
+        const amount = nums[2];
+        if (qty > 0 && unitPrice >= 0 && amount > 0 && Math.abs(amount - qty * unitPrice) < 0.02) {
+          const desc = line.replace(/[\d,]+(?:\.\d{2})?/g, " ").replace(/\s+/g, " ").trim().slice(0, 120).trim() || "Item";
+          if (desc && !/^\d+$/.test(desc)) {
+            lineItems.push({
+              ...emptyLineItem(),
+              description: desc,
+              qty,
+              uom: "NOS",
+              unit_price: unitPrice,
+              base_amount: amount,
+              total_amount: amount,
+              suggested_product_type: mapHsnToProductType(""),
+            });
+          }
         }
       }
     }
@@ -334,37 +416,41 @@ function tryContemporary(text: string): ParsedPOData | null {
   if (tableStart >= 0) {
     for (let i = tableStart + 1; i < lines.length; i++) {
       const line = lines[i];
-      if (/Total|Grand|Subtotal/.test(line) && line.length < 40) break;
-      const nums = [...line.matchAll(/([\d,]+(?:\.\d{2})?)/g)].map((n) => toNum(n[1]));
+      if (isTableHeaderLine(line)) continue;
+      if (isTotalLine(line) || (/Total|Grand|Subtotal/i.test(line) && line.length < 40)) break;
+      const nums = extractNumbers(line);
       if (nums.length >= 5) {
         const qty = nums[2] || nums[1];
         const unitPrice = nums.length >= 7 ? nums[4] : nums[3];
         const baseAmt = nums.length >= 6 ? nums[5] : qty * unitPrice;
-        const cgstPct = nums.length >= 8 ? nums[6] : 0;
-        const sgstPct = nums.length >= 10 ? nums[8] : 0;
-        const igstPct = nums.length >= 12 ? nums[10] : 0;
         const totalAmt = nums[nums.length - 1] || baseAmt;
-        if (qty > 0) {
-          const desc = line.replace(/[\d,]+(?:\.\d{2})?/g, "").replace(/\s+/g, " ").trim().slice(0, 120) || "Item";
+        const valid = qty > 0 && unitPrice >= 0 && baseAmt > 0 && (Math.abs(baseAmt - qty * unitPrice) < 0.02 || baseAmt >= qty * unitPrice * 0.99);
+        if (valid) {
+          const desc = line.replace(/[\d,]+(?:\.\d{2})?/g, " ").replace(/\s+/g, " ").trim().slice(0, 120).trim() || "Item";
           const hsnMatch = line.match(/\b(\d{4,8})\b/);
           const hsn = hsnMatch ? hsnMatch[1] : "";
-          lineItems.push({
-            ...emptyLineItem(),
-            description: desc,
-            hsn_code: hsn,
-            qty,
-            uom: "NOS",
-            unit_price: unitPrice,
-            base_amount: baseAmt,
-            cgst_percent: cgstPct,
-            sgst_percent: sgstPct,
-            igst_percent: igstPct,
-            cgst_amount: baseAmt * (cgstPct / 100),
-            sgst_amount: baseAmt * (sgstPct / 100),
-            igst_amount: baseAmt * (igstPct / 100),
-            total_amount: totalAmt,
-            suggested_product_type: mapHsnToProductType(hsn),
-          });
+          if (desc && !/^\d+$/.test(desc)) {
+            const cgstPct = nums.length >= 8 ? nums[6] : 0;
+            const sgstPct = nums.length >= 10 ? nums[8] : 0;
+            const igstPct = nums.length >= 12 ? nums[10] : 0;
+            lineItems.push({
+              ...emptyLineItem(),
+              description: desc,
+              hsn_code: hsn,
+              qty,
+              uom: "NOS",
+              unit_price: unitPrice,
+              base_amount: baseAmt,
+              cgst_percent: cgstPct,
+              sgst_percent: sgstPct,
+              igst_percent: igstPct,
+              cgst_amount: baseAmt * (cgstPct / 100),
+              sgst_amount: baseAmt * (sgstPct / 100),
+              igst_amount: baseAmt * (igstPct / 100),
+              total_amount: totalAmt,
+              suggested_product_type: mapHsnToProductType(hsn),
+            });
+          }
         }
       }
     }
@@ -417,20 +503,23 @@ function tryGeneric(text: string): ParsedPOData | null {
 
   const lineItems: ParsedPOLineItem[] = [];
   for (const line of lines) {
-    const nums = [...line.matchAll(/([\d,]+(?:\.\d{2})?)/g)].map((n) => toNum(n[1]));
+    if (isTableHeaderLine(line) || isTotalLine(line)) continue;
+    const nums = extractNumbers(line);
     if (nums.length >= 3) {
       const qty = nums[0];
-      const unitPrice = nums.length >= 3 ? nums[nums.length - 2] : nums[1];
-      const total = nums[nums.length - 1] || qty * unitPrice;
-      if (qty > 0 && qty < 100000 && unitPrice > 0 && total > 0) {
-        const desc = line.replace(/[\d,]+(?:\.\d{2})?/g, "").replace(/\s+/g, " ").trim().slice(0, 120) || "Item";
-        if (desc.length > 2 && !/^(Total|Subtotal|Grand|Page|\d+)$/i.test(desc)) {
+      const unitPrice = nums[1];
+      const total = nums[2];
+      const expected = qty * unitPrice;
+      const validTotal = total > 0 && (Math.abs(total - expected) < 0.02 || Math.abs(total - expected) / total < 0.02);
+      if (qty > 0 && qty < 100000 && unitPrice > 0 && validTotal) {
+        const desc = line.replace(/[\d,]+(?:\.\d{2})?/g, " ").replace(/\s+/g, " ").trim().slice(0, 120).trim();
+        if (desc.length > 2 && !/^(Total|Subtotal|Grand|Page|\d+)$/i.test(desc) && !/^\d+$/.test(desc)) {
           lineItems.push({
             ...emptyLineItem(),
-            description: desc,
+            description: desc || "Item",
             qty,
             unit_price: unitPrice,
-            base_amount: qty * unitPrice,
+            base_amount: total,
             total_amount: total,
             suggested_product_type: mapHsnToProductType(""),
           });
