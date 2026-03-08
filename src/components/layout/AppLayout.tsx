@@ -20,7 +20,6 @@ interface AppLayoutProps {
 
 export function AppLayout({ children }: AppLayoutProps) {
   const { data: orders = [] } = useOrders();
-  const auth = useAuth();
   const [showQuickStatus, setShowQuickStatus] = useState(false);
 
   const notifications = useMemo(() => {
