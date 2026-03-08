@@ -138,13 +138,13 @@ export default function NewOrder() {
       for (const file of files) {
         const filePath = `${order.id}/${Date.now()}-${file.name}`;
         await supabase.storage.from("order-files").upload(filePath, file);
-        const { data: { publicUrl } } = supabase.storage.from("order-files").getPublicUrl(filePath);
+        // Store only the storage path, not the public URL
         await supabase.from("order_files").insert({
           order_id: order.id,
           filename: file.name,
           mime_type: file.type,
           file_size: file.size,
-          storage_url: publicUrl,
+          storage_url: filePath,
         } as any);
       }
 
