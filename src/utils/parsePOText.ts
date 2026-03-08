@@ -286,7 +286,7 @@ function tryGuindy(text: string): ParsedPOData | null {
 // ─── Fujitec India (SUBCON PURCHASE ORDER) ────────────────────────────────
 
 function tryFujitec(text: string): ParsedPOData | null {
-  if (!/SUBCON PURCHASE ORDER|FUJITEC/i.test(text)) return null;
+  if (!/SUBCON|FUJITEC|List\s*of\s*Subcon|ListOfSubcon/i.test(text)) return null;
 
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
 
@@ -360,9 +360,71 @@ function tryFujitec(text: string): ParsedPOData | null {
             cgst_amount: cgstAmt,
             sgst_percent: sgstPct,
             sgst_amount: sgstAmt,
-            total_amount: totalPrice + cgstAmt + sgstAmt,
+            total_amount: totalPrice,
             suggested_product_type: mapHsnToProductType(""),
           });
+        }
+      }
+    }
+  }
+
+  // Fallback: parse table rows without UOM markers (simple Qty / Unit Price / Amount)
+  if (lineItems.length === 0 && tableStart >= 0) {
+    for (let i = tableStart + 1; i < lines.length; i++) {
+      const line = lines[i];
+      if (/^(Total|Grand|Subtotal|GST|Remarks|INR|Rupees|Chennai|Plot|Delivery|Terms)/i.test(line)) break;
+      if (line.length < 5) continue;
+      
+      // Extract all numbers from the line
+      const allNums: { val: number; idx: number }[] = [];
+      const numRe = /(?<![.\d])([\d,]+(?:\.\d{1,2})?)(?![.\d])/g;
+      let nm: RegExpExecArray | null;
+      while ((nm = numRe.exec(line)) !== null) {
+        allNums.push({ val: toNum(nm[1]), idx: nm.index });
+      }
+      
+      if (allNums.length >= 3) {
+        // Skip first number (likely Sr No), then find qty*price=amount triplet
+        // Try from index 1 onwards
+        let found = false;
+        for (let a = 1; a < allNums.length - 2 && !found; a++) {
+          for (let b = a + 1; b < allNums.length - 1 && !found; b++) {
+            for (let c = b + 1; c < allNums.length && !found; c++) {
+              const qty = allNums[a].val;
+              const price = allNums[b].val;
+              const total = allNums[c].val;
+              if (qty > 0 && qty < 100000 && price > 0 && total > 0 && Math.abs(total - qty * price) < 1) {
+                // Get description: text between sr no and qty
+                const descEnd = allNums[a].idx;
+                let desc = line.slice(0, descEnd).replace(/^\d+\s+/, "").trim();
+                desc = desc.replace(/\s{2,}/g, " ").trim();
+                if (desc.length > 1 && !/^(Total|Subtotal)$/i.test(desc)) {
+                  // Check for tax columns after total
+                  let cgstPct = 0, cgstAmt = 0, sgstPct = 0, sgstAmt = 0;
+                  if (c + 4 < allNums.length) {
+                    cgstPct = allNums[c + 1].val;
+                    cgstAmt = allNums[c + 2].val;
+                    sgstPct = allNums[c + 3].val;
+                    sgstAmt = allNums[c + 4].val;
+                  }
+                  lineItems.push({
+                    ...emptyLineItem(),
+                    description: desc,
+                    qty,
+                    unit_price: price,
+                    base_amount: total,
+                    cgst_percent: cgstPct,
+                    cgst_amount: cgstAmt,
+                    sgst_percent: sgstPct,
+                    sgst_amount: sgstAmt,
+                    total_amount: total,
+                    suggested_product_type: mapHsnToProductType(""),
+                  });
+                  found = true;
+                }
+              }
+            }
+          }
         }
       }
     }
@@ -599,7 +661,8 @@ function tryGeneric(text: string): ParsedPOData | null {
     while ((m2 = numRe.exec(line)) !== null) nums.push(toNum(m2[1]));
     
     if (nums.length >= 3) {
-      // Try all triplets where qty * price ≈ total
+      // Find the best triplet where qty * price ≈ total (prefer largest qty)
+      let bestMatch: { qty: number; price: number; total: number } | null = null;
       for (let a = 0; a < nums.length - 2; a++) {
         for (let b = a + 1; b < nums.length - 1; b++) {
           for (let c = b + 1; c < nums.length; c++) {
@@ -607,21 +670,24 @@ function tryGeneric(text: string): ParsedPOData | null {
             const price = nums[b];
             const total = nums[c];
             if (qty > 0 && qty < 100000 && price > 0 && total > 0 && Math.abs(total - qty * price) < 1) {
-              const desc = line.replace(/[\d,]+(?:\.\d{1,2})?/g, " ").replace(/\s+/g, " ").trim().slice(0, 120);
-              if (desc.length > 2 && !/^(Total|Subtotal|Grand|Page|\d+)$/i.test(desc)) {
-                lineItems.push({
-                  ...emptyLineItem(),
-                  description: desc,
-                  qty,
-                  unit_price: price,
-                  base_amount: total,
-                  total_amount: total,
-                });
-                // Found a valid triplet, skip to next line
-                a = nums.length; b = nums.length; c = nums.length;
+              if (!bestMatch || qty > bestMatch.qty) {
+                bestMatch = { qty, price, total };
               }
             }
           }
+        }
+      }
+      if (bestMatch) {
+        const desc = line.replace(/[\d,]+(?:\.\d{1,2})?/g, " ").replace(/\s+/g, " ").trim().slice(0, 120);
+        if (desc.length > 2 && !/^(Total|Subtotal|Grand|Page|\d+)$/i.test(desc)) {
+          lineItems.push({
+            ...emptyLineItem(),
+            description: desc,
+            qty: bestMatch.qty,
+            unit_price: bestMatch.price,
+            base_amount: bestMatch.total,
+            total_amount: bestMatch.total,
+          });
         }
       }
     }
