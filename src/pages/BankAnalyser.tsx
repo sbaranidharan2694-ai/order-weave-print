@@ -561,7 +561,6 @@ export default function BankAnalyser() {
   const refreshData = useCallback(async (opts?: { silent?: boolean }) => {
     if (!opts?.silent) setLoading(true);
     try {
-      await migrateOldData();
       const stmts = await loadStatements();
       setStatements(stmts);
       const txns: Array<Record<string, unknown>> = [];
