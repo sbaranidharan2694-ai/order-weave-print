@@ -507,6 +507,36 @@ export type Database = {
           },
         ]
       }
+      payroll_employees: {
+        Row: {
+          created_at: string
+          display_name: string
+          employee_code: string
+          id: string
+          monthly_salary: number
+          updated_at: string
+          weekly_salary: number
+        }
+        Insert: {
+          created_at?: string
+          display_name: string
+          employee_code: string
+          id?: string
+          monthly_salary?: number
+          updated_at?: string
+          weekly_salary?: number
+        }
+        Update: {
+          created_at?: string
+          display_name?: string
+          employee_code?: string
+          id?: string
+          monthly_salary?: number
+          updated_at?: string
+          weekly_salary?: number
+        }
+        Relationships: []
+      }
       product_types: {
         Row: {
           created_at: string | null
