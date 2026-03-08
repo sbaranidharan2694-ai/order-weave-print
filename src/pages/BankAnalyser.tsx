@@ -1097,63 +1097,85 @@ function AccountTab({ account, onRefresh, customLookup, onUpdateLookup }) {
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [parsedPreview, setParsedPreview] = useState<{ statementId: string; data: BankStatementData } | null>(null);
   const [isParsingPreview, setIsParsingPreview] = useState(false);
-  const [reprocessing, setReprocessing] = useState(false);
+  const [repairingStatementId, setRepairingStatementId] = useState<string | null>(null);
+  const [reuploadTargetStatementId, setReuploadTargetStatementId] = useState<string | null>(null);
 
-  // Detect if statements have transaction_count > 0 but no actual transactions in DB
-  const needsReprocess = useMemo(() => {
-    return statements.some(s => (s.transactionCount ?? 0) > 0) && hookTransactions.length === 0;
-  }, [statements, hookTransactions.length]);
+  const statementTxnCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    hookTransactions.forEach((t) => {
+      const prev = m.get(t.statement_id) ?? 0;
+      m.set(t.statement_id, prev + 1);
+    });
+    return m;
+  }, [hookTransactions]);
 
-  const handleReprocessAll = useCallback(async () => {
-    setReprocessing(true);
-    let totalSaved = 0;
-    try {
-      for (const s of statements) {
-        if ((s.transactionCount ?? 0) === 0) continue;
-        // Try to get PDF from storage and re-parse
-        const url = await pdfStorage.retrieve(s.id);
-        if (!url) {
-          console.warn(`[Reprocess] No PDF in storage for statement ${s.id} (${s.fileName})`);
-          toast.error(`Cannot reprocess ${s.fileName} — PDF not in storage. Please re-upload.`);
-          continue;
-        }
-        toast.loading(`Reprocessing ${s.fileName}…`, { id: `reprocess-${s.id}` });
-        try {
-          const { text } = await extractTextFromPdf(url);
-          if (!text || text.trim().length < 30) {
-            toast.error(`No text in ${s.fileName}`, { id: `reprocess-${s.id}` });
-            continue;
-          }
-          const data = parseBankStatement(text);
-          if (data.transactions.length === 0) {
-            toast.error(`No transactions parsed from ${s.fileName}`, { id: `reprocess-${s.id}` });
-            continue;
-          }
-          const accountKey = account.key;
-          const { transactions: txns } = mapBankStatementDataToStatementAndTransactions(data, s.id, accountKey, s.fileName);
-          console.log(`[Reprocess] Inserting ${txns.length} transactions for statement ${s.id}`);
-          await saveTransactionsBatch(txns);
-          totalSaved += txns.length;
-          toast.success(`Reprocessed ${s.fileName}: ${txns.length} transactions saved`, { id: `reprocess-${s.id}` });
-        } catch (err) {
-          console.error(`[Reprocess] Error for ${s.fileName}:`, err);
-          toast.error(`Failed to reprocess ${s.fileName}: ${toErrorMessage(err)}`, { id: `reprocess-${s.id}` });
-        }
-      }
-      if (totalSaved > 0) {
-        toast.success(`Reprocess complete: ${totalSaved} total transactions saved`);
-        await refetch();
-        await onRefresh();
-      }
-    } catch (err) {
-      toast.error(`Reprocess failed: ${toErrorMessage(err)}`);
-    } finally {
-      setReprocessing(false);
-    }
-  }, [statements, account.key, refetch, onRefresh]);
+  const missingTxStatements = useMemo(
+    () => statements.filter((s) => (s.transactionCount ?? 0) > 0 && (statementTxnCounts.get(s.id) ?? 0) === 0),
+    [statements, statementTxnCounts],
+  );
 
   const fileInputRef = useRef(null);
   const dropRef = useRef(null);
+  const reuploadInputRef = useRef<HTMLInputElement | null>(null);
+
+  const handleReuploadStatement = useCallback(
+    async (statementId: string, file: File) => {
+      const target = statements.find((s) => s.id === statementId);
+      if (!target) {
+        toast.error("Statement not found");
+        return;
+      }
+
+      setRepairingStatementId(statementId);
+      toast.loading(`Re-uploading ${target.fileName}…`, { id: `repair-${statementId}` });
+
+      try {
+        const result = await parseDocument(file, "bank_statement");
+        if (!result.success || !result.data) {
+          throw new Error(typeof result.error === "string" ? result.error : "Failed to parse PDF");
+        }
+
+        const parsed = result.data as BankStatementData;
+        const accountKey = target.accountKey || account.key;
+        const { transactions: txns } = mapBankStatementDataToStatementAndTransactions(parsed, statementId, accountKey, target.fileName);
+
+        if (txns.length === 0) {
+          throw new Error("No transactions found in uploaded PDF");
+        }
+
+        // Statement already exists; only refill transactions.
+        await deleteTransactionsByStatement(statementId);
+        await saveTransactionsBatch(txns);
+        await updateStatementTransactionCount(statementId, txns.length);
+
+        toast.success(`Recovered ${txns.length} transactions for ${target.fileName}`, { id: `repair-${statementId}` });
+        await refetch();
+        await onRefresh();
+      } catch (err) {
+        toast.error(toErrorMessage(err), { id: `repair-${statementId}` });
+      } finally {
+        setRepairingStatementId(null);
+      }
+    },
+    [statements, account.key, refetch, onRefresh],
+  );
+
+  const openReuploadPicker = useCallback((statementId: string) => {
+    setReuploadTargetStatementId(statementId);
+    reuploadInputRef.current?.click();
+  }, []);
+
+  const handleReuploadInput = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      const statementId = reuploadTargetStatementId;
+      e.target.value = "";
+      if (!file || !statementId) return;
+      void handleReuploadStatement(statementId, file);
+      setReuploadTargetStatementId(null);
+    },
+    [reuploadTargetStatementId, handleReuploadStatement],
+  );
 
   const transactions = useMemo(
     () =>
