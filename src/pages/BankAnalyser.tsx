@@ -158,7 +158,7 @@ function detectAccount(text) {
   const t = text.toUpperCase();
   if (t.includes("REVATHY BHARANIDHARAN") || t.includes("0244011477662")) return "revathy";
   if (t.includes("SUPER SCREENS") || t.includes("0244020080155")) return "superscreens";
-  if (t.includes("SUPER PRINTERS")) return "superprinters";
+  if (t.includes("SUPER PRINTERS") || t.includes("0244020077280")) return "superprinters";
   return null;
 }
 
