@@ -60,6 +60,29 @@ function SetupRequired() {
 
 const queryClient = new QueryClient();
 
+function AppContent() {
+  return (
+    <AppLayout>
+      <Suspense fallback={<PageLoader />}>
+        <Routes>
+          <Route path="/" element={<Dashboard />} />
+          <Route path="/orders" element={<OrderHistory />} />
+          <Route path="/orders/new" element={<NewOrder />} />
+          <Route path="/orders/:id" element={<OrderDetail />} />
+          <Route path="/orders/:id/edit" element={<EditOrder />} />
+          <Route path="/import-po" element={<ImportPO />} />
+          <Route path="/bank-analyser" element={<BankAnalyser />} />
+          <Route path="/attendance" element={<Attendance />} />
+          <Route path="/customers" element={<Customers />} />
+          <Route path="/customers/:id" element={<CustomerDetail />} />
+          <Route path="/settings" element={<SettingsPage />} />
+          <Route path="*" element={<NotFound />} />
+        </Routes>
+      </Suspense>
+    </AppLayout>
+  );
+}
+
 const App = () => (
   <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false}>
     <QueryClientProvider client={queryClient}>
@@ -70,29 +93,7 @@ const App = () => (
           <SetupRequired />
         ) : (
           <BrowserRouter>
-            <Routes>
-              <Route element={<AppLayout><Suspense fallback={<PageLoader />}><></></Suspense></AppLayout>}>
-                {/* Dummy parent — we use AppLayout differently */}
-              </Route>
-            </Routes>
-            <AppLayout>
-              <Suspense fallback={<PageLoader />}>
-                <Routes>
-                  <Route path="/" element={<Dashboard />} />
-                  <Route path="/orders" element={<OrderHistory />} />
-                  <Route path="/orders/new" element={<NewOrder />} />
-                  <Route path="/orders/:id" element={<OrderDetail />} />
-                  <Route path="/orders/:id/edit" element={<EditOrder />} />
-                  <Route path="/import-po" element={<ImportPO />} />
-                  <Route path="/bank-analyser" element={<BankAnalyser />} />
-                  <Route path="/attendance" element={<Attendance />} />
-                  <Route path="/customers" element={<Customers />} />
-                  <Route path="/customers/:id" element={<CustomerDetail />} />
-                  <Route path="/settings" element={<SettingsPage />} />
-                  <Route path="*" element={<NotFound />} />
-                </Routes>
-              </Suspense>
-            </AppLayout>
+            <AppContent />
           </BrowserRouter>
         )}
       </TooltipProvider>
