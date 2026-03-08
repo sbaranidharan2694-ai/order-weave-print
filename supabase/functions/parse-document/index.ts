@@ -72,9 +72,9 @@ serve(async (req: Request) => {
   }
 
   try {
-    const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
-    if (!GEMINI_API_KEY) {
-      throw new Error("GEMINI_API_KEY not set");
+    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+    if (!LOVABLE_API_KEY) {
+      throw new Error("LOVABLE_API_KEY not set");
     }
 
     const body = await req.json();
@@ -112,40 +112,41 @@ serve(async (req: Request) => {
       ) {
         mode = "purchase_order";
       } else {
-        mode = "bank_statement"; // default
+        mode = "bank_statement";
       }
     }
 
     const prompt = mode === "bank_statement" ? bankStatementPrompt : purchaseOrderPrompt;
 
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [
-            {
-              parts: [
-                { text: prompt + "\n\nParse this document:\n\n" + pdfText },
-              ],
-            },
-          ],
-          generationConfig: {
-            temperature: 0.1,
-            maxOutputTokens: 8192,
-          },
-        }),
-      }
-    );
+    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${LOVABLE_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "google/gemini-2.5-flash",
+        messages: [
+          { role: "system", content: prompt },
+          { role: "user", content: "Parse this document:\n\n" + pdfText },
+        ],
+        stream: false,
+      }),
+    });
 
     if (!response.ok) {
       const errText = await response.text();
-      console.error("Gemini API error:", response.status, errText);
+      console.error("Lovable AI gateway error:", response.status, errText);
       if (response.status === 429) {
         return new Response(
           JSON.stringify({ error: "Rate limit exceeded, please try again later." }),
           { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      if (response.status === 402) {
+        return new Response(
+          JSON.stringify({ error: "AI credits exhausted. Please add funds to your Lovable workspace." }),
+          { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
       return new Response(
@@ -155,8 +156,7 @@ serve(async (req: Request) => {
     }
 
     const data = await response.json();
-    const rawText =
-      data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+    const rawText = data?.choices?.[0]?.message?.content ?? "";
 
     const cleanText = rawText
       .replace(/```json\s*/gi, "")
@@ -167,7 +167,7 @@ serve(async (req: Request) => {
     try {
       parsed = JSON.parse(cleanText);
     } catch {
-      console.error("Failed to parse Gemini response:", rawText.substring(0, 500));
+      console.error("Failed to parse AI response:", rawText.substring(0, 500));
       throw new Error("Could not parse AI response as JSON");
     }
 
