@@ -154,17 +154,30 @@ export default function ImportPO() {
     setParsing(true);
     try {
       const isExcel = file.name.toLowerCase().endsWith(".xlsx");
-      const { text: rawText } = isExcel
-        ? await extractTextFromExcel(file)
-        : await extractTextFromPdf(file);
+      let rawText: string;
+      try {
+        const result = isExcel
+          ? await extractTextFromExcel(file)
+          : await extractTextFromPdf(file);
+        rawText = result.text;
+        console.log("[ImportPO] Extracted text length:", rawText?.length, "First 200 chars:", rawText?.slice(0, 200));
+      } catch (extractErr) {
+        console.error("[ImportPO] Text extraction failed:", extractErr);
+        toast.error("Failed to extract text from file: " + (extractErr instanceof Error ? extractErr.message : String(extractErr)));
+        setParsing(false);
+        return;
+      }
       if (!rawText || rawText.trim().length < 30) {
+        console.warn("[ImportPO] Text too short:", rawText?.length);
         toast.error(isExcel ? "Could not extract data from Excel file." : "Could not extract text from PDF. File may be scanned/image-based.");
         setParsing(false);
         return;
       }
 
       // Send extracted text to AI edge function for parsing
+      console.log("[ImportPO] Calling parse-po edge function with", rawText.length, "chars");
       const { data: aiResult, error: aiError } = await invokeEdgeFunction<{ success: boolean; data: any }>("parse-po", { pdfText: rawText });
+      console.log("[ImportPO] Edge function response:", { aiResult, aiError });
 
       if (aiError) {
         toast.error("AI parsing failed: " + aiError);
@@ -174,6 +187,7 @@ export default function ImportPO() {
 
       const parsedData = aiResult?.data;
       if (!parsedData || !parsedData.line_items?.length) {
+        console.warn("[ImportPO] No line items in parsed data:", parsedData);
         toast.error("Could not parse line items from this file. Try Manual PO Entry tab.");
         setParsing(false);
         return;
