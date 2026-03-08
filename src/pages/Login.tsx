@@ -21,13 +21,10 @@ export default function Login() {
     }
     setLoading(true);
     try {
-      console.log("Attempting login...");
       const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-      console.log("Supabase response:", data, error);
       if (error) throw error;
 
       const session = data?.session ?? (await supabase.auth.getSession()).data.session;
-      console.log("Session after login:", session);
       if (!session) throw new Error("Login succeeded but no session was returned.");
 
       toast.success("Welcome back!");
