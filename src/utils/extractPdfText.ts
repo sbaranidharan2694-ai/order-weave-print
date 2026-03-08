@@ -84,11 +84,71 @@ export async function extractTextFromPdf(
     pageTexts.push(lines.join("\n"));
   }
 
+  let finalText = pageTexts.join("\n\n").trim();
+  let usedOcr = false;
+
+  if (finalText.length < 50) {
+    try {
+      const ocrTexts = await extractTextWithOcr(pdf);
+      const ocrCombined = ocrTexts.join("\n\n").trim();
+      if (ocrCombined.length > finalText.length) {
+        finalText = ocrCombined;
+        usedOcr = true;
+      }
+    } catch (ocrErr) {
+      console.warn("OCR fallback failed:", ocrErr);
+    }
+  }
+
   return {
-    text: pageTexts.join("\n\n"),
+    text: finalText,
     pageCount: pdf.numPages,
     isPasswordProtected: !!password,
+    usedOcr,
   };
+}
+
+async function extractTextWithOcr(pdf: pdfjsLib.PDFDocumentProxy): Promise<string[]> {
+  if (typeof document === "undefined") return [];
+
+  const { recognize } = await import("tesseract.js");
+  const pages = Math.min(pdf.numPages, 12);
+  const out: string[] = [];
+
+  for (let pageNum = 1; pageNum <= pages; pageNum++) {
+    const page = await pdf.getPage(pageNum);
+    const viewport = page.getViewport({ scale: 2 });
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+
+    if (!ctx) continue;
+
+    canvas.width = Math.max(1, Math.floor(viewport.width));
+    canvas.height = Math.max(1, Math.floor(viewport.height));
+
+    await page.render({ canvasContext: ctx, viewport }).promise;
+
+    const result = await recognize(canvas, "eng");
+    const cleaned = normalizeOcrText(result.data?.text ?? "");
+    if (cleaned.length > 0) out.push(cleaned);
+
+    (page as { cleanup?: () => void }).cleanup?.();
+    canvas.width = 0;
+    canvas.height = 0;
+  }
+
+  return out;
+}
+
+function normalizeOcrText(text: string): string {
+  return text
+    .replace(/[|]/g, " ")
+    .replace(/[\t\f\v]+/g, " ")
+    .replace(/\r/g, "\n")
+    .replace(/\u00A0/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/[ ]{2,}/g, " ")
+    .trim();
 }
 
 /** Fix ALL CAPS words split mid-word (e.g. "PA CKAGINGS" -> "PACKAGINGS"). */
