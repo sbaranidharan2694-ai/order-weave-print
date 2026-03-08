@@ -808,6 +808,9 @@ function OverviewTab({
       if (!assignedTab) {
         throw new Error(`Unknown account: ${parsed.accountNumber ?? "—"}. Add to ACCOUNT_TAB_MAP if needed.`);
       }
+      if (hasSummaryWithoutRows(parsed)) {
+        throw new Error("Could not parse transaction rows from this PDF yet. I’ve updated the parser—please re-upload once.");
+      }
       setUploads(prev => prev.map(u => u.id === entry.id ? { ...u, status: "done", data: parsed, assignedTab } : u));
       toast.success(`${parsed.accountHolder} — ${parsed.transactions.length} txns | ₹${parsed.closingBalance.toLocaleString("en-IN")} closing`);
       await onSaveParsedStatement(assignedTab, parsed, entry.file);
