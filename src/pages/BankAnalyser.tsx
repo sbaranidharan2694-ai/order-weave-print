@@ -610,6 +610,11 @@ export default function BankAnalyser() {
     await saveStatement(newStmt);
     try {
       await saveTransactionsBatch(txns);
+      const savedTxns = await loadTransactions(finalStmtId);
+      if (savedTxns.length !== txns.length) {
+        console.warn("[BankAnalyser] Transaction count mismatch: saved " + savedTxns.length + ", expected " + txns.length);
+        toast.warning("Saved " + savedTxns.length + " of " + txns.length + " transactions. Check Supabase bank_transactions.");
+      }
     } catch (err) {
       toast.error(toErrorMessage(err));
       throw err;
@@ -1310,8 +1315,8 @@ function AccountTab({ account, onRefresh, customLookup, onUpdateLookup }) {
           continue;
         }
 
-        // Parse PDF with Gemini AI
-        setQueue(prev => prev.map((p, i) => i === qi ? { ...p, progress: "Parsing PDF with AI…" } : p));
+        // Parse PDF with built-in parser
+        setQueue(prev => prev.map((p, i) => i === qi ? { ...p, progress: "Parsing PDF…" } : p));
         let data: BankStatementData;
         try {
           const aiResult = await parseBankStatementWithAI(item.file);
@@ -1452,7 +1457,7 @@ function AccountTab({ account, onRefresh, customLookup, onUpdateLookup }) {
         toast.error("PDF not found in storage");
         return;
       }
-      toast.loading("Parsing PDF with AI…", { id: "parse-pdf" });
+      toast.loading("Parsing PDF…", { id: "parse-pdf" });
       const { data, pageCount } = await parseBankStatementWithAI(url);
       setParsedPreview({ statementId, data });
       toast.success(

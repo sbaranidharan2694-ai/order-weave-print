@@ -105,9 +105,9 @@ export function useAccountTransactions(accountIdentifier: string) {
       const txns = (txRows ?? []) as Transaction[];
       setTransactions(txns);
 
-      const totalCredits = stmts.reduce((s, r) => s + (Number(r.total_credits) ?? 0), 0);
-      const totalDebits = stmts.reduce((s, r) => s + (Number(r.total_debits) ?? 0), 0);
-      const transactionCountFromMetadata = stmts.reduce((s, r) => s + (Number(r.transaction_count) ?? 0), 0);
+      const totalCredits = stmts.reduce((s, r) => s + (Number(r.total_credits) || 0), 0);
+      const totalDebits = stmts.reduce((s, r) => s + (Number(r.total_debits) || 0), 0);
+      const transactionCountFromMetadata = stmts.reduce((s, r) => s + (Number(r.transaction_count) || 0), 0);
 
       setSummary({
         totalCredits,

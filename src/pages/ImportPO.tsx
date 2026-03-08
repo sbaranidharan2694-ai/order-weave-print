@@ -9,7 +9,7 @@ import { useProductTypes } from "@/hooks/useProductTypes";
 import { useCreatePurchaseOrder, useCreatePOLineItems } from "@/hooks/usePurchaseOrders";
 import { useCreateOrder } from "@/hooks/useOrders";
 import { supabase } from "@/integrations/supabase/client";
-import { invokeEdgeFunction } from "@/utils/invokeEdgeFunction";
+import { parsePOText } from "@/utils/parsePOText";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import { Upload, Loader2, FileText, Trash2, CheckCircle2, X, PlusCircle, AlertTriangle } from "lucide-react";
@@ -152,56 +152,44 @@ export default function ImportPO() {
     if (!file) return;
     setParsing(true);
     try {
-      // Step 1: Extract text client-side
       const { text: pdfText } = await extractTextFromPdf(file);
       if (!pdfText || pdfText.trim().length < 30) {
         toast.error("Could not extract text from PDF. File may be scanned/image-based.");
         return;
       }
 
-      // Step 2: Send to AI edge function for structured parsing
-      const { data: result, error: invokeError } = await invokeEdgeFunction<{ success?: boolean; data?: unknown; error?: string }>("parse-po", {
-        pdfText,
-      });
-
-      if (invokeError) {
-        toast.error("Parsing failed: " + invokeError);
+      const parsed = parsePOText(pdfText);
+      if (!parsed.line_items?.length) {
+        toast.error("Could not parse line items from this PDF. Try Manual PO Entry or use a supported format (Fujitec, Guindy, Contemporary).");
         return;
       }
 
-      if (!result?.success || !result?.data) {
-        const msg = (result as { error?: string })?.error || "AI parsing returned no data";
-        toast.error(msg);
-        return;
-      }
-
-      const d = result.data as Record<string, unknown>;
       const poData: ParsedPO = {
-        po_number: d.po_number || "",
-        po_date: d.po_date || null,
-        vendor_name: d.vendor_name || "",
-        contact_no: d.contact_no || null,
-        contact_person: d.contact_person || null,
-        contact_email: d.contact_email || null,
-        gstin: d.gstin || null,
-        vendor_gstin: d.vendor_gstin || null,
-        delivery_address: d.delivery_address || d.buyer_address || null,
-        buyer_address: d.buyer_address || null,
-        delivery_date: d.delivery_date || null,
-        payment_terms: d.payment_terms || null,
-        currency: d.currency || "INR",
-        gst_extra: d.gst_extra || false,
-        total_amount: d.total_amount || 0,
-        tax_amount: d.tax_amount || 0,
-        base_amount: d.base_amount || 0,
-        cgst_percent: d.cgst_percent || 0,
-        cgst_amount: d.cgst_amount || 0,
-        sgst_percent: d.sgst_percent || 0,
-        sgst_amount: d.sgst_amount || 0,
-        igst_percent: d.igst_percent || 0,
-        igst_amount: d.igst_amount || 0,
-        remarks: d.remarks || null,
-        line_items: (d.line_items || []).map((li: any) => {
+        po_number: parsed.po_number || "",
+        po_date: parsed.po_date ?? null,
+        vendor_name: parsed.vendor_name || "",
+        contact_no: parsed.contact_no ?? null,
+        contact_person: parsed.contact_person ?? null,
+        contact_email: parsed.contact_email ?? null,
+        gstin: parsed.gstin ?? null,
+        vendor_gstin: parsed.vendor_gstin ?? null,
+        delivery_address: parsed.delivery_address ?? parsed.buyer_address ?? null,
+        buyer_address: parsed.buyer_address ?? null,
+        delivery_date: parsed.delivery_date ?? null,
+        payment_terms: parsed.payment_terms ?? null,
+        currency: parsed.currency || "INR",
+        gst_extra: parsed.gst_extra ?? false,
+        total_amount: parsed.total_amount ?? 0,
+        tax_amount: parsed.tax_amount ?? 0,
+        base_amount: parsed.base_amount ?? 0,
+        cgst_percent: parsed.cgst_percent ?? 0,
+        cgst_amount: parsed.cgst_amount ?? 0,
+        sgst_percent: parsed.sgst_percent ?? 0,
+        sgst_amount: parsed.sgst_amount ?? 0,
+        igst_percent: parsed.igst_percent ?? 0,
+        igst_amount: parsed.igst_amount ?? 0,
+        remarks: parsed.remarks ?? null,
+        line_items: parsed.line_items.map((li) => {
           const matched = productTypes.find(
             (pt) =>
               pt.name.toLowerCase() === (li.suggested_product_type || "").toLowerCase() ||
@@ -231,7 +219,7 @@ export default function ImportPO() {
       setParsed(poData);
       setLineItems(poData.line_items);
       setEditHeader({});
-      toast.success("PO parsed successfully!");
+      toast.success("PO parsed successfully (built-in parser).");
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       toast.error("Parsing failed: " + msg);
@@ -422,6 +410,12 @@ export default function ImportPO() {
         return;
       }
 
+      if (!Array.isArray(lineItemRecords) || lineItemRecords.length !== lineItems.length) {
+        toast.error("Database did not save all line items. Expected " + lineItems.length + ", got " + (lineItemRecords?.length ?? 0) + ". Check Supabase.");
+        setCreating(false);
+        return;
+      }
+
       const orderNos: string[] = [];
       for (let i = 0; i < lineItems.length; i++) {
         const li = lineItems[i];
@@ -431,6 +425,7 @@ export default function ImportPO() {
           contact_no: contactNo || "0000000000",
           email: contactEmail || null,
           source: "purchase_order" as any,
+          status: "Order Received" as any,
           product_type: pt?.name || li.suggested_product_type || "Other",
           quantity: li.qty,
           size: pt?.default_size || "",
@@ -614,13 +609,13 @@ export default function ImportPO() {
                         <X className="h-4 w-4" />
                       </Button>
                       <Button onClick={handleParse} disabled={parsing} size="sm">
-                        {parsing ? <><Loader2 className="h-4 w-4 mr-1 animate-spin" />AI Parsing...</> : "Upload & Parse PO"}
+                        {parsing ? <><Loader2 className="h-4 w-4 mr-1 animate-spin" />Parsing...</> : "Upload & Parse PO"}
                       </Button>
                     </div>
                   </div>
                 )}
                 <p className="text-xs text-muted-foreground mt-3">
-                  PDF text is extracted in-browser, then parsed by AI. If parsing fails, use "Manual PO Entry" tab.
+                  PDF text is extracted in-browser and parsed with built-in rules (Fujitec, Guindy, Contemporary). If parsing fails, use "Manual PO Entry" tab.
                 </p>
               </CardContent>
             </Card>

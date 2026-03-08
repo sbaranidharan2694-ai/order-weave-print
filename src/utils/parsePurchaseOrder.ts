@@ -44,7 +44,7 @@ export function parsePurchaseOrder(text: string): PurchaseOrderData {
   );
   const poNumber = poMatch?.[1] || "";
 
-  const dateMatch = fullText.match(/Dt[:\s.]+(\d{2}[.\/-]\d{2}[.\/-]\d{4})/i);
+  const dateMatch = fullText.match(/Dt[:\s.]+(\d{2}[./-]\d{2}[./-]\d{4})/i);
   const poDate = dateMatch?.[1] || "";
 
   const gstMatch = fullText.match(/GST\s+No[:\s]+([A-Z0-9]{15})/i);
@@ -59,7 +59,7 @@ export function parsePurchaseOrder(text: string): PurchaseOrderData {
   const orderHandledBy = handledByMatch?.[1]?.trim() || "";
 
   const emailMatch = fullText.match(
-    /Email\s*:\s*([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})/i
+    /Email\s*:\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/i
   );
   const orderHandlerEmail = emailMatch?.[1] || "";
 

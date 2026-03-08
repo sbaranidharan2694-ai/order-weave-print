@@ -101,14 +101,14 @@ function transactionToRow(txn: BankTransaction): Database["public"]["Tables"]["b
   return {
     id: txn.id,
     statement_id: txn.statementId,
-    date: txn.date,
-    details: txn.details || null,
-    ref_no: txn.refNo || null,
+    date: (txn.date && String(txn.date).trim()) ? txn.date : new Date().toISOString().slice(0, 10),
+    details: txn.details ?? null,
+    ref_no: txn.refNo ?? null,
     debit: Number(txn.debit) || 0,
     credit: Number(txn.credit) || 0,
     balance: Number(txn.balance) || 0,
-    type: txn.type || null,
-    counterparty: txn.counterparty || null,
+    type: txn.type ?? null,
+    counterparty: txn.counterparty ?? null,
   };
 }
 

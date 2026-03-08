@@ -132,7 +132,7 @@ const extractTool = {
 
 /** Try to extract JSON from a raw AI text response (fallback) */
 function extractJsonFromText(raw: string): Record<string, unknown> | null {
-  let clean = raw.replace(/```(?:json)?\s*/gi, "").replace(/```\s*/g, "").trim();
+  const clean = raw.replace(/```(?:json)?\s*/gi, "").replace(/```\s*/g, "").trim();
   try {
     return JSON.parse(clean);
   } catch {

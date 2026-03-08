@@ -56,7 +56,7 @@ export async function parseDocument(
   }
 
   try {
-    // For bank statements, use AI parsing
+    // For bank statements, use built-in parser
     if (forceMode === "bank_statement" || !forceMode) {
       try {
         const { data, pageCount } = await parseBankStatementWithAI(file);

@@ -198,7 +198,8 @@ export function TransactionTable({
                   onClick={() =>
                     setExpandedParties((prev) => {
                       const next = new Set(prev);
-                      isOpen ? next.delete(party) : next.add(party);
+                      if (isOpen) next.delete(party);
+                      else next.add(party);
                       return next;
                     })
                   }
