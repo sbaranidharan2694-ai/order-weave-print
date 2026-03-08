@@ -45,8 +45,6 @@ import {
   updateStatementTransactionCount,
   updateStatementLastValidated,
 } from "@/lib/bankStorage";
-import { useStorageMode } from "@/hooks/useStorageMode";
-import { SharedDataBanner } from "@/components/SharedDataBanner";
 import { friendlyDbError } from "@/lib/utils";
 import { parseDocument, type BankStatementData } from "@/utils/parseDocument";
 import { extractTextFromPdf } from "@/utils/extractPdfText";
@@ -546,7 +544,6 @@ const PIE_COLORS = ["#3B82F6", "#10B981", "#8B5CF6", "#F59E0B", "#EF4444", "#6B7
 
 /* ═══════════ COMPONENT ═══════════ */
 export default function BankAnalyser() {
-  const storageMode = useStorageMode();
   const [activeTab, setActiveTab] = useState("overview");
   const [loading, setLoading] = useState(true);
   const [statements, setStatements] = useState([]);
@@ -564,7 +561,6 @@ export default function BankAnalyser() {
   const refreshData = useCallback(async (opts?: { silent?: boolean }) => {
     if (!opts?.silent) setLoading(true);
     try {
-      await migrateOldData();
       const stmts = await loadStatements();
       setStatements(stmts);
       const txns: Array<Record<string, unknown>> = [];
@@ -670,7 +666,6 @@ export default function BankAnalyser() {
 
   return (
     <div className="space-y-4 print:space-y-4">
-      <SharedDataBanner useLocalStorage={storageMode.bank === "local"} feature="Bank Analyser" />
       <div className="flex items-center justify-between gap-2 print:hidden">
         <div className="flex items-center gap-2">
           <Building2 className="h-6 w-6 text-secondary" />
@@ -1075,7 +1070,7 @@ function OverviewTab({
       )}
 
       <p className="text-xs text-muted-foreground text-center">
-        🔒 Passwords never stored. All processing in-browser. Statements and transactions are saved permanently to your Supabase database when the Bank Analyser tables are set up; otherwise saved locally. PDFs stay on this device only.
+        🔒 Passwords never stored. All processing in-browser. Statements, transactions, and PDFs are stored in the cloud — accessible from any device.
       </p>
     </div>
   );
