@@ -49,6 +49,7 @@ export type AttendanceParsedData =
   | DetailedReportParsedData
   | {
       month_year: string;
+      source_type?: string;
       employees: AttendanceEmployee[];
       totalDays?: number;
     };
