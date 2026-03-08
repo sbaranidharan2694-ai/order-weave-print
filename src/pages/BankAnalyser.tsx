@@ -544,7 +544,6 @@ const PIE_COLORS = ["#3B82F6", "#10B981", "#8B5CF6", "#F59E0B", "#EF4444", "#6B7
 
 /* ═══════════ COMPONENT ═══════════ */
 export default function BankAnalyser() {
-  const storageMode = useStorageMode();
   const [activeTab, setActiveTab] = useState("overview");
   const [loading, setLoading] = useState(true);
   const [statements, setStatements] = useState([]);
