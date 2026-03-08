@@ -1116,7 +1116,6 @@ function AccountTab({ account, onRefresh, customLookup, onUpdateLookup }) {
 
   const fileInputRef = useRef(null);
   const dropRef = useRef(null);
-  const reuploadInputRef = useRef<HTMLInputElement | null>(null);
 
   const handleReuploadStatement = useCallback(
     async (statementId: string, file: File) => {
@@ -1162,20 +1161,8 @@ function AccountTab({ account, onRefresh, customLookup, onUpdateLookup }) {
 
   const openReuploadPicker = useCallback((statementId: string) => {
     setReuploadTargetStatementId(statementId);
-    reuploadInputRef.current?.click();
+    fileInputRef.current?.click();
   }, []);
-
-  const handleReuploadInput = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      const statementId = reuploadTargetStatementId;
-      e.target.value = "";
-      if (!file || !statementId) return;
-      void handleReuploadStatement(statementId, file);
-      setReuploadTargetStatementId(null);
-    },
-    [reuploadTargetStatementId, handleReuploadStatement],
-  );
 
   const transactions = useMemo(
     () =>
