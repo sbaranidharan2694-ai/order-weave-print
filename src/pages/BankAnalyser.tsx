@@ -34,6 +34,7 @@ import {
   saveTransaction,
   saveTransactionsBatch,
   deleteStatement as deleteStatementStorage,
+  deleteTransactionsByStatement,
   loadCustomLookup,
   saveCustomLookup,
   getStatement,
