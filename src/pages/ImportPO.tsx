@@ -10,6 +10,7 @@ import { useCreatePurchaseOrder, useCreatePOLineItems } from "@/hooks/usePurchas
 import { useCreateOrder } from "@/hooks/useOrders";
 import { supabase } from "@/integrations/supabase/client";
 import { parsePOText } from "@/utils/parsePOText";
+import { invokeEdgeFunction } from "@/utils/invokeEdgeFunction";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import { Upload, Loader2, FileText, Trash2, CheckCircle2, X, PlusCircle, AlertTriangle } from "lucide-react";
@@ -174,10 +175,27 @@ export default function ImportPO() {
         return;
       }
 
-      // Parse with built-in rule-based parser (no AI)
-      const parsedData = parsePOText(rawText);
+      const { data: aiResult, error: aiError } = await invokeEdgeFunction<{
+        success?: boolean;
+        data?: Partial<ParsedPO>;
+      }>("parse-po", { pdfText: rawText });
+
+      if (aiError) {
+        console.warn("[ImportPO] AI parser error, falling back to rule parser:", aiError);
+      }
+
+      const aiParsedData = aiResult?.data;
+      const parsedData =
+        aiParsedData && Array.isArray(aiParsedData.line_items) && aiParsedData.line_items.length > 0
+          ? aiParsedData
+          : parsePOText(rawText);
+
       if (!parsedData.line_items?.length) {
-        console.warn("[ImportPO] No line items parsed:", parsedData);
+        console.warn("[ImportPO] No line items parsed after AI + fallback:", {
+          aiResult,
+          aiError,
+          fallback: parsedData,
+        });
         toast.error("Could not parse line items from this file. Try Manual PO Entry or use a supported format (Fujitec, Guindy, Contemporary, Wipro, CGRD Chemicals).");
         setParsing(false);
         return;

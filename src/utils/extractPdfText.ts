@@ -55,7 +55,7 @@ export async function extractTextFromPdf(
   let finalText = pageTexts.join("\n\n").trim();
   let usedOcr = false;
 
-  if (finalText.length < 50) {
+  if (shouldRunOcrFallback(finalText, pdf.numPages)) {
     try {
       const ocrTexts = await extractTextWithOcr(pdf);
       const ocrCombined = ocrTexts.join("\n\n").trim();
@@ -162,6 +162,22 @@ async function extractTextWithOcr(pdf: pdfjsLib.PDFDocumentProxy): Promise<strin
   }
 
   return out;
+}
+
+function shouldRunOcrFallback(text: string, pageCount: number): boolean {
+  const trimmed = text.trim();
+  if (trimmed.length < 80) return true;
+
+  const hasTableSignals = /(s\.?\s*no|sl\.?\s*no|description|qty|quantity|uom|unit\s*price|amount|hsn|cgst|sgst|igst)/i.test(trimmed);
+  const amountCount = (trimmed.match(/\b\d{2,}(?:\.\d{2})\b/g) ?? []).length;
+  const lineCount = trimmed.split(/\n+/).length;
+  const minAmountSignals = Math.min(8, Math.max(4, pageCount * 2));
+
+  if (!hasTableSignals) return true;
+  if (amountCount < minAmountSignals) return true;
+  if (lineCount < Math.max(10, pageCount * 5)) return true;
+
+  return false;
 }
 
 function normalizeOcrText(text: string): string {
