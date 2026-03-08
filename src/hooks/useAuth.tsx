@@ -21,15 +21,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // IMPORTANT: Set up auth state listener FIRST before getting initial session
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (_event, session) => {
-        setSession(session);
+      (event, currentSession) => {
+        console.log("[Auth] State change:", event, currentSession?.user?.email);
+        setSession(currentSession);
         setLoading(false);
       }
     );
 
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
+    // Then get the initial session
+    supabase.auth.getSession().then(({ data: { session: initialSession } }) => {
+      console.log("[Auth] Initial session:", initialSession?.user?.email);
+      // Only set if no session yet (avoid overwriting auth state change)
+      setSession((prev) => prev ?? initialSession);
       setLoading(false);
     });
 
