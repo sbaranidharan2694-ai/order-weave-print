@@ -1063,7 +1063,7 @@ function AccountTab({ account, onRefresh, customLookup, onUpdateLookup }) {
       hookStatements.map((s) => ({
         id: s.id,
         fileName: s.file_name ?? "Statement",
-        uploadedAt: s.uploaded_at ?? s.created_at ?? "",
+        uploadedAt: s.created_at ?? "",
         periodStart: s.period_start ?? "",
         periodEnd: s.period_end ?? "",
         period: s.period ?? (s.period_start && s.period_end ? `${s.period_start} – ${s.period_end}` : ""),
