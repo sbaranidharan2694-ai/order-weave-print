@@ -66,7 +66,9 @@ function normalizeAccountNumber(raw: string): string {
 
 function normalizeDateToken(raw: string): string {
   const s = raw.trim().replace(/[\s/]+/g, "-");
-  const m = s.match(/^(\d{1,2})-([A-Za-z]{3}|\d{1,2})-(\d{4})$/);
+  // Handle DD-MONYYYY (no separator between month and year) → DD-MON-YYYY
+  const fixed = s.replace(/^(\d{1,2})-([A-Za-z]{3})(\d{4})$/, "$1-$2-$3");
+  const m = fixed.match(/^(\d{1,2})-([A-Za-z]{3}|\d{1,2})-(\d{4})$/);
   if (!m) return raw.trim();
   const [, d, mon, y] = m;
   if (/^\d{1,2}$/.test(mon)) return `${d.padStart(2, "0")}-${mon.padStart(2, "0")}-${y}`;
