@@ -39,5 +39,23 @@ jobs:
       - name: Link project
         run: supabase link --project-ref "${{ secrets.SUPABASE_PROJECT_REF }}"
 
+      - name: Repair known baseline migration timestamp drift
+        run: |
+          set -e
+          for version in \
+            20260308072041 \
+            20260308072127 \
+            20260308090920 \
+            20260308092530 \
+            20260308092928 \
+            20260308093008 \
+            20260308094329 \
+            20260308103054 \
+            20260308105337 \
+            20260308105730 \
+            20260308132745; do
+            supabase migration repair "$version" --status applied || true
+          done
+
       - name: Push migrations
         run: supabase db push
