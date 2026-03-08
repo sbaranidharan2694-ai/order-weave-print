@@ -1832,7 +1832,20 @@ function AccountTab({ account, onRefresh, customLookup, onUpdateLookup }) {
           />
         </>
       )}
-      {hookTransactions.length === 0 && (
+      {hookTransactions.length === 0 && needsReprocess && (
+        <div className="text-center py-8 rounded-xl border border-dashed border-warning/50 bg-warning/5 space-y-3">
+          <AlertTriangle className="h-6 w-6 mx-auto text-warning" />
+          <p className="text-sm text-muted-foreground">
+            Transactions were counted ({statements.reduce((s, st) => s + (st.transactionCount ?? 0), 0)} total) but not saved to the database.
+            <br />This usually happens if the upload occurred before the database was set up.
+          </p>
+          <Button variant="default" size="sm" onClick={handleReprocessAll} disabled={reprocessing}>
+            <RefreshCw className={cn("h-3.5 w-3.5 mr-1.5", reprocessing && "animate-spin")} />
+            {reprocessing ? "Reprocessing…" : "Reprocess & Save Transactions"}
+          </Button>
+        </div>
+      )}
+      {hookTransactions.length === 0 && !needsReprocess && (
         <div className="text-center text-muted-foreground py-12 rounded-xl border border-dashed">
           No transactions yet. Upload a PDF above.
         </div>
