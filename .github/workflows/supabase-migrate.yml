@@ -59,3 +59,8 @@ jobs:
 
       - name: Push migrations
         run: supabase db push
+
+      - name: Deploy Edge Functions
+        run: |
+          supabase functions deploy parse-po --no-verify-jwt
+          supabase functions deploy parse-document --no-verify-jwt
