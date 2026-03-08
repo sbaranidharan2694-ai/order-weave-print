@@ -435,7 +435,7 @@ export function parseBankStatement(rawText: string): BankStatementData {
   const ifsc = joined.match(/IFSC\s+Code\s*[:\s]+([A-Z0-9]{11})/i)?.[1] ?? "";
 
   const periodMatch = joined.match(
-    /period\s*:?[\s]+(\d{1,2}[-/\s][A-Za-z]{3}[-/\s]\d{4})\s+to\s+(\d{1,2}[-/\s][A-Za-z]{3}[-/\s]\d{4})/i,
+    /period\s*:?[\s]+(\d{1,2}[-/\s][A-Za-z]{3}[-/\s]?\d{4})\s+to\s+(\d{1,2}[-/\s][A-Za-z]{3}[-/\s]?\d{4})/i,
   );
 
   const periodFrom = periodMatch ? normalizeDateToken(periodMatch[1]) : "";
