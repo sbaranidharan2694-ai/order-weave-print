@@ -509,8 +509,8 @@ async function migrateOldData() {
       };
       await saveStatement(newStmt);
       if (s.transactions) {
-        for (const t of s.transactions) {
-          const txnId = buildTxnId(s.id, s.transactions.indexOf(t), t.date, t.refNo || "", t.debit || 0, t.credit || 0, t.details || "");
+        for (const [idx, t] of s.transactions.entries()) {
+          const txnId = buildTxnId(s.id, idx, t.date, t.refNo || "", t.debit || 0, t.credit || 0, t.details || "");
           await saveTransaction({ ...t, id: txnId, statementId: s.id });
         }
       }
