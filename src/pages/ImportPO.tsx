@@ -9,7 +9,7 @@ import { useProductTypes } from "@/hooks/useProductTypes";
 import { useCreatePurchaseOrder, useCreatePOLineItems } from "@/hooks/usePurchaseOrders";
 import { useCreateOrder } from "@/hooks/useOrders";
 import { supabase } from "@/integrations/supabase/client";
-import { parsePOText } from "@/utils/parsePOText";
+import { invokeEdgeFunction } from "@/utils/invokeEdgeFunction";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import { Upload, Loader2, FileText, Trash2, CheckCircle2, X, PlusCircle, AlertTriangle } from "lucide-react";
@@ -154,66 +154,94 @@ export default function ImportPO() {
     setParsing(true);
     try {
       const isExcel = file.name.toLowerCase().endsWith(".xlsx");
-      const { text: rawText } = isExcel
-        ? await extractTextFromExcel(file)
-        : await extractTextFromPdf(file);
+      let rawText: string;
+      try {
+        const result = isExcel
+          ? await extractTextFromExcel(file)
+          : await extractTextFromPdf(file);
+        rawText = result.text;
+        console.log("[ImportPO] Extracted text length:", rawText?.length, "First 200 chars:", rawText?.slice(0, 200));
+      } catch (extractErr) {
+        console.error("[ImportPO] Text extraction failed:", extractErr);
+        toast.error("Failed to extract text from file: " + (extractErr instanceof Error ? extractErr.message : String(extractErr)));
+        setParsing(false);
+        return;
+      }
       if (!rawText || rawText.trim().length < 30) {
+        console.warn("[ImportPO] Text too short:", rawText?.length);
         toast.error(isExcel ? "Could not extract data from Excel file." : "Could not extract text from PDF. File may be scanned/image-based.");
+        setParsing(false);
         return;
       }
 
-      const parsed = parsePOText(rawText);
-      if (!parsed.line_items?.length) {
-        toast.error("Could not parse line items from this file. Try Manual PO Entry or use a supported format (Fujitec, Guindy, Contemporary, Wipro, CGRD Chemicals).");
+      // Send extracted text to AI edge function for parsing
+      console.log("[ImportPO] Calling parse-po edge function with", rawText.length, "chars");
+      const { data: aiResult, error: aiError } = await invokeEdgeFunction<{ success: boolean; data: any }>("parse-po", { pdfText: rawText });
+      console.log("[ImportPO] Edge function response:", { aiResult, aiError });
+
+      if (aiError) {
+        toast.error("AI parsing failed: " + aiError);
+        setParsing(false);
+        return;
+      }
+
+      const parsedData = aiResult?.data;
+      if (!parsedData || !parsedData.line_items?.length) {
+        console.warn("[ImportPO] No line items in parsed data:", parsedData);
+        toast.error("Could not parse line items from this file. Try Manual PO Entry tab.");
+        setParsing(false);
         return;
       }
 
       const poData: ParsedPO = {
-        po_number: parsed.po_number || "",
-        po_date: parsed.po_date ?? null,
-        vendor_name: parsed.vendor_name || "",
-        contact_no: parsed.contact_no ?? null,
-        contact_person: parsed.contact_person ?? null,
-        contact_email: parsed.contact_email ?? null,
-        gstin: parsed.gstin ?? null,
-        vendor_gstin: parsed.vendor_gstin ?? null,
-        delivery_address: parsed.delivery_address ?? parsed.buyer_address ?? null,
-        buyer_address: parsed.buyer_address ?? null,
-        delivery_date: parsed.delivery_date ?? null,
-        payment_terms: parsed.payment_terms ?? null,
-        currency: parsed.currency || "INR",
-        gst_extra: parsed.gst_extra ?? false,
-        total_amount: parsed.total_amount ?? 0,
-        tax_amount: parsed.tax_amount ?? 0,
-        base_amount: parsed.base_amount ?? 0,
-        cgst_percent: parsed.cgst_percent ?? 0,
-        cgst_amount: parsed.cgst_amount ?? 0,
-        sgst_percent: parsed.sgst_percent ?? 0,
-        sgst_amount: parsed.sgst_amount ?? 0,
-        igst_percent: parsed.igst_percent ?? 0,
-        igst_amount: parsed.igst_amount ?? 0,
-        remarks: parsed.remarks ?? null,
-        line_items: parsed.line_items.map((li) => {
+        po_number: parsedData.po_number || "",
+        po_date: parsedData.po_date ?? null,
+        vendor_name: parsedData.vendor_name || "",
+        contact_no: parsedData.contact_no ?? null,
+        contact_person: parsedData.contact_person ?? null,
+        contact_email: parsedData.contact_email ?? null,
+        gstin: parsedData.gstin ?? null,
+        vendor_gstin: parsedData.vendor_gstin ?? null,
+        delivery_address: parsedData.delivery_address ?? parsedData.buyer_address ?? null,
+        buyer_address: parsedData.buyer_address ?? null,
+        delivery_date: parsedData.delivery_date ?? null,
+        payment_terms: parsedData.payment_terms ?? null,
+        currency: parsedData.currency || "INR",
+        gst_extra: parsedData.gst_extra ?? false,
+        total_amount: parsedData.total_amount ?? 0,
+        tax_amount: parsedData.tax_amount ?? 0,
+        base_amount: parsedData.base_amount ?? 0,
+        cgst_percent: parsedData.cgst_percent ?? 0,
+        cgst_amount: parsedData.cgst_amount ?? 0,
+        sgst_percent: parsedData.sgst_percent ?? 0,
+        sgst_amount: parsedData.sgst_amount ?? 0,
+        igst_percent: parsedData.igst_percent ?? 0,
+        igst_amount: parsedData.igst_amount ?? 0,
+        remarks: parsedData.remarks ?? null,
+        line_items: (parsedData.line_items || []).map((li: any) => {
           const matched = productTypes.find(
             (pt) =>
               pt.name.toLowerCase() === (li.suggested_product_type || "").toLowerCase() ||
               pt.hsn_code === li.hsn_code
           );
+          const qty = li.qty || 0;
+          const unitPrice = li.unit_price || 0;
+          const base = li.base_amount || qty * unitPrice;
           return {
             description: li.description || "",
             item_code: li.item_code || "",
             hsn_code: li.hsn_code || "",
-            qty: li.qty || 0,
+            qty,
             uom: li.uom || "NOS",
-            unit_price: li.unit_price || 0,
-            base_amount: li.base_amount || (li.qty || 0) * (li.unit_price || 0),
+            unit_price: unitPrice,
+            base_amount: base,
             cgst_percent: li.cgst_percent || 0,
             cgst_amount: li.cgst_amount || 0,
             sgst_percent: li.sgst_percent || 0,
             sgst_amount: li.sgst_amount || 0,
             igst_percent: li.igst_percent || 0,
             igst_amount: li.igst_amount || 0,
-            total_amount: li.total_amount || li.base_amount || (li.qty || 0) * (li.unit_price || 0),
+            total_amount: li.total_amount || base + (li.cgst_amount || 0) + (li.sgst_amount || 0) + (li.igst_amount || 0),
             suggested_product_type: matched?.name || li.suggested_product_type || "Other",
             mapped_product_type_id: matched?.id,
           };
@@ -223,7 +251,7 @@ export default function ImportPO() {
       setParsed(poData);
       setLineItems(poData.line_items);
       setEditHeader({});
-      toast.success("PO parsed successfully (built-in parser).");
+      toast.success("PO parsed successfully using AI.");
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       toast.error("Parsing failed: " + msg);

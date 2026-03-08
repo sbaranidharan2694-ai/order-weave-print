@@ -8,53 +8,88 @@ const corsHeaders = {
 
 const systemPrompt = `You are a Purchase Order (PO) parser for a printing press business in India. Extract structured data from PO text.
 
-You MUST support these 3 PO formats:
+You MUST support these 5 PO formats:
 
 === FORMAT 1: Fujitec India (SUBCON PURCHASE ORDER) ===
-- Identifier: Contains "SUBCON PURCHASE ORDER" or "FUJITEC INDIA"
+- Identifier: Contains "SUBCON PURCHASE ORDER" or "FUJITEC INDIA" or "PO-FIN-M-"
 - PO Number: after "Purchase Job Order No" (e.g. PO-FIN-M-26005326)
 - PO Date: after "Date" near header (e.g. 24-Feb-2026)
 - vendor_name: "Fujitec India Pvt Ltd" (the BUYER company)
-- gstin: after "GST No." on buyer side (15-char)
+- gstin: after "GST No." on buyer side — the one starting with 33AAAC (NOT the vendor/supplier GST starting with 33AAGP)
 - delivery_date: after "Completion Date"
 - payment_terms: after "Terms of Payment in Days" (e.g. "30")
-- contact_person: after "Contact Person" or order handler
-- Line items: Sr No | Description | Part Number | Qty | UOM | Unit Price | Total Price | CGST Rate | CGST Amt | SGST Rate | SGST Amt
+- contact_person: after "Approved By" field
+- Line items: Sr No | Description | Part Number | Req.On Date | Cost Entity Key | Qty | UOM | Unit Price | Total Price | CGST Rate | CGST Amt | SGST Rate | SGST Amt
+- IMPORTANT: Only rows starting with numeric Sr No (1, 2, 3...) are line items. Stop before "Total" row.
+- IMPORTANT: Do NOT include GST No., PAN No., address footer text as line items.
 
 === FORMAT 2: Guindy Machine Tools (LOC PO) ===
-- Identifier: Contains "GUINDY MACHINE TOOLS" or PO starts with "LOC"
-- PO Number: after "PO No & Date" (e.g. LOC/252566)
-- PO Date: after "PO No & Date" in DD/MM/YYYY format (e.g. 04/03/2026)
+- Identifier: Contains "GUINDY MACHINE TOOLS" or PO number starts with "LOC"
+- PO Number: e.g. LOC252566
+- PO Date: 8-digit date after PO number e.g. 04032026 = 04/03/2026
 - vendor_name: "Guindy Machine Tools Limited" (the BUYER company)
-- gstin: after "GST No."
-- delivery_date: after "Delivery Date" (DD/MM/YYYY format)
+- gstin: after "GST No." — the one starting with 33AAACG
+- delivery_date: after "Delivery Date" (8-digit format)
 - payment_terms: after "Payment Terms" (e.g. "30 DAYS CREDIT")
-- Note: "GST EXTRA" means taxes are NOT included in line amounts
-- Line items: Sl.No | Item Number/Description | Qty | UOM | Unit Price | Amount
-- gst_extra flag: true if "GST EXTRA" or "CGST,SGST,IGST EXTRA" appears
+- contact_person: after "Prepared by"
+- gst_extra: true — GST is NOT included in line item amounts
+- Line items: Sl.No | Description | Qty | UOM | Unit Price | Amount
+- Since GST is extra, line item CGST/SGST should be 0
 
 === FORMAT 3: Contemporary Leather (SAP Business One PO) ===
 - Identifier: Contains "Contemporary Leather" or "SAP Business One"
-- PO Number: after "PO No" (e.g. 25261742)
-- PO Date: after "PO Date" (e.g. 25-02-26 → 2026-02-25)
+- PO Number: after "PO No" (e.g. 25261742, 25261779, 25266682)
+- PO Date: after "PO Date" (e.g. 05-03-26 → 2026-03-05)
 - vendor_name: "Contemporary Leather Pvt Ltd" (the BUYER company)
-- gstin: after "GST" on buyer block
+- gstin: after "GST" — the one starting with 33AADC
 - delivery_date: after "Delivery Date"
 - payment_terms: after "Payment terms" (e.g. "60 DAYS")
-- contact_person: after "Contact Person"
-- contact_no: after "Contact No"
+- contact_person: after "Contact Person" (e.g. "Mr. Bharani")
+- contact_no: after "Contact No" (e.g. "9840199878")
 - Line items: S.No | Description | HSN CODE | QTY | UOM | Unit Price | Base Amount | CGST Rate% | CGST Amt | SGST Rate% | SGST Amt | IGST Rate% | IGST Amt
+- CGST and SGST are typically 9% each
+
+=== FORMAT 4: Wipro Enterprises ===
+- Identifier: Contains "Wipro Enterprises Private Limited" AND "PURCHASE ORDER No"
+- PO Number: after "PURCHASE ORDER No" (e.g. 94384819)
+- PO Date: after "Dt" with dots (e.g. 03.03.2026)
+- vendor_name: "Wipro Enterprises Private Limited" (the BUYER company)
+- gstin: after "GST No" — the one starting with 33AAJCA
+- delivery_date: from line item Delivery column (e.g. 31.10.2026)
+- payment_terms: after "Terms of Payment" (e.g. "15 - 45 days average 30 days")
+- contact_person: after "Order Handled BY" (e.g. "Janarathanan. K")
+- contact_email: after "Email" — fix common OCR errors like missing @ symbol
+- Line items use S.No multiples of 10 (10, 20, 30...) — treat these as valid line items
+- Extract HSN from within description text (pattern "HSN XXXX")
+- UOM, Qty (strip .000 suffix), Unit Price from respective columns
+- Tax: look for CGST-XX-amount and SGST-XX-amount patterns below the table
+- Stop parsing at "Version Page3" — ignore T&C pages
+
+=== FORMAT 5: CGRD Chemicals (Excel format) ===
+- Identifier: Contains "CGRD Chemicals" or "CGRD CHEMICALS" or "33AALCC5735C1ZW"
+- PO Number: after "PO NO" (e.g. 122-0225-26)
+- PO Date: after "DATE" with dots (e.g. 26.02.26 → 2026-02-26)
+- vendor_name: "CGRD Chemicals India Pvt Ltd" (the BUYER company)
+- gstin: "33AALCC5735C1ZW"
+- payment_terms: pattern "XX DAYS CREDIT"
+- contact_person: after "APPROVED BY"
+- Line items: S.No | Product Name | Batch No | Price/kg | Qty | Total in KG | Amount
+- UOM is always KG for this vendor
+- CGST and SGST appear as summary totals below items — back-calculate rate from amounts
+- Skip subtotal rows where product name is empty/blank
+- Grand Total from "TOTAL" line
 
 CRITICAL RULES:
-1. vendor_name = The BUYER/CLIENT COMPANY that ISSUED the PO. NOT the supplier/vendor.
+1. vendor_name = The BUYER/CLIENT COMPANY that ISSUED the PO. NOT the supplier/vendor receiving it.
 2. contact_person = Individual handler name, NOT company name.
 3. contact_no = Phone number only. NEVER put a name here.
-4. Parse dates as YYYY-MM-DD. Handle DD/MM/YYYY, DD-MM-YYYY, DDMMYYYY, DD-Mon-YYYY, DD-MM-YY formats.
-5. For DD/MM/YYYY like "04/03/2026": day=04, month=03, year=2026 → 2026-03-04
-6. For DDMMYYYY like "04032026": day=04, month=03, year=2026 → 2026-03-04
-7. For DD-MM-YY like "25-02-26": assume 2000s → 2026-02-25
-8. For amounts, extract numeric values only (remove commas).
-9. gst_extra: set true if document says "GST EXTRA" or "CGST,SGST,IGST EXTRA" or taxes are not included in line totals.
+4. Parse dates as YYYY-MM-DD. Handle DD/MM/YYYY, DD-MM-YYYY, DDMMYYYY, DD-Mon-YYYY, DD.MM.YYYY, DD-MM-YY formats.
+5. For amounts, extract numeric values only (remove commas).
+6. gst_extra: set true if document says "GST EXTRA" or taxes are not included in line totals.
+7. NEVER include footer lines (GST No., PAN No., Vendor Code, address, AUTHORISED SIGNATORY) as line items.
+8. Only create line items for rows with actual item data — not subtotals or blank rows.
+9. Grand total = sum of line item totals. Recalculate, don't blindly copy.
+10. For Wipro emails: if email looks like "namecompany.com", insert @ to make "name@company.com".
 
 Map HSN codes to product types:
 - 3923, 4911 = Visiting Cards/Cards
@@ -72,7 +107,7 @@ const extractTool = {
   type: "function" as const,
   function: {
     name: "extract_po_data",
-    description: "Extract structured purchase order data from parsed PDF text",
+    description: "Extract structured purchase order data from parsed PDF/Excel text",
     parameters: {
       type: "object",
       properties: {
@@ -130,22 +165,13 @@ const extractTool = {
   },
 };
 
-/** Try to extract JSON from a raw AI text response (fallback) */
 function extractJsonFromText(raw: string): Record<string, unknown> | null {
   const clean = raw.replace(/```(?:json)?\s*/gi, "").replace(/```\s*/g, "").trim();
-  try {
-    return JSON.parse(clean);
-  } catch {
-    /* continue */
-  }
+  try { return JSON.parse(clean); } catch { /* continue */ }
   const start = clean.indexOf("{");
   const end = clean.lastIndexOf("}");
   if (start >= 0 && end > start) {
-    try {
-      return JSON.parse(clean.slice(start, end + 1));
-    } catch {
-      /* continue */
-    }
+    try { return JSON.parse(clean.slice(start, end + 1)); } catch { /* continue */ }
   }
   return null;
 }
@@ -172,92 +198,54 @@ serve(async (req) => {
     }
 
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    const GOOGLE_GEMINI_API_KEY = Deno.env.get("GOOGLE_GEMINI_API_KEY")?.trim() || Deno.env.get("GEMINI_API_KEY")?.trim();
-
-    if (!LOVABLE_API_KEY && !GOOGLE_GEMINI_API_KEY) {
+    if (!LOVABLE_API_KEY) {
       return new Response(
-        JSON.stringify({
-          error:
-            "No AI API key. Set LOVABLE_API_KEY or GOOGLE_GEMINI_API_KEY (free at https://aistudio.google.com/apikey) in Edge Function Secrets.",
-        }),
+        JSON.stringify({ error: "AI API key not configured. Please ensure Lovable Cloud is enabled." }),
         { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 
-    let data: { choices?: Array<{ message?: { content?: string; tool_calls?: Array<{ function?: { arguments?: string } }> } }> };
-    let rawContent = "";
+    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${LOVABLE_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "google/gemini-2.5-pro",
+        temperature: 0,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: "Parse this Purchase Order text and extract all fields:\n\n" + pdfText },
+        ],
+        tools: [extractTool],
+        tool_choice: { type: "function", function: { name: "extract_po_data" } },
+      }),
+    });
 
-    if (LOVABLE_API_KEY) {
-      const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${LOVABLE_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "google/gemini-2.5-flash",
-          temperature: 0,
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: "Parse this Purchase Order text:\n\n" + pdfText },
-          ],
-          tools: [extractTool],
-          tool_choice: { type: "function", function: { name: "extract_po_data" } },
-        }),
-      });
-
-      if (!response.ok) {
-        const errText = await response.text();
-        console.error("[parse-po] AI gateway error:", response.status, errText);
-        if (response.status === 429) {
-          return new Response(JSON.stringify({ error: "Rate limit exceeded. Please wait and try again." }), {
-            status: 429,
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-          });
-        }
-        if (response.status === 402) {
-          return new Response(
-            JSON.stringify({
-              error: "AI credits exhausted. Add funds in Lovable → Settings → Workspace → Usage.",
-            }),
-            { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-          );
-        }
-        return new Response(JSON.stringify({ error: `AI gateway returned ${response.status}` }), {
-          status: 502,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error("[parse-po] AI gateway error:", response.status, errText);
+      if (response.status === 429) {
+        return new Response(JSON.stringify({ error: "Rate limit exceeded. Please wait and try again." }), {
+          status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
-
-      data = await response.json();
-      rawContent = data?.choices?.[0]?.message?.content ?? "";
-    } else {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${encodeURIComponent(GOOGLE_GEMINI_API_KEY!)}`;
-      const response = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          systemInstruction: { parts: [{ text: systemPrompt }] },
-          contents: [{ parts: [{ text: "Parse this Purchase Order text and return ONLY valid JSON (no markdown). Use the same schema as extract_po_data.\n\n" + pdfText }] }],
-          generationConfig: { temperature: 0, maxOutputTokens: 8192 },
-        }),
-      });
-      if (!response.ok) {
-        const errText = await response.text();
-        console.error("[parse-po] Gemini API error:", response.status, errText.slice(0, 300));
-        return new Response(JSON.stringify({ error: "AI parsing failed. Please try again." }), {
-          status: 500,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
+      if (response.status === 402) {
+        return new Response(JSON.stringify({ error: "AI credits exhausted. Add funds in Lovable → Settings → Workspace → Usage." }), {
+          status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
-      const geminiData = await response.json();
-      rawContent = geminiData?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-      data = { choices: [{ message: { content: rawContent } }] };
+      return new Response(JSON.stringify({ error: `AI gateway returned ${response.status}` }), {
+        status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
 
+    const data = await response.json();
+    const rawContent = data?.choices?.[0]?.message?.content ?? "";
     let parsed: Record<string, unknown> | null = null;
 
-    // Strategy 1: tool_calls (Lovable only — structured output)
+    // Strategy 1: tool_calls (structured output)
     const toolCall = data?.choices?.[0]?.message?.tool_calls?.[0];
     if (toolCall?.function?.arguments) {
       try {
@@ -268,7 +256,7 @@ serve(async (req) => {
       }
     }
 
-    // Strategy 2: text content fallback (Gemini or when tool_calls not returned)
+    // Strategy 2: text content fallback
     if (!parsed && rawContent) {
       parsed = extractJsonFromText(rawContent);
       if (parsed) console.log("[parse-po] Parsed via text fallback:", parsed?.po_number);
@@ -293,8 +281,7 @@ serve(async (req) => {
     const msg = e instanceof Error ? e.message : "PO parsing failed";
     console.error("[parse-po] Unhandled error:", e);
     return new Response(JSON.stringify({ error: msg }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
 });
