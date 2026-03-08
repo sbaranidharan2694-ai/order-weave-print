@@ -1,15 +1,12 @@
 import {
-  LayoutDashboard, ClipboardList, PlusCircle, Users, Settings, FileUp, Building2, UserCheck, LogOut,
+  LayoutDashboard, ClipboardList, PlusCircle, Users, Settings, FileUp, Building2, UserCheck,
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import {
   Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent,
   SidebarMenu, SidebarMenuButton, SidebarMenuItem,
-  SidebarFooter,
   useSidebar,
 } from "@/components/ui/sidebar";
-import { useAuth } from "@/hooks/useAuth";
-import { Button } from "@/components/ui/button";
 
 const items = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
@@ -25,7 +22,6 @@ const items = [
 export function AppSidebar() {
   const { state } = useSidebar();
   const collapsed = state === "collapsed";
-  const { user, signOut } = useAuth();
 
   return (
     <Sidebar collapsible="icon">
@@ -52,20 +48,6 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
-      <SidebarFooter className="p-2">
-        {!collapsed && user && (
-          <p className="text-xs text-muted-foreground truncate px-2 mb-1">{user.email}</p>
-        )}
-        <Button
-          variant="ghost"
-          size="sm"
-          className="w-full justify-start text-muted-foreground hover:text-destructive"
-          onClick={signOut}
-        >
-          <LogOut className="mr-2 h-4 w-4" />
-          {!collapsed && "Sign Out"}
-        </Button>
-      </SidebarFooter>
     </Sidebar>
   );
 }
