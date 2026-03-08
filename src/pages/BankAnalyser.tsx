@@ -602,6 +602,9 @@ export default function BankAnalyser() {
   const doSaveStatement = useCallback(async (accountKey: string, data: BankStatementData, file: File) => {
     const finalStmtId = btoa(accountKey + file.name + file.size).replace(/[^a-zA-Z0-9]/g, "").substring(0, 40);
     const { statement: newStmt, transactions: txns } = mapBankStatementDataToStatementAndTransactions(data, finalStmtId, accountKey, file.name);
+    if (hasSummaryWithoutRows(data)) {
+      throw new Error("Transaction rows could not be parsed from this statement. Please re-upload after parser update.");
+    }
     newStmt.transactionCount = txns.length;
     newStmt.accountNumber = data.accountNumber ?? (ACCOUNTS.find(a => a.key === accountKey) as { accountNumber?: string } | undefined)?.accountNumber ?? "";
     await saveStatement(newStmt);

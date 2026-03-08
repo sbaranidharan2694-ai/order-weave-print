@@ -417,8 +417,12 @@ export function parseBankStatement(rawText: string): BankStatementData {
   const summary = parseSummaryTotals(joined);
 
   const tabularTransactions = parseTabularTransactions(lines);
+  const pipeTableTransactions = parsePipeTableTransactions(lines);
+  const looseTransactions = parseLooseTransactions(lines);
   const legacyTransactions = parseLegacyTransactions(lines);
-  const transactions = tabularTransactions.length >= legacyTransactions.length ? tabularTransactions : legacyTransactions;
+
+  const transactions = [tabularTransactions, pipeTableTransactions, looseTransactions, legacyTransactions]
+    .sort((a, b) => b.length - a.length)[0] ?? [];
 
   const totalCredits = summary.totalCredits > 0 ? summary.totalCredits : transactions.reduce((s, t) => s + (t.credit || 0), 0);
   const totalDebits = summary.totalDebits > 0 ? summary.totalDebits : transactions.reduce((s, t) => s + (t.debit || 0), 0);
