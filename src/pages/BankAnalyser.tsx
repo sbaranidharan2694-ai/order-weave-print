@@ -1387,7 +1387,20 @@ function AccountTab({ account, onRefresh, customLookup, onUpdateLookup }) {
   }, [handleFiles]);
 
   const handleFileInput = (e) => {
-    if (e.target.files.length) handleFiles(e.target.files);
+    const files = e.target.files;
+    if (!files?.length) {
+      e.target.value = "";
+      return;
+    }
+
+    if (reuploadTargetStatementId) {
+      void handleReuploadStatement(reuploadTargetStatementId, files[0]);
+      setReuploadTargetStatementId(null);
+      e.target.value = "";
+      return;
+    }
+
+    handleFiles(files);
     e.target.value = "";
   };
 
