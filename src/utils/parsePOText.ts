@@ -218,7 +218,7 @@ function isTotalLine(line: string): boolean {
 
 /** Fujitec India: detection FUJITEC INDIA PVT LTD or PO-FIN-M- or SUBCON/List of Subcon/SUPER */
 function tryFujitec(text: string): ParsedPOData | null {
-  if (!/FUJITEC INDIA PVT LTD|PO-FIN-M-|SUBCON PURCHASE ORDER|FUJITEC INDIA|List\s*of\s*Subcon|ListOfSubcon|SUPER\s*\d+|SUPER\s*PRINTERS|Purchase\s+Order/i.test(text)) return null;
+  if (!/FUJITEC INDIA PVT LTD|PO-FIN-M-|SUBCON PURCHASE ORDER|FUJITEC INDIA|List\s*of\s*Subcon|ListOfSubcon|ListOfSubconPurchaseOrder|SUPER\s*\d+|SUPER\s*PRINTERS|Purchase\s+Order/i.test(text)) return null;
 
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
 
@@ -238,7 +238,7 @@ function tryFujitec(text: string): ParsedPOData | null {
   const vendorName = /FUJITEC INDIA/i.test(text) ? "Fujitec India Pvt Ltd" : /SUPER\s*PRINTERS/i.test(text) ? "Super Printers" : "Vendor";
 
   const lineItems: ParsedPOLineItem[] = [];
-  const tableStart = lines.findIndex((l) => /Sr\s*No.*Description.*Part\s*Number|Req\.On\s*Date.*Cost\s*Entity|Qty\s+UOM\s+Unit\s*Price\s+Total\s*Price\s+CGST\s+SGST/i.test(l));
+  const tableStart = lines.findIndex((l) => /Sr\s*No.*Description.*Part\s*Number|Req\.On\s*Date.*Cost\s*Entity|Qty\s+UOM\s+Unit\s*Price\s+Total\s*Price\s+CGST\s+SGST|Sr\s*No.*Description.*(Qty|Unit\s*Price|Amount)/i.test(l));
   const startIndex = tableStart >= 0 ? tableStart + 1 : 0;
   for (let i = startIndex; i < lines.length; i++) {
     const line = lines[i];
@@ -858,7 +858,58 @@ function tryGeneric(text: string): ParsedPOData | null {
   for (const line of lines) {
     if (isFooterLine(line) || isTableHeaderLine(line) || isTotalLine(line)) continue;
     if (!startsWithNumericIndex(line)) continue;
-    tryAddGenericLineItem(line, lineItems, 0.05);
+    tryAddGenericLineItem(line, lineItems, 0.08);
+  }
+
+  const deduped = dedupeLineItems(lineItems);
+  if (deduped.length === 0) return null;
+
+  const baseAmount = deduped.reduce((s, li) => s + li.base_amount, 0);
+  const totalAmount = recalcGrandTotal(deduped);
+
+  return {
+    po_number: poNumber || "",
+    po_date: normalizeDate(poDateRaw),
+    vendor_name: "Vendor",
+    contact_no: null,
+    contact_person: null,
+    contact_email: null,
+    gstin,
+    vendor_gstin: null,
+    delivery_address: null,
+    buyer_address: null,
+    delivery_date: null,
+    payment_terms: null,
+    currency: "INR",
+    gst_extra: false,
+    base_amount: baseAmount,
+    total_amount: totalAmount,
+    tax_amount: totalAmount - baseAmount,
+    cgst_percent: 0,
+    cgst_amount: 0,
+    sgst_percent: 0,
+    sgst_amount: 0,
+    igst_percent: 0,
+    igst_amount: 0,
+    remarks: null,
+    line_items: deduped,
+  };
+}
+
+/** Last-resort: any line that looks like qty/unit price/total, no numeric-index requirement */
+function tryAnyTable(text: string): ParsedPOData | null {
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const poNumber = firstMatch(text, /(?:PO\s*#?|Order\s*No\.?|P\.?O\.?\s*No\.?)\s*[:\s]*([A-Z0-9/-]+)/i)
+    || firstMatch(text, /([A-Z]{2,5}\/?\s*\d{5,})/i);
+  const poDateRaw = firstMatch(text, /(?:Date|PO\s+Date)\s*[:\s]*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})/i)
+    || firstMatch(text, /(\d{1,2}[/-][A-Za-z]{3}[/-]\d{4})/);
+  const gstin = extractGstin(text);
+
+  const lineItems: ParsedPOLineItem[] = [];
+  for (const line of lines) {
+    if (line.length < 10) continue;
+    if (isFooterLine(line) || isTableHeaderLine(line) || isTotalLine(line)) continue;
+    tryAddGenericLineItem(line, lineItems, 0.12);
   }
 
   const deduped = dedupeLineItems(lineItems);
@@ -898,7 +949,7 @@ function tryGeneric(text: string): ParsedPOData | null {
 
 /**
  * Parse PO text with built-in rule-based logic (no AI).
- * Tries Fujitec → Guindy → Contemporary → Wipro → CGRD → generic.
+ * Tries Fujitec → Guindy → Contemporary → Wipro → CGRD → generic → anyTable.
  */
 export function parsePOText(pdfText: string): ParsedPOData {
   const t = pdfText.trim();
@@ -932,7 +983,7 @@ export function parsePOText(pdfText: string): ParsedPOData {
     };
   }
 
-  const result = tryFujitec(t) || tryGuindy(t) || tryContemporary(t) || tryWipro(t) || tryCGRD(t) || tryGeneric(t);
+  const result = tryFujitec(t) || tryGuindy(t) || tryContemporary(t) || tryWipro(t) || tryCGRD(t) || tryGeneric(t) || tryAnyTable(t);
   if (result) return result;
 
   return {
