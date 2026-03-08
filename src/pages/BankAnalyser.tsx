@@ -1140,7 +1140,6 @@ function AccountTab({ account, onRefresh, customLookup, onUpdateLookup }) {
           throw new Error("Failed to parse PDF");
         }
 
-        const bankData = parsed as BankStatementData;
         const accountKey = account.key;
         const { transactions: txns } = mapBankStatementDataToStatementAndTransactions(parsed, statementId, accountKey, target.fileName);
 
