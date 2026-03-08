@@ -46,9 +46,10 @@ import {
   updateStatementLastValidated,
 } from "@/lib/bankStorage";
 import { friendlyDbError } from "@/lib/utils";
-import { parseDocument, type BankStatementData } from "@/utils/parseDocument";
+import { type BankStatementData } from "@/utils/parseBankStatement";
 import { extractTextFromPdf } from "@/utils/extractPdfText";
-import { parseBankStatement, getTabForAccount } from "@/utils/parseBankStatement";
+import { getTabForAccount } from "@/utils/parseBankStatement";
+import { parseBankStatementWithAI } from "@/utils/parseBankStatementAI";
 import { PasswordModal } from "@/components/BankAnalyser/PasswordModal";
 import { SummaryCards } from "@/components/BankAnalyser/SummaryCards";
 import { extractParty } from "@/utils/saveBankStatement";
