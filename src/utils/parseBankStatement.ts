@@ -187,6 +187,132 @@ function parseTabularTransactions(lines: string[]): Transaction[] {
   return deduped;
 }
 
+function parsePipeTableTransactions(lines: string[]): Transaction[] {
+  const DATE_PREFIX = /^(\d{1,2}[-/\s](?:[A-Za-z]{3}|\d{1,2})[-/\s]\d{4})\b/i;
+  const out: Transaction[] = [];
+
+  for (const rawLine of lines) {
+    if (!rawLine.includes("|")) continue;
+
+    const cols = rawLine
+      .split("|")
+      .map((c) => c.trim())
+      .filter((c) => c.length > 0);
+
+    if (cols.length < 5) continue;
+    if (!DATE_PREFIX.test(cols[0])) continue;
+
+    const date = normalizeDateToken(cols[0]);
+
+    const amountCols = cols.filter((c) => /^(?:[\d,]+\.\d{2}|-|)$/i.test(c));
+    const debit = toNum(amountCols.at(-3) ?? "0");
+    const credit = toNum(amountCols.at(-2) ?? "0");
+    const balance = toNum(amountCols.at(-1) ?? "0");
+
+    const middleStart = cols.length >= 7 ? 2 : 1;
+    const middleEnd = Math.max(middleStart, cols.length - 3);
+    const middle = cols.slice(middleStart, middleEnd).filter(Boolean);
+
+    let refNo = "";
+    if (middle.length > 1) {
+      const tail = middle[middle.length - 1] ?? "";
+      if (/^[A-Z0-9]{5,20}$/i.test(tail)) {
+        refNo = tail;
+        middle.pop();
+      }
+    }
+
+    const details = middle.join(" ").replace(/\s+/g, " ").trim() || "Transaction";
+    if (/^(TRANS\s+DATE|VALUE\s+DATE|DEBITS?|CREDITS?|BALANCE)$/i.test(details)) continue;
+
+    const isDebit = debit > 0 && credit === 0;
+
+    out.push({
+      date,
+      details,
+      refNo,
+      debit,
+      credit,
+      balance,
+      type: isDebit ? "debit" : "credit",
+      counterparty: categorise(details),
+    });
+  }
+
+  return Array.from(
+    new Map(out.map((t) => [`${t.date}|${t.refNo}|${t.debit}|${t.credit}|${t.balance}|${t.details}`, t])).values(),
+  );
+}
+
+function parseLooseTransactions(lines: string[]): Transaction[] {
+  const DATE_RE = /(\d{1,2}[-/\s](?:[A-Za-z]{3}|\d{1,2})[-/\s]\d{4})/i;
+  const MONEY_RE = /[\d,]+\.\d{2}/g;
+  const out: Transaction[] = [];
+
+  for (const rawLine of lines) {
+    const line = rawLine.replace(/\|/g, " ").replace(/\s+/g, " ").trim();
+    if (!line) continue;
+
+    const dateMatch = line.match(DATE_RE);
+    if (!dateMatch) continue;
+
+    if (/^(TRANS\s+DATE|VALUE\s+DATE|DEBITS?|CREDITS?|BALANCE|PAGE\s+\d+)/i.test(line)) continue;
+
+    let rest = line;
+    const firstDate = dateMatch[1];
+    const secondDate = rest.slice(rest.indexOf(firstDate) + firstDate.length).match(DATE_RE)?.[1];
+
+    rest = rest.replace(firstDate, "").trim();
+    if (secondDate) rest = rest.replace(secondDate, "").trim();
+
+    const amountMatches = [...rest.matchAll(MONEY_RE)];
+    if (amountMatches.length < 2) continue;
+
+    const balance = toNum(amountMatches[amountMatches.length - 1][0]);
+
+    let debit = 0;
+    let credit = 0;
+    let detailsCutIndex = amountMatches[amountMatches.length - 2].index ?? rest.length;
+
+    if (amountMatches.length >= 3) {
+      debit = toNum(amountMatches[amountMatches.length - 3][0]);
+      credit = toNum(amountMatches[amountMatches.length - 2][0]);
+      detailsCutIndex = amountMatches[amountMatches.length - 3].index ?? rest.length;
+    } else {
+      const txAmount = toNum(amountMatches[amountMatches.length - 2][0]);
+      const upper = rest.toUpperCase();
+      if (/\b(UPI\/DR|DEBIT|CHQ\s+PAID|ATW|ATM|CHARGE|CHRG|GST|TAX)\b/.test(upper)) debit = txAmount;
+      else credit = txAmount;
+    }
+
+    let body = rest.slice(0, detailsCutIndex).replace(/\s+/g, " ").trim();
+
+    const refMatches = [...body.matchAll(/\b([A-Z0-9]{6,20})\b/g)];
+    const refNo = refMatches.length ? (refMatches[refMatches.length - 1][1] ?? "") : "";
+    if (refNo) {
+      body = body.replace(new RegExp(`\\b${refNo}\\b`), "").replace(/\s+/g, " ").trim();
+    }
+
+    if (!body) body = "Transaction";
+
+    const isDebit = debit > 0 && credit === 0;
+    out.push({
+      date: normalizeDateToken(firstDate),
+      details: body,
+      refNo,
+      debit,
+      credit,
+      balance,
+      type: isDebit ? "debit" : "credit",
+      counterparty: categorise(body),
+    });
+  }
+
+  return Array.from(
+    new Map(out.map((t) => [`${t.date}|${t.refNo}|${t.debit}|${t.credit}|${t.balance}|${t.details}`, t])).values(),
+  );
+}
+
 function parseLegacyTransactions(lines: string[]): Transaction[] {
   const DATE_RE = /^(\d{1,2}(?:[-/\s])[A-Z]{3}(?:[-/\s])\d{4})\s+(.*)/i;
   const BAL_RE = /INR\s+([\d,]+\.\d{2})\s*Cr/i;
@@ -291,8 +417,12 @@ export function parseBankStatement(rawText: string): BankStatementData {
   const summary = parseSummaryTotals(joined);
 
   const tabularTransactions = parseTabularTransactions(lines);
+  const pipeTableTransactions = parsePipeTableTransactions(lines);
+  const looseTransactions = parseLooseTransactions(lines);
   const legacyTransactions = parseLegacyTransactions(lines);
-  const transactions = tabularTransactions.length >= legacyTransactions.length ? tabularTransactions : legacyTransactions;
+
+  const transactions = [tabularTransactions, pipeTableTransactions, looseTransactions, legacyTransactions]
+    .sort((a, b) => b.length - a.length)[0] ?? [];
 
   const totalCredits = summary.totalCredits > 0 ? summary.totalCredits : transactions.reduce((s, t) => s + (t.credit || 0), 0);
   const totalDebits = summary.totalDebits > 0 ? summary.totalDebits : transactions.reduce((s, t) => s + (t.debit || 0), 0);

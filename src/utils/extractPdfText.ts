@@ -48,40 +48,8 @@ export async function extractTextFromPdf(
 
   for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
     const page = await pdf.getPage(pageNum);
-    const textContent = await page.getTextContent();
-
-    let lastY: number | null = null;
-    let lastXEnd: number | null = null;
-    const lines: string[] = [];
-    let currentLine = "";
-
-    for (const item of textContent.items) {
-      if ("str" in item) {
-        const ti = item as { str: string; transform: number[] };
-        const transform = ti.transform;
-        const x = transform[4];
-        const y = transform[5];
-        const scaleX = transform[0];
-        const width = (ti.str.length * (scaleX || 12)) || 0;
-        const xEnd = x + width;
-
-        if (lastY !== null && Math.abs(y - lastY) > 2) {
-          if (currentLine.trim()) lines.push(fixMidWordSpaces(currentLine.trim()));
-          currentLine = "";
-          lastXEnd = null;
-        }
-        const gap = lastXEnd != null ? x - lastXEnd : 2;
-        if (gap < 2 && currentLine.length > 0) {
-          currentLine += ti.str;
-        } else {
-          currentLine += (currentLine.length > 0 ? " " : "") + ti.str;
-        }
-        lastY = y;
-        lastXEnd = xEnd;
-      }
-    }
-    if (currentLine.trim()) lines.push(fixMidWordSpaces(currentLine.trim()));
-    pageTexts.push(lines.join("\n"));
+    const text = await extractOrderedPageText(page);
+    if (text) pageTexts.push(text);
   }
 
   let finalText = pageTexts.join("\n\n").trim();
@@ -106,6 +74,62 @@ export async function extractTextFromPdf(
     isPasswordProtected: !!password,
     usedOcr,
   };
+}
+
+async function extractOrderedPageText(page: pdfjsLib.PDFPageProxy): Promise<string> {
+  const textContent = await page.getTextContent();
+
+  type PositionedToken = { text: string; x: number; y: number; width: number };
+
+  const tokens: PositionedToken[] = [];
+  for (const item of textContent.items) {
+    if (!("str" in item) || typeof item.str !== "string") continue;
+
+    const text = item.str.trim();
+    if (!text) continue;
+
+    const transform = Array.isArray(item.transform) ? item.transform : [0, 0, 0, 0, 0, 0];
+    const x = Number(transform[4] ?? 0);
+    const y = Number(transform[5] ?? 0);
+    const width = typeof item.width === "number" && item.width > 0 ? item.width : Math.max(4, text.length * 4.2);
+
+    tokens.push({ text, x, y, width });
+  }
+
+  tokens.sort((a, b) => (Math.abs(a.y - b.y) <= 1 ? a.x - b.x : b.y - a.y));
+
+  const rows: Array<{ y: number; tokens: PositionedToken[] }> = [];
+  for (const token of tokens) {
+    const row = rows.find((r) => Math.abs(r.y - token.y) <= 2.5);
+    if (row) {
+      row.tokens.push(token);
+      row.y = (row.y + token.y) / 2;
+    } else {
+      rows.push({ y: token.y, tokens: [token] });
+    }
+  }
+
+  rows.sort((a, b) => b.y - a.y);
+
+  const lines = rows.map((row) => {
+    const sorted = row.tokens.sort((a, b) => a.x - b.x);
+    let current = "";
+    let lastEnd = 0;
+
+    for (let i = 0; i < sorted.length; i++) {
+      const tk = sorted[i];
+      const gap = i === 0 ? 0 : tk.x - lastEnd;
+      if (i > 0 && gap > 2) current += " ";
+      if (i > 0 && gap > 22) current += " ";
+      current += tk.text;
+      lastEnd = tk.x + tk.width;
+    }
+
+    return fixMidWordSpaces(current.trim());
+  }).filter(Boolean);
+
+  (page as { cleanup?: () => void }).cleanup?.();
+  return lines.join("\n");
 }
 
 async function extractTextWithOcr(pdf: pdfjsLib.PDFDocumentProxy): Promise<string[]> {

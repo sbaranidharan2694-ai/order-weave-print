@@ -79,6 +79,13 @@ function detectAccountFromBankStatementData(data: BankStatementData): string | n
   return null;
 }
 
+function hasSummaryWithoutRows(data: BankStatementData): boolean {
+  const txCount = data.transactions?.length ?? 0;
+  const credits = Number(data.totalCredits) || 0;
+  const debits = Number(data.totalDebits) || 0;
+  return txCount === 0 && (credits > 0 || debits > 0);
+}
+
 function buildTxnId(
   statementId: string,
   index: number,
@@ -595,6 +602,9 @@ export default function BankAnalyser() {
   const doSaveStatement = useCallback(async (accountKey: string, data: BankStatementData, file: File) => {
     const finalStmtId = btoa(accountKey + file.name + file.size).replace(/[^a-zA-Z0-9]/g, "").substring(0, 40);
     const { statement: newStmt, transactions: txns } = mapBankStatementDataToStatementAndTransactions(data, finalStmtId, accountKey, file.name);
+    if (hasSummaryWithoutRows(data)) {
+      throw new Error("Transaction rows could not be parsed from this statement. Please re-upload after parser update.");
+    }
     newStmt.transactionCount = txns.length;
     newStmt.accountNumber = data.accountNumber ?? (ACCOUNTS.find(a => a.key === accountKey) as { accountNumber?: string } | undefined)?.accountNumber ?? "";
     await saveStatement(newStmt);
@@ -801,6 +811,9 @@ function OverviewTab({
       if (!assignedTab) {
         throw new Error(`Unknown account: ${parsed.accountNumber ?? "—"}. Add to ACCOUNT_TAB_MAP if needed.`);
       }
+      if (hasSummaryWithoutRows(parsed)) {
+        throw new Error("Could not parse transaction rows from this PDF yet. I’ve updated the parser—please re-upload once.");
+      }
       setUploads(prev => prev.map(u => u.id === entry.id ? { ...u, status: "done", data: parsed, assignedTab } : u));
       toast.success(`${parsed.accountHolder} — ${parsed.transactions.length} txns | ₹${parsed.closingBalance.toLocaleString("en-IN")} closing`);
       await onSaveParsedStatement(assignedTab, parsed, entry.file);
@@ -828,6 +841,9 @@ function OverviewTab({
       const parsed = parseBankStatement(text);
       const assignedTab = getTabForAccount(parsed.accountNumber ?? "") || detectAccountFromBankStatementData(parsed);
       if (!assignedTab) throw new Error(`Unknown account: ${parsed.accountNumber ?? "—"}`);
+      if (hasSummaryWithoutRows(parsed)) {
+        throw new Error("Could not parse transaction rows from this PDF yet. I’ve updated the parser—please re-upload once.");
+      }
       setUploads(prev => prev.map(u => u.id === entry.id ? { ...u, status: "done", data: parsed, assignedTab } : u));
       toast.success(`${parsed.transactions.length} transactions saved`);
       await onSaveParsedStatement(assignedTab, parsed, entry.file);
