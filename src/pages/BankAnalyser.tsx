@@ -1135,12 +1135,12 @@ function AccountTab({ account, onRefresh, customLookup, onUpdateLookup }) {
       toast.loading(`Re-uploading ${target.fileName}…`, { id: `repair-${statementId}` });
 
       try {
-        const result = await parseDocument(file, "bank_statement");
-        if (!result.success || !result.data) {
-          throw new Error(typeof result.error === "string" ? result.error : "Failed to parse PDF");
+        const { data: parsed } = await parseBankStatementWithAI(file);
+        if (!parsed) {
+          throw new Error("Failed to parse PDF");
         }
 
-        const parsed = result.data as BankStatementData;
+        const bankData = parsed as BankStatementData;
         const accountKey = account.key;
         const { transactions: txns } = mapBankStatementDataToStatementAndTransactions(parsed, statementId, accountKey, target.fileName);
 
