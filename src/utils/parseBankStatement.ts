@@ -409,7 +409,7 @@ export function parseBankStatement(rawText: string): BankStatementData {
   const joined = lines.join(" ");
   // Also filter out lines that are just page headers/footers
   const filteredLines = lines.filter(
-    (l) => !/^(CSB\s+Bank|Trusted\s+Heritage|1800\s+266|customercare@|CIN:|www\.csbbank)/i.test(l)
+    (l) => !/^(CSB\s+Bank|Trusted\s+Heritage|1800\s+266|customercare@|CIN:|www\.csb|Website:|Nominee\s+Details|Legends\s+for\s+Trans|Disclaimer:|Statement\s+Generated|END\s+OF\s+STATEMENT|\*{3,})/i.test(l)
   );
 
   const rawLinesFilt = rawLines.filter(
