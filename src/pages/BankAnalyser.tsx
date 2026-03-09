@@ -2253,19 +2253,26 @@ function ReportsTab({ statements, allTransactions }) {
     return Object.values(months).sort((a, b) => a.sortKey.localeCompare(b.sortKey));
   }, [filtered]);
 
-  // Top parties
+  // Top parties — group by counterparty NAME (not type), separate credit-only and debit-only
   const partyTotals = useMemo(() => {
     const map: Record<string, { name: string; credits: number; debits: number }> = {};
     filtered.forEach((t: any) => {
-      if (!map[t.counterparty]) map[t.counterparty] = { name: t.counterparty, credits: 0, debits: 0 };
-      map[t.counterparty].credits += t.credit;
-      map[t.counterparty].debits += t.debit;
+      const partyName = (t.counterparty || "").trim() || "Unknown";
+      if (!map[partyName]) map[partyName] = { name: partyName, credits: 0, debits: 0 };
+      map[partyName].credits += t.credit;
+      map[partyName].debits += t.debit;
     });
     return Object.values(map);
   }, [filtered]);
 
+  // Top 10 Credits: parties that received credit amounts (payments FROM them)
   const topCredits = [...partyTotals].filter(p => p.credits > 0).sort((a, b) => b.credits - a.credits).slice(0, 10);
-  const topDebits = [...partyTotals].filter(p => p.debits > 0).sort((a, b) => b.debits - a.debits).slice(0, 10);
+  // Top 10 Debits: parties that received debit amounts (payments TO them) — exclude type-label names
+  const TYPE_LABELS_SET = new Set(["NEFT Receipt", "Digital Receipt", "UPI Receipt", "UPI Payment", "Cheque", "ATM Withdrawal", "NEFT Payment", "Other"]);
+  const topDebits = [...partyTotals]
+    .filter(p => p.debits > 0 && !TYPE_LABELS_SET.has(p.name))
+    .sort((a, b) => b.debits - a.debits)
+    .slice(0, 10);
 
   // Type breakdown
   const typeBreakdown = useMemo(() => {
