@@ -807,6 +807,7 @@ function tryAddGenericLineItem(
     total > 0 && qty > 0 && unitPrice >= 0 &&
     (Math.abs(total - qty * unitPrice) < 0.02 || (Math.abs(total - qty * unitPrice) / total) <= tolerance);
 
+  // Extended patterns for various PO formats
   if (nums.length >= 4) {
     const qty1 = nums[1];
     const unitPrice1 = nums[2];
@@ -839,6 +840,27 @@ function tryAddGenericLineItem(
         suggested_product_type: mapHsnToProductType(""),
       });
       return true;
+    }
+  }
+  // Fallback: if we have 2+ numbers and the last one looks like an amount (has decimal)
+  if (nums.length >= 2) {
+    const lastAmount = nums[nums.length - 1];
+    // If the last number is a reasonable amount (> 10 rupees)
+    if (lastAmount > 10 && descRaw.length > 3) {
+      // Try to find qty from first small number
+      const possibleQty = nums.find((n, i) => n > 0 && n <= 10000 && i < nums.length - 1);
+      if (possibleQty) {
+        lineItems.push({
+          ...emptyLineItem(),
+          description: descRaw || "Item",
+          qty: possibleQty,
+          unit_price: lastAmount / possibleQty,
+          base_amount: lastAmount,
+          total_amount: lastAmount,
+          suggested_product_type: mapHsnToProductType(""),
+        });
+        return true;
+      }
     }
   }
   return false;
