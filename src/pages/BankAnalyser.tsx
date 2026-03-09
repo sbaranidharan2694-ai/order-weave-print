@@ -2235,18 +2235,22 @@ function ReportsTab({ statements, allTransactions }) {
     return { ...a, credits: txns.reduce((s, t) => s + t.credit, 0), debits: txns.reduce((s, t) => s + t.debit, 0), count: txns.length };
   });
 
-  // Monthly trend (last 6 months)
+  // Monthly trend — group by calendar month-year (MMM-YY labels)
   const monthlyData = useMemo(() => {
-    const months: Record<string, { month: string; credits: number; debits: number }> = {};
+    const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    const months: Record<string, { month: string; credits: number; debits: number; sortKey: string }> = {};
     filtered.forEach((t: any) => {
-      const parts = t.date.split("-");
-      if (parts.length !== 3) return;
-      const key = `${parts[1]}/${parts[2]}`;
-      if (!months[key]) months[key] = { month: key, credits: 0, debits: 0 };
-      months[key].credits += t.credit;
-      months[key].debits += t.debit;
+      const d = parseTransactionDateGlobal(t.date);
+      if (!d) return;
+      const m = d.getMonth(); // 0-11
+      const y = d.getFullYear();
+      const sortKey = `${y}-${String(m).padStart(2, "0")}`;
+      const label = `${MONTH_NAMES[m]}-${String(y).slice(-2)}`;
+      if (!months[sortKey]) months[sortKey] = { month: label, credits: 0, debits: 0, sortKey };
+      months[sortKey].credits += t.credit;
+      months[sortKey].debits += t.debit;
     });
-    return Object.values(months).sort((a, b) => a.month.localeCompare(b.month)).slice(-6);
+    return Object.values(months).sort((a, b) => a.sortKey.localeCompare(b.sortKey));
   }, [filtered]);
 
   // Top parties
