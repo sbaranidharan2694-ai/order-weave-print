@@ -575,12 +575,16 @@ export type Database = {
           amount: number | null
           created_at: string | null
           description: string | null
+          gst_amount: number | null
+          gst_rate: number | null
           hsn_code: string | null
           id: string
           line_item_no: number | null
+          line_total: number | null
           mapped_product_type_id: string | null
           purchase_order_id: string
           qty: number | null
+          sort_order: number | null
           status: string | null
           unit_price: number | null
           uom: string | null
@@ -589,12 +593,16 @@ export type Database = {
           amount?: number | null
           created_at?: string | null
           description?: string | null
+          gst_amount?: number | null
+          gst_rate?: number | null
           hsn_code?: string | null
           id?: string
           line_item_no?: number | null
+          line_total?: number | null
           mapped_product_type_id?: string | null
           purchase_order_id: string
           qty?: number | null
+          sort_order?: number | null
           status?: string | null
           unit_price?: number | null
           uom?: string | null
@@ -603,12 +611,16 @@ export type Database = {
           amount?: number | null
           created_at?: string | null
           description?: string | null
+          gst_amount?: number | null
+          gst_rate?: number | null
           hsn_code?: string | null
           id?: string
           line_item_no?: number | null
+          line_total?: number | null
           mapped_product_type_id?: string | null
           purchase_order_id?: string
           qty?: number | null
+          sort_order?: number | null
           status?: string | null
           unit_price?: number | null
           uom?: string | null
@@ -632,58 +644,94 @@ export type Database = {
       }
       purchase_orders: {
         Row: {
+          amount_in_words: string | null
+          cgst: number | null
           contact_no: string | null
           contact_person: string | null
           created_at: string | null
           currency: string | null
+          customer_email: string | null
           delivery_address: string | null
           delivery_date: string | null
+          discount_amount: number | null
+          file_name: string | null
           gstin: string | null
           id: string
+          igst: number | null
+          linked_order_id: string | null
+          notes: string | null
           parsed_data: Json | null
+          parsed_raw: Json | null
           payment_terms: string | null
           po_date: string | null
           po_file_url: string | null
           po_number: string
+          sgst: number | null
+          shipping_address: string | null
           status: string | null
+          subtotal: number | null
           tax_amount: number | null
           total_amount: number | null
           vendor_name: string | null
         }
         Insert: {
+          amount_in_words?: string | null
+          cgst?: number | null
           contact_no?: string | null
           contact_person?: string | null
           created_at?: string | null
           currency?: string | null
+          customer_email?: string | null
           delivery_address?: string | null
           delivery_date?: string | null
+          discount_amount?: number | null
+          file_name?: string | null
           gstin?: string | null
           id?: string
+          igst?: number | null
+          linked_order_id?: string | null
+          notes?: string | null
           parsed_data?: Json | null
+          parsed_raw?: Json | null
           payment_terms?: string | null
           po_date?: string | null
           po_file_url?: string | null
           po_number: string
+          sgst?: number | null
+          shipping_address?: string | null
           status?: string | null
+          subtotal?: number | null
           tax_amount?: number | null
           total_amount?: number | null
           vendor_name?: string | null
         }
         Update: {
+          amount_in_words?: string | null
+          cgst?: number | null
           contact_no?: string | null
           contact_person?: string | null
           created_at?: string | null
           currency?: string | null
+          customer_email?: string | null
           delivery_address?: string | null
           delivery_date?: string | null
+          discount_amount?: number | null
+          file_name?: string | null
           gstin?: string | null
           id?: string
+          igst?: number | null
+          linked_order_id?: string | null
+          notes?: string | null
           parsed_data?: Json | null
+          parsed_raw?: Json | null
           payment_terms?: string | null
           po_date?: string | null
           po_file_url?: string | null
           po_number?: string
+          sgst?: number | null
+          shipping_address?: string | null
           status?: string | null
+          subtotal?: number | null
           tax_amount?: number | null
           total_amount?: number | null
           vendor_name?: string | null
