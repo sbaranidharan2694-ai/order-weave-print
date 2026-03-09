@@ -437,6 +437,13 @@ function parseTransactions(lines: string[], statementId: string, customLookup: R
       remaining = tempRemain;
     }
 
+    // Bug 1 fix: Inward cheque returns must be debit-only
+    const upperDetails = (remaining || "").toUpperCase();
+    if (/CHQ\s*RETURN|CHEQUE\s*RETURN|CAPS_ACCT_DR|I\/W\s*CHQ\s*RETURN|I\/W\s*Chq\s*return/i.test(remaining)) {
+      if (credit > 0 && debit === 0) { debit = credit; credit = 0; }
+      else if (credit > 0 && debit > 0) { credit = 0; }
+    }
+
     if (debit === 0 && credit === 0 && balance === 0) continue;
 
     let refNo = "";
