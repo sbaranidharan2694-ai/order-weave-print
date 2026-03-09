@@ -1,30 +1,113 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import type { Transaction } from "@/hooks/useAccountTransactions";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { ChevronLeft, ChevronRight, Search, Calendar } from "lucide-react";
+
+/** Known parties for auto-categorization */
+const KNOWN_PARTIES: Record<string, { name: string; type: string; category: string }> = {
+  FUJITEC: { name: "Fujitec India Pvt Ltd", type: "customer", category: "Corporate" },
+  WIPRO: { name: "Wipro", type: "customer", category: "Corporate" },
+  HFL: { name: "HFL Healthcare", type: "customer", category: "Corporate" },
+  "SEA HYDRO": { name: "Sea Hydrosystems India", type: "customer", category: "Corporate" },
+  KYOWA: { name: "Kyowa", type: "customer", category: "Corporate" },
+  TTK: { name: "TTK", type: "customer", category: "Corporate" },
+  CGRD: { name: "CGRD Chemicals", type: "customer", category: "Corporate" },
+  PRECISION: { name: "Precision", type: "customer", category: "Corporate" },
+  AMPTON: { name: "Ampton", type: "customer", category: "Corporate" },
+  GMT: { name: "GMT", type: "customer", category: "Corporate" },
+  CONTEMPORARY: { name: "Contemporary", type: "customer", category: "Corporate" },
+  GUINDY: { name: "Guindy", type: "customer", category: "Corporate" },
+  SHREEMARU: { name: "Shree Maruthi Printers", type: "vendor", category: "Printing Supplier" },
+  "KUMAR MESS": { name: "Kumar Mess", type: "vendor", category: "Food & Canteen" },
+  HINDUSTAN: { name: "Hindustan", type: "vendor", category: "Supplier" },
+  "PRINTERS C": { name: "Printers Club", type: "vendor", category: "Printing Supplier" },
+  "RATHNA PRI": { name: "Rathna Printers", type: "vendor", category: "Printing Supplier" },
+  "SWEETS CH": { name: "Sweets Chennai", type: "vendor", category: "Food" },
+  SELF: { name: "Self / Cash Withdrawal", type: "owner", category: "Cash Withdrawal" },
+  GOOGLEINDIAD: { name: "Google India", type: "vendor", category: "Services" },
+  GOOGLE: { name: "Google Pay", type: "vendor", category: "Digital Payment" },
+  SWIGGY: { name: "Swiggy", type: "vendor", category: "Food" },
+  ZOMATO: { name: "Zomato", type: "vendor", category: "Food" },
+};
+
+function titleCase(s: string): string {
+  return s.toLowerCase().replace(/(?:^|\s)\S/g, (c) => c.toUpperCase());
+}
 
 function extractParty(details: string | null): string {
   if (!details) return "Unknown";
-  const upi = details.match(/UPI\/(?:DR|CR)\/\d+\/([^/]+)/i);
-  if (upi) return upi[1].trim();
-  const neft = details.match(/NEFT\s+Cr--[A-Z0-9]+-([^-]+)/i);
-  if (neft) return neft[1].trim();
-  const imps = details.match(/IMPS--\d+-([A-Z\s]+)/i);
-  if (imps) return imps[1].trim();
-  if (/ATW\s+using/i.test(details)) return "ATM Withdrawal";
-  if (/Chq\s+Paid/i.test(details)) return "Cheque Payment";
-  if (/Swiggy/i.test(details)) return "Swiggy";
-  if (/GOOGLE/i.test(details)) return "Google Pay";
-  return details.substring(0, 25).trim() || "Unknown";
+  const d = details.trim();
+  
+  // UPI/DR or UPI/CR - party after 3rd slash
+  const upi = d.match(/UPI\/(?:DR|CR)\/\d+\/([^/]+)/i);
+  if (upi) return titleCase(upi[1].trim().slice(0, 25));
+  
+  // NEFT CR - party after last dash
+  const neft = d.match(/NEFT\s*Cr--[A-Z0-9]+-([^-]+)/i);
+  if (neft) return titleCase(neft[1].trim().slice(0, 25));
+  
+  // NEFT Dr
+  const neftDr = d.match(/NEFT\s*Dr--[A-Z0-9]+-([^-]+)/i);
+  if (neftDr) return titleCase(neftDr[1].trim().slice(0, 25));
+  
+  // IMPS
+  const imps = d.match(/IMPS--\d+-([A-Z\s]+)/i);
+  if (imps) return titleCase(imps[1].trim().slice(0, 25));
+  
+  // CHQ PAID
+  if (/CHQ\s+PAID.*TP.*CASH/i.test(d)) return "Cash Withdrawal";
+  if (/CHQ\s+DEP/i.test(d)) {
+    const m = d.match(/CHQ\s*DEP\s*-\s*([^-]+)/i);
+    return m ? titleCase(m[1].trim().slice(0, 25)) : "Cheque Deposit";
+  }
+  
+  // ATM
+  if (/ATW\s+using|ATM|Issuer\s+ATM/i.test(d)) return "ATM Withdrawal";
+  
+  // Bank Charges
+  if (/charge|chrg|commission|gst\s+on|cess\s+on/i.test(d)) return "Bank Charges";
+  
+  // GOOGLE
+  if (/GOOGLE/i.test(d)) return "Google Pay";
+  
+  return titleCase(d.substring(0, 25).trim()) || "Unknown";
+}
+
+function getTransactionType(details: string | null): { label: string; color: string } {
+  if (!details) return { label: "Other", color: "bg-muted text-muted-foreground" };
+  const d = details.toUpperCase();
+  
+  if (d.includes("UPI/CR")) return { label: "UPI", color: "bg-blue-500/15 text-blue-700 dark:text-blue-400" };
+  if (d.includes("UPI/DR")) return { label: "UPI", color: "bg-blue-500/15 text-blue-700 dark:text-blue-400" };
+  if (d.includes("NEFT") && (d.includes("CR") || d.includes("CREDIT"))) return { label: "NEFT", color: "bg-purple-500/15 text-purple-700 dark:text-purple-400" };
+  if (d.includes("NEFT")) return { label: "NEFT", color: "bg-purple-500/15 text-purple-700 dark:text-purple-400" };
+  if (d.includes("IMPS")) return { label: "IMPS", color: "bg-teal-500/15 text-teal-700 dark:text-teal-400" };
+  if (d.includes("CHQ") || d.includes("CLEARING")) return { label: "Cheque", color: "bg-orange-500/15 text-orange-700 dark:text-orange-400" };
+  if (d.includes("ATW") || d.includes("ATM")) return { label: "ATM", color: "bg-gray-500/15 text-gray-700 dark:text-gray-400" };
+  if (d.includes("B/F") || d.includes("BROUGHT FORWARD")) return { label: "B/F", color: "bg-gray-500/15 text-gray-600" };
+  
+  return { label: "Other", color: "bg-muted text-muted-foreground" };
+}
+
+function matchKnownParty(partyName: string): { name: string; type: string; category: string } | null {
+  const upper = partyName.toUpperCase();
+  for (const [key, value] of Object.entries(KNOWN_PARTIES)) {
+    if (upper.includes(key)) return value;
+  }
+  return null;
 }
 
 const fmt = (n: number) =>
   n > 0 ? "₹" + n.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "";
 
+const ROWS_PER_PAGE = 25;
+
 interface TransactionTableProps {
   transactions: Transaction[];
   defaultView?: "byDate" | "byParty";
-  /** When true, show "Showing X of Y (filtered)" */
   isDateFiltered?: boolean;
   totalUnfiltered?: number;
 }
@@ -38,31 +121,44 @@ export function TransactionTable({
   const [viewMode, setViewMode] = useState<"byDate" | "byParty">(defaultView);
   const [expandedParties, setExpandedParties] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
 
   useEffect(() => {
     if (transactions.length > 0 && viewMode === "byParty") {
       setExpandedParties(
-        new Set(transactions.map((t) => extractParty(t.details ?? "")))
+        new Set(transactions.slice(0, 5).map((t) => extractParty(t.details ?? "")))
       );
     }
   }, [transactions.length, viewMode]);
 
-  const filtered =
-    search.trim() === ""
-      ? transactions
-      : transactions.filter(
-          (t) =>
-            (t.details ?? "").toLowerCase().includes(search.toLowerCase()) ||
-            extractParty(t.details ?? "").toLowerCase().includes(search.toLowerCase()) ||
-            (t.date ?? "").toLowerCase().includes(search.toLowerCase())
-        );
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search, viewMode]);
+
+  const filtered = useMemo(() => {
+    if (search.trim() === "") return transactions;
+    const s = search.toLowerCase();
+    return transactions.filter(
+      (t) =>
+        (t.details ?? "").toLowerCase().includes(s) ||
+        extractParty(t.details ?? "").toLowerCase().includes(s) ||
+        (t.date ?? "").toLowerCase().includes(s) ||
+        (t.counterparty ?? "").toLowerCase().includes(s)
+    );
+  }, [transactions, search]);
+
+  const totalPages = Math.ceil(filtered.length / ROWS_PER_PAGE);
+  const paginatedData = useMemo(() => {
+    const start = (currentPage - 1) * ROWS_PER_PAGE;
+    return filtered.slice(start, start + ROWS_PER_PAGE);
+  }, [filtered, currentPage]);
 
   const totalDebit = filtered.reduce((s, t) => s + (t.debit || 0), 0);
   const totalCredit = filtered.reduce((s, t) => s + (t.credit || 0), 0);
 
   const byParty = filtered.reduce(
     (g, tx) => {
-      const p = extractParty(tx.details ?? "");
+      const p = tx.counterparty || extractParty(tx.details ?? "");
       (g[p] = g[p] || []).push(tx);
       return g;
     },
@@ -77,6 +173,7 @@ export function TransactionTable({
 
   return (
     <div className="space-y-4">
+      {/* Controls */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex gap-1 rounded-lg bg-muted p-1">
           {(["byDate", "byParty"] as const).map((mode) => (
@@ -95,103 +192,170 @@ export function TransactionTable({
             </button>
           ))}
         </div>
-        <Input
-          type="text"
-          placeholder="Search party, details, date…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="max-w-xs h-8 text-sm"
-        />
+        
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            type="text"
+            placeholder="Search party, details, date…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-9 max-w-xs h-9 text-sm"
+          />
+        </div>
+        
         <span className="text-xs text-muted-foreground">
           {isDateFiltered && totalUnfiltered != null
-            ? `Showing ${filtered.length} of ${totalUnfiltered} transactions (filtered)`
-            : `${filtered.length} of ${transactions.length} transactions`}
+            ? `Showing ${filtered.length} of ${totalUnfiltered} (filtered)`
+            : `${filtered.length} transactions`}
         </span>
       </div>
 
+      {/* By Date View */}
       {viewMode === "byDate" && (
-        <div className="overflow-x-auto rounded-xl border">
-          <table className="w-full text-sm min-w-[900px]" style={{ tableLayout: "fixed" }}>
-            <thead className="bg-muted/50">
-              <tr className="text-muted-foreground">
-                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-left w-[110px] min-w-[110px]">Date</th>
-                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-left w-[200px] min-w-[200px]">Details</th>
-                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-left w-[140px] min-w-[140px]">Party</th>
-                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-left w-[100px] min-w-[100px]">Type</th>
-                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-left w-[130px] min-w-[130px]">RefNo</th>
-                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-right w-[90px] min-w-[90px]">Debit</th>
-                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-right w-[90px] min-w-[90px]">Credit</th>
-                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-right w-[120px] min-w-[120px] whitespace-nowrap">Balance</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {filtered.map((tx, i) => (
-                <tr key={tx.id || i} className="hover:bg-muted/30 transition-colors">
-                  <td className="px-4 py-2.5 text-xs text-muted-foreground whitespace-nowrap w-[110px] min-w-[110px]">
-                    {tx.date}
-                  </td>
-                  <td className="px-4 py-2.5 text-xs w-[200px] min-w-[200px] overflow-hidden">
-                    <span className="truncate block" title={tx.details ?? ""}>
-                      {tx.details ?? "—"}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2.5 text-xs whitespace-nowrap w-[140px] min-w-[140px]">
-                    {tx.counterparty || extractParty(tx.details ?? "")}
-                  </td>
-                  <td className="px-4 py-2.5 w-[100px] min-w-[100px]">
-                    <span
+        <>
+          <div className="overflow-x-auto rounded-xl border bg-card">
+            <table className="w-full text-sm" style={{ tableLayout: "fixed" }}>
+              <colgroup>
+                <col className="w-[100px]" />
+                <col className="w-[280px]" />
+                <col className="w-[140px]" />
+                <col className="w-[80px]" />
+                <col className="w-[110px]" />
+                <col className="w-[110px]" />
+                <col className="w-[120px]" />
+              </colgroup>
+              <thead className="bg-muted/50 border-b">
+                <tr className="text-muted-foreground">
+                  <th className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-left">Date</th>
+                  <th className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-left">Details</th>
+                  <th className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-left">Party</th>
+                  <th className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-left">Type</th>
+                  <th className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-right">Debit</th>
+                  <th className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-right">Credit</th>
+                  <th className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-right">Balance</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {paginatedData.map((tx, i) => {
+                  const party = tx.counterparty || extractParty(tx.details ?? "");
+                  const txType = getTransactionType(tx.details);
+                  const knownParty = matchKnownParty(party);
+                  const isEven = i % 2 === 0;
+                  
+                  return (
+                    <tr 
+                      key={tx.id || i} 
                       className={cn(
-                        "text-xs px-2 py-0.5 rounded-full font-medium",
-                        (tx.credit ?? 0) > 0
-                          ? "bg-green-500/10 text-green-700 dark:text-green-400"
-                          : "bg-red-500/10 text-red-700 dark:text-red-400"
+                        "hover:bg-muted/40 transition-colors",
+                        isEven ? "bg-background" : "bg-muted/20"
                       )}
                     >
-                      {tx.type ?? "Other"}
-                    </span>
+                      <td className="px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap font-mono">
+                        {tx.date}
+                      </td>
+                      <td className="px-3 py-2.5 text-xs">
+                        <span 
+                          className="block truncate" 
+                          title={tx.details ?? ""}
+                        >
+                          {tx.details?.slice(0, 45) ?? "—"}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2.5 text-xs">
+                        <div className="flex items-center gap-1.5">
+                          <span className="truncate font-medium" title={party}>
+                            {knownParty ? knownParty.name.slice(0, 18) : party.slice(0, 18)}
+                          </span>
+                          {knownParty && (
+                            <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 shrink-0">
+                              {knownParty.type === "customer" ? "C" : knownParty.type === "vendor" ? "V" : "O"}
+                            </Badge>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-3 py-2.5">
+                        <Badge className={cn("text-[10px] px-2 py-0.5 font-medium", txType.color)}>
+                          {txType.label}
+                        </Badge>
+                      </td>
+                      <td className="px-3 py-2.5 text-xs text-right font-medium text-red-600 dark:text-red-400 tabular-nums">
+                        {fmt(tx.debit ?? 0)}
+                      </td>
+                      <td className="px-3 py-2.5 text-xs text-right font-medium text-green-600 dark:text-green-400 tabular-nums">
+                        {fmt(tx.credit ?? 0)}
+                      </td>
+                      <td className="px-3 py-2.5 text-xs text-right font-medium tabular-nums">
+                        ₹{(tx.balance ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot className="bg-muted/50 border-t-2">
+                <tr>
+                  <td colSpan={4} className="px-3 py-3 text-xs font-bold text-muted-foreground">
+                    TOTAL — {filtered.length} transactions
                   </td>
-                  <td className="px-4 py-2.5 text-xs font-mono text-muted-foreground w-[130px] min-w-[130px] truncate" title={tx.ref_no ?? ""}>
-                    {tx.ref_no ?? "—"}
+                  <td className="px-3 py-3 text-xs text-right font-bold text-red-600 dark:text-red-400 tabular-nums">
+                    ₹{totalDebit.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                   </td>
-                  <td className="px-4 py-2.5 text-xs text-right font-medium text-destructive w-[90px] min-w-[90px]">
-                    {fmt(tx.debit ?? 0)}
+                  <td className="px-3 py-3 text-xs text-right font-bold text-green-600 dark:text-green-400 tabular-nums">
+                    ₹{totalCredit.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                   </td>
-                  <td className="px-4 py-2.5 text-xs text-right font-medium text-green-600 dark:text-green-400 w-[90px] min-w-[90px]">
-                    {fmt(tx.credit ?? 0)}
-                  </td>
-                  <td className="px-4 py-2.5 text-xs text-right w-[120px] min-w-[120px] whitespace-nowrap" title={`₹${(tx.balance ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`}>
-                    ₹{(tx.balance ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                  </td>
+                  <td />
                 </tr>
-              ))}
-            </tbody>
-            <tfoot className="bg-muted/50 border-t-2">
-              <tr>
-                <td colSpan={5} className="px-4 py-3 text-xs font-bold text-muted-foreground">
-                  TOTAL — {filtered.length} transactions
-                </td>
-                <td className="px-4 py-3 text-xs text-right font-bold text-destructive">
-                  ₹{totalDebit.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                </td>
-                <td className="px-4 py-3 text-xs text-right font-bold text-green-600 dark:text-green-400">
-                  ₹{totalCredit.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                </td>
-                <td />
-              </tr>
-            </tfoot>
-          </table>
-        </div>
+              </tfoot>
+            </table>
+          </div>
+
+          {/* Pagination */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between px-1">
+              <span className="text-xs text-muted-foreground">
+                Showing {(currentPage - 1) * ROWS_PER_PAGE + 1}–{Math.min(currentPage * ROWS_PER_PAGE, filtered.length)} of {filtered.length}
+              </span>
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                  disabled={currentPage === 1}
+                  className="h-8 px-2"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                  <span className="sr-only">Previous</span>
+                </Button>
+                <span className="text-sm px-2">
+                  Page {currentPage} of {totalPages}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={currentPage === totalPages}
+                  className="h-8 px-2"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                  <span className="sr-only">Next</span>
+                </Button>
+              </div>
+            </div>
+          )}
+        </>
       )}
 
+      {/* By Party View */}
       {viewMode === "byParty" && (
         <div className="space-y-2">
           {sortedParties.map(([party, partyTxns]) => {
             const pCredits = partyTxns.reduce((s, t) => s + (t.credit || 0), 0);
             const pDebits = partyTxns.reduce((s, t) => s + (t.debit || 0), 0);
             const isOpen = expandedParties.has(party);
+            const knownParty = matchKnownParty(party);
 
             return (
-              <div key={party} className="border rounded-xl overflow-hidden">
+              <div key={party} className="border rounded-xl overflow-hidden bg-card">
                 <button
                   type="button"
                   className="flex w-full items-center justify-between px-4 py-3 bg-muted/30 hover:bg-muted/50 transition-colors text-left"
@@ -205,19 +369,26 @@ export function TransactionTable({
                   }
                 >
                   <div className="flex items-center gap-3">
-                    <span className="text-sm font-semibold">{party}</span>
+                    <span className="text-sm font-semibold">
+                      {knownParty ? knownParty.name : party}
+                    </span>
+                    {knownParty && (
+                      <Badge variant="secondary" className="text-[10px] px-1.5">
+                        {knownParty.category}
+                      </Badge>
+                    )}
                     <span className="text-xs bg-muted text-muted-foreground px-2 py-0.5 rounded-full">
                       {partyTxns.length} txn{partyTxns.length !== 1 ? "s" : ""}
                     </span>
                   </div>
                   <div className="flex items-center gap-4">
                     {pCredits > 0 && (
-                      <span className="text-sm font-semibold text-green-600 dark:text-green-400">
+                      <span className="text-sm font-semibold text-green-600 dark:text-green-400 tabular-nums">
                         +{fmt(pCredits)}
                       </span>
                     )}
                     {pDebits > 0 && (
-                      <span className="text-sm font-semibold text-destructive">
+                      <span className="text-sm font-semibold text-red-600 dark:text-red-400 tabular-nums">
                         -{fmt(pDebits)}
                       </span>
                     )}
@@ -229,40 +400,39 @@ export function TransactionTable({
                 {isOpen && (
                   <table className="w-full text-sm">
                     <tbody className="divide-y divide-border">
-                      {partyTxns.map((tx, i) => (
-                        <tr key={tx.id || i} className="hover:bg-muted/20 transition-colors">
-                          <td className="px-4 py-2 text-xs text-muted-foreground whitespace-nowrap w-28">
-                            {tx.date}
-                          </td>
-                          <td className="px-4 py-2 text-xs max-w-sm truncate">
-                            {tx.details ?? "—"}
-                          </td>
-                          <td className="px-4 py-2">
-                            <span
-                              className={cn(
-                                "text-xs px-2 py-0.5 rounded-full",
-                                (tx.credit ?? 0) > 0
-                                  ? "bg-green-500/10 text-green-700"
-                                  : "bg-red-500/10 text-red-700"
-                              )}
-                            >
-                              {tx.type ?? "Other"}
-                            </span>
-                          </td>
-                          <td className="px-4 py-2 text-xs font-mono text-muted-foreground w-36">
-                            {tx.ref_no ?? "—"}
-                          </td>
-                          <td className="px-4 py-2 text-xs text-right font-medium text-destructive w-28">
-                            {fmt(tx.debit ?? 0)}
-                          </td>
-                          <td className="px-4 py-2 text-xs text-right font-medium text-green-600 w-28">
-                            {fmt(tx.credit ?? 0)}
-                          </td>
-                          <td className="px-4 py-2 text-xs text-right w-28">
-                            ₹{(tx.balance ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                          </td>
-                        </tr>
-                      ))}
+                      {partyTxns.map((tx, i) => {
+                        const txType = getTransactionType(tx.details);
+                        return (
+                          <tr 
+                            key={tx.id || i} 
+                            className={cn(
+                              "hover:bg-muted/30 transition-colors",
+                              i % 2 === 0 ? "bg-background" : "bg-muted/10"
+                            )}
+                          >
+                            <td className="px-4 py-2 text-xs text-muted-foreground whitespace-nowrap w-24 font-mono">
+                              {tx.date}
+                            </td>
+                            <td className="px-4 py-2 text-xs max-w-sm truncate" title={tx.details ?? ""}>
+                              {tx.details?.slice(0, 50) ?? "—"}
+                            </td>
+                            <td className="px-4 py-2 w-20">
+                              <Badge className={cn("text-[10px] px-2 py-0.5", txType.color)}>
+                                {txType.label}
+                              </Badge>
+                            </td>
+                            <td className="px-4 py-2 text-xs text-right font-medium text-red-600 dark:text-red-400 w-28 tabular-nums">
+                              {fmt(tx.debit ?? 0)}
+                            </td>
+                            <td className="px-4 py-2 text-xs text-right font-medium text-green-600 dark:text-green-400 w-28 tabular-nums">
+                              {fmt(tx.credit ?? 0)}
+                            </td>
+                            <td className="px-4 py-2 text-xs text-right w-28 tabular-nums">
+                              ₹{(tx.balance ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 )}
