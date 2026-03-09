@@ -437,6 +437,13 @@ function parseTransactions(lines: string[], statementId: string, customLookup: R
       remaining = tempRemain;
     }
 
+    // Bug 1 fix: Inward cheque returns must be debit-only
+    const upperDetails = (remaining || "").toUpperCase();
+    if (/CHQ\s*RETURN|CHEQUE\s*RETURN|CAPS_ACCT_DR|I\/W\s*CHQ\s*RETURN|I\/W\s*Chq\s*return/i.test(remaining)) {
+      if (credit > 0 && debit === 0) { debit = credit; credit = 0; }
+      else if (credit > 0 && debit > 0) { credit = 0; }
+    }
+
     if (debit === 0 && credit === 0 && balance === 0) continue;
 
     let refNo = "";
@@ -1021,19 +1028,19 @@ function OverviewTab({
                     <span className="text-lg">{a.icon}</span>
                     <p className="font-semibold text-sm text-foreground">{a.label}</p>
                   </div>
-                  <div className="grid grid-cols-3 gap-2 text-center">
-                    <div>
-                      <p className="text-xs text-muted-foreground">Credits</p>
-                      <p className="text-sm font-bold text-success">{fmt(a.totalCredits)}</p>
+                  <div className="flex flex-wrap justify-center gap-x-4 gap-y-2">
+                    <div className="text-center min-w-[80px]">
+                      <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Credits</p>
+                      <p className="text-xs font-bold text-green-600 dark:text-green-400 tabular-nums whitespace-nowrap">{fmt(a.totalCredits)}</p>
                     </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground">Debits</p>
-                      <p className="text-sm font-bold text-destructive">{fmt(a.totalDebits)}</p>
+                    <div className="text-center min-w-[80px]">
+                      <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Debits</p>
+                      <p className="text-xs font-bold text-red-600 dark:text-red-400 tabular-nums whitespace-nowrap">{fmt(a.totalDebits)}</p>
                     </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground">Net</p>
-                      <p className={cn("text-sm font-bold", a.totalCredits - a.totalDebits >= 0 ? "text-success" : "text-destructive")}>
-                        {fmt(a.totalCredits - a.totalDebits)}
+                    <div className="text-center min-w-[80px]">
+                      <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Net</p>
+                      <p className={cn("text-xs font-bold tabular-nums whitespace-nowrap", a.totalCredits - a.totalDebits >= 0 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400")}>
+                        {a.totalCredits - a.totalDebits >= 0 ? "+" : ""}{fmt(a.totalCredits - a.totalDebits)}
                       </p>
                     </div>
                   </div>
@@ -2228,33 +2235,44 @@ function ReportsTab({ statements, allTransactions }) {
     return { ...a, credits: txns.reduce((s, t) => s + t.credit, 0), debits: txns.reduce((s, t) => s + t.debit, 0), count: txns.length };
   });
 
-  // Monthly trend (last 6 months)
+  // Monthly trend — group by calendar month-year (MMM-YY labels)
   const monthlyData = useMemo(() => {
-    const months: Record<string, { month: string; credits: number; debits: number }> = {};
+    const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    const months: Record<string, { month: string; credits: number; debits: number; sortKey: string }> = {};
     filtered.forEach((t: any) => {
-      const parts = t.date.split("-");
-      if (parts.length !== 3) return;
-      const key = `${parts[1]}/${parts[2]}`;
-      if (!months[key]) months[key] = { month: key, credits: 0, debits: 0 };
-      months[key].credits += t.credit;
-      months[key].debits += t.debit;
+      const d = parseTransactionDateGlobal(t.date);
+      if (!d) return;
+      const m = d.getMonth(); // 0-11
+      const y = d.getFullYear();
+      const sortKey = `${y}-${String(m).padStart(2, "0")}`;
+      const label = `${MONTH_NAMES[m]}-${String(y).slice(-2)}`;
+      if (!months[sortKey]) months[sortKey] = { month: label, credits: 0, debits: 0, sortKey };
+      months[sortKey].credits += t.credit;
+      months[sortKey].debits += t.debit;
     });
-    return Object.values(months).sort((a, b) => a.month.localeCompare(b.month)).slice(-6);
+    return Object.values(months).sort((a, b) => a.sortKey.localeCompare(b.sortKey));
   }, [filtered]);
 
-  // Top parties
+  // Top parties — group by counterparty NAME (not type), separate credit-only and debit-only
   const partyTotals = useMemo(() => {
     const map: Record<string, { name: string; credits: number; debits: number }> = {};
     filtered.forEach((t: any) => {
-      if (!map[t.counterparty]) map[t.counterparty] = { name: t.counterparty, credits: 0, debits: 0 };
-      map[t.counterparty].credits += t.credit;
-      map[t.counterparty].debits += t.debit;
+      const partyName = (t.counterparty || "").trim() || "Unknown";
+      if (!map[partyName]) map[partyName] = { name: partyName, credits: 0, debits: 0 };
+      map[partyName].credits += t.credit;
+      map[partyName].debits += t.debit;
     });
     return Object.values(map);
   }, [filtered]);
 
+  // Top 10 Credits: parties that received credit amounts (payments FROM them)
   const topCredits = [...partyTotals].filter(p => p.credits > 0).sort((a, b) => b.credits - a.credits).slice(0, 10);
-  const topDebits = [...partyTotals].filter(p => p.debits > 0).sort((a, b) => b.debits - a.debits).slice(0, 10);
+  // Top 10 Debits: parties that received debit amounts (payments TO them) — exclude type-label names
+  const TYPE_LABELS_SET = new Set(["NEFT Receipt", "Digital Receipt", "UPI Receipt", "UPI Payment", "Cheque", "ATM Withdrawal", "NEFT Payment", "Other"]);
+  const topDebits = [...partyTotals]
+    .filter(p => p.debits > 0 && !TYPE_LABELS_SET.has(p.name))
+    .sort((a, b) => b.debits - a.debits)
+    .slice(0, 10);
 
   // Type breakdown
   const typeBreakdown = useMemo(() => {

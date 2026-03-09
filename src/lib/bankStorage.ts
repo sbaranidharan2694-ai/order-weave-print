@@ -238,16 +238,26 @@ export async function deleteTransactionsByStatement(statementId: string): Promis
 export async function loadTransactions(statementId: string): Promise<BankTransaction[]> {
   if (!isSupabaseConfigured) return [];
   try {
-    const { data, error } = await supabase
-      .from("bank_transactions")
-      .select("*")
-      .eq("statement_id", statementId)
-      .limit(2000);
-    if (error) {
-      if (isTableMissingError(error)) return [];
-      throw new Error(getErrorMessage(error));
+    // Paginate to avoid Supabase 1000-row default limit
+    const allRows: any[] = [];
+    const PAGE_SIZE = 1000;
+    let from = 0;
+    let hasMore = true;
+    while (hasMore) {
+      const { data, error } = await supabase
+        .from("bank_transactions")
+        .select("*")
+        .eq("statement_id", statementId)
+        .range(from, from + PAGE_SIZE - 1);
+      if (error) {
+        if (isTableMissingError(error)) return [];
+        throw new Error(getErrorMessage(error));
+      }
+      allRows.push(...(data ?? []));
+      hasMore = (data ?? []).length === PAGE_SIZE;
+      from += PAGE_SIZE;
     }
-    return (data ?? []).map(rowToTransaction);
+    return allRows.map(rowToTransaction);
   } catch {
     return [];
   }
