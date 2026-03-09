@@ -931,7 +931,7 @@ function tryAnyTable(text: string): ParsedPOData | null {
   for (const line of lines) {
     if (line.length < 10) continue;
     if (isFooterLine(line) || isTableHeaderLine(line) || isTotalLine(line)) continue;
-    tryAddGenericLineItem(line, lineItems, 0.12);
+    tryAddGenericLineItem(line, lineItems, 0.15);  // More tolerance for unknown formats
   }
 
   const deduped = dedupeLineItems(lineItems);

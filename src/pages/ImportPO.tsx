@@ -196,7 +196,7 @@ export default function ImportPO() {
           aiError,
           fallback: parsedData,
         });
-        toast.error("Could not parse line items from this file. Try Manual PO Entry or use a supported format (Fujitec, Guindy, Contemporary, Wipro, CGRD Chemicals).");
+        toast.error("We couldn't automatically extract line items from this file. You can try Manual PO Entry to add items yourself, or paste the PO text directly.", { duration: 6000 });
         setParsing(false);
         return;
       }
