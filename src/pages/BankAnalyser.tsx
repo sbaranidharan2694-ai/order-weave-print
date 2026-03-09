@@ -1028,19 +1028,19 @@ function OverviewTab({
                     <span className="text-lg">{a.icon}</span>
                     <p className="font-semibold text-sm text-foreground">{a.label}</p>
                   </div>
-                  <div className="grid grid-cols-3 gap-2 text-center">
-                    <div>
-                      <p className="text-xs text-muted-foreground">Credits</p>
-                      <p className="text-sm font-bold text-success">{fmt(a.totalCredits)}</p>
+                  <div className="flex flex-wrap justify-center gap-x-4 gap-y-2">
+                    <div className="text-center min-w-[80px]">
+                      <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Credits</p>
+                      <p className="text-xs font-bold text-green-600 dark:text-green-400 tabular-nums whitespace-nowrap">{fmt(a.totalCredits)}</p>
                     </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground">Debits</p>
-                      <p className="text-sm font-bold text-destructive">{fmt(a.totalDebits)}</p>
+                    <div className="text-center min-w-[80px]">
+                      <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Debits</p>
+                      <p className="text-xs font-bold text-red-600 dark:text-red-400 tabular-nums whitespace-nowrap">{fmt(a.totalDebits)}</p>
                     </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground">Net</p>
-                      <p className={cn("text-sm font-bold", a.totalCredits - a.totalDebits >= 0 ? "text-success" : "text-destructive")}>
-                        {fmt(a.totalCredits - a.totalDebits)}
+                    <div className="text-center min-w-[80px]">
+                      <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Net</p>
+                      <p className={cn("text-xs font-bold tabular-nums whitespace-nowrap", a.totalCredits - a.totalDebits >= 0 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400")}>
+                        {a.totalCredits - a.totalDebits >= 0 ? "+" : ""}{fmt(a.totalCredits - a.totalDebits)}
                       </p>
                     </div>
                   </div>

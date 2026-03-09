@@ -92,17 +92,29 @@ export function useAccountTransactions(accountIdentifier: string) {
 
       const statementIds = stmts.map((s) => s.id);
 
-      // ── 2. Load ALL transactions for ALL statements (never .eq — always .in + .limit(2000)) ──
-      const { data: txRows, error: txErr } = await supabase
-        .from("bank_transactions")
-        .select("id, statement_id, date, details, ref_no, debit, credit, balance, type, counterparty")
-        .in("statement_id", statementIds)
-        .order("date", { ascending: false })
-        .limit(2000);
+      // ── 2. Load ALL transactions for ALL statements (paginate to avoid Supabase 1000-row default) ──
+      const allTxRows: Transaction[] = [];
+      const PAGE_SIZE = 1000;
+      for (const stmtId of statementIds) {
+        let from = 0;
+        let hasMore = true;
+        while (hasMore) {
+          const { data: txPage, error: txErr } = await supabase
+            .from("bank_transactions")
+            .select("id, statement_id, date, details, ref_no, debit, credit, balance, type, counterparty")
+            .eq("statement_id", stmtId)
+            .order("date", { ascending: false })
+            .range(from, from + PAGE_SIZE - 1);
 
-      if (txErr) throw new Error(`Transactions: ${txErr.message}`);
+          if (txErr) throw new Error(`Transactions: ${txErr.message}`);
+          const rows = (txPage ?? []) as Transaction[];
+          allTxRows.push(...rows);
+          hasMore = rows.length === PAGE_SIZE;
+          from += PAGE_SIZE;
+        }
+      }
 
-      const txns = (txRows ?? []) as Transaction[];
+      const txns = allTxRows;
       setTransactions(txns);
 
       const totalCredits = stmts.reduce((s, r) => s + (Number(r.total_credits) || 0), 0);
