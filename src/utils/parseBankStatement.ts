@@ -418,11 +418,19 @@ function parseLegacyTransactions(lines: string[]): Transaction[] {
 /** Strip page-boundary contamination from extracted text lines. */
 function cleanPageBoundary(text: string): string {
   // Remove "Page X of Y" and everything after it (header/footer text from next page)
+  // Use .* instead of [\s\S]* to avoid eating valid transaction data across newlines
   return text
-    .replace(/\s*Page\s+\d+\s+of\s+\d+.*/i, "")
-    .replace(/\s*CSB\s+24x7.*/i, "")
-    .replace(/\s*customercare@csb.*/i, "")
-    .replace(/\s*CIN:\s*[A-Z0-9]+.*/i, "")
+    .replace(/\s*Page\s+\d+\s+of\s+\d+[^\n]*/i, "")
+    .replace(/\s*CSB\s+24x7[^\n]*/i, "")
+    .replace(/\s*customercare@csb[^\n]*/i, "")
+    .replace(/\s*CIN:\s*[A-Z0-9]+[^\n]*/i, "")
+    .replace(/\s*Website:[^\n]*/i, "")
+    .replace(/\s*Nominee\s+Details[^\n]*/i, "")
+    .replace(/\s*Legends\s+for\s+Trans[^\n]*/i, "")
+    .replace(/\s*Disclaimer:[^\n]*/i, "")
+    .replace(/\s*Statement\s+Generated[^\n]*/i, "")
+    .replace(/\s*END\s+OF\s+STATEMENT[^\n]*/i, "")
+    .replace(/\*{3,}[^\n]*/i, "")
     .trim();
 }
 
