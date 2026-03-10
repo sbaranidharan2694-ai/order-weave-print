@@ -18,6 +18,11 @@ export async function parseBankStatementWithAI(
     throw new Error("No text extracted — PDF may be image/scanned only");
   }
 
-  const data = parseBankStatement(text);
-  return { data, pageCount };
+  try {
+    const data = parseBankStatement(text);
+    return { data, pageCount };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`Bank statement parse failed: ${msg}`);
+  }
 }
