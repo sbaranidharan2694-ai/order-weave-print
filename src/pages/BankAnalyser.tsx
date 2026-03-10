@@ -949,10 +949,12 @@ function OverviewTab({
         </p>
       </div>
 
-      {/* Upload results */}
+      {/* Upload results — newest first by upload time */}
       {uploads.length > 0 && (
         <div className="space-y-3">
-          {uploads.map(u => (
+          {[...uploads]
+            .sort((a, b) => b.id.localeCompare(a.id))
+            .map(u => (
             <Card key={u.id} className="rounded-xl">
               <CardContent className="p-4">
                 <div className="flex items-center justify-between gap-3 flex-wrap">

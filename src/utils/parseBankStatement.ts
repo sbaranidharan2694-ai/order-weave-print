@@ -60,7 +60,7 @@ export function getLabelForAccount(accountNumber: string): string {
 function toNum(raw: string | number): number {
   if (typeof raw === "number") return isNaN(raw) ? 0 : raw;
   if (!raw) return 0;
-  return parseFloat(String(raw).replace(/[^0-9.]/g, "")) || 0;
+  return parseFloat(String(raw).replace(/,/g, "").replace(/[^0-9.-]/g, "")) || 0;
 }
 
 function normalizeAccountNumber(raw: string): string {
@@ -492,22 +492,31 @@ export function parseBankStatement(rawText: string): BankStatementData {
   const transactions = best.transactions;
   const effectiveOpeningFromBF = best.openingBalanceFromBF;
 
-  // Sort by date (YYYY-MM-DD) so columns display in chronological order
-  transactions.sort((a, b) => (a.date || "").localeCompare(b.date || ""));
-
   // Clean transaction details of any remaining page-boundary text
   for (const txn of transactions) {
     txn.details = cleanPageBoundary(txn.details);
     if (!txn.details) txn.details = "Transaction";
   }
 
+  const openingBalance = effectiveOpeningFromBF > 0
+    ? effectiveOpeningFromBF
+    : (summary.openingBalance > 0 ? summary.openingBalance : transactions[0]?.balance ?? 0);
+
+  // Running balance (ledger): balance = previousBalance + credit - debit, in chronological order
+  const chrono = [...transactions].sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+  let running = openingBalance;
+  for (const t of chrono) {
+    t.balance = Math.round(running * 100) / 100;
+    running += (t.credit || 0) - (t.debit || 0);
+  }
+
+  // Sort by date descending (YYYY-MM-DD: newest first)
+  transactions.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+
   const parsedTotalCredits = transactions.reduce((s, t) => s + (t.credit || 0), 0);
   const parsedTotalDebits = transactions.reduce((s, t) => s + (t.debit || 0), 0);
   const totalCredits = summary.totalCredits > 0 ? summary.totalCredits : parsedTotalCredits;
   const totalDebits = summary.totalDebits > 0 ? summary.totalDebits : parsedTotalDebits;
-  const openingBalance = effectiveOpeningFromBF > 0
-    ? effectiveOpeningFromBF
-    : (summary.openingBalance > 0 ? summary.openingBalance : transactions[0]?.balance ?? 0);
   const closingBalance = summary.closingBalance > 0 ? summary.closingBalance : transactions[transactions.length - 1]?.balance ?? 0;
 
   // Validation: compare parsed totals to reported totals when available

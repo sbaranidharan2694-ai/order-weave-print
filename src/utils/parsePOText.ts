@@ -47,11 +47,14 @@ export interface RuleParsedPO {
   warnings?: string[];
 }
 
+/** Parse amount: strip commas and non-numeric chars, then parseFloat */
 function toNum(s: string | undefined | null): number {
   if (s == null || s === "") return 0;
-  const n = parseFloat(String(s).replace(/[^0-9.-]/g, "").replace(/,/g, ""));
+  const n = parseFloat(String(s).replace(/,/g, "").replace(/[^0-9.-]/g, ""));
   return isNaN(n) ? 0 : n;
 }
+
+const AMOUNT_REGEX = /\d{1,3}(,\d{3})*(\.\d{2})?|\d+(\.\d{2})?/g;
 
 function toDate(s: string | undefined | null): string | null {
   if (!s || typeof s !== "string") return null;
@@ -90,11 +93,17 @@ export function parsePOText(text: string): RuleParsedPO {
   const lineItems: RuleParsedPO["line_items"] = [];
   const warnings: string[] = ["Parsed with rule-based fallback; please verify fields."];
 
-  const poNumMatch = t.match(/(?:PO\s*#?|Order\s*#?|Ref\.?\s*#?|Purchase\s*Order\s*No\.?|Work\s*Order\s*#?)\s*[:\s]*([A-Z0-9\-/]+)/i);
+  // PO number: PO 123, PO/122-02, PO No: 12345, etc.
+  const poNumMatch = t.match(/PO[\s\/\-:]*([A-Z0-9\/\-]+)/i) ?? t.match(/(?:Order\s*#?|Ref\.?\s*#?|Purchase\s*Order\s*No\.?|Work\s*Order\s*#?)\s*[:\s]*([A-Z0-9\-/]+)/i);
   if (poNumMatch) po_number = poNumMatch[1].trim();
 
+  // Date: DD/MM/YY, DD-MM-YYYY, etc.
   const dateMatch = t.match(/(?:Date|Dated?)\s*[:\s]*(\d{1,2}[\/\-\.\s]\d{1,2}[\/\-\.\s]\d{2,4}|\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2})/i);
   if (dateMatch) po_date = toDate(dateMatch[1]);
+  if (!po_date) {
+    const firstDate = t.match(/\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}|\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2}/);
+    if (firstDate) po_date = toDate(firstDate[0]);
+  }
 
   const gstMatch = t.match(GST_REGEX);
   if (gstMatch) gstin = gstMatch[0].toUpperCase();
@@ -105,7 +114,7 @@ export function parsePOText(text: string): RuleParsedPO {
   const addrMatch = t.match(/(?:Address|Delivery\s*Address|Bill\s*To)\s*[:\s]*([^\n]+(?:\n(?!\s*(?:GST|Phone|Contact|Amount|Item|S\.?No))[^\n]+)*)/i);
   if (addrMatch) address = addrMatch[1].replace(/\n/g, " ").trim().slice(0, 500);
 
-  const totalMatch = t.match(/(?:Total|Grand\s*Total|Amount)\s*[:\s]*[₹Rs.]?\s*([\d,]+(?:\.\d{2})?)/i);
+  const totalMatch = t.match(/(?:Total|Grand\s*Total|Amount)\s*[:\s]*[₹Rs.]?\s*([\d,]+(?:\.\d{2})?)/i) ?? t.match(/([\d,]+(?:\.\d{2})?)\s*$/m);
   if (totalMatch) totalAmount = toNum(totalMatch[1]);
 
   const deliveryMatch = t.match(/(?:Delivery\s*Date|Due\s*Date)\s*[:\s]*(\d{1,2}[\/\-\.\s]\d{1,2}[\/\-\.\s]\d{2,4})/i);
@@ -123,30 +132,35 @@ export function parsePOText(text: string): RuleParsedPO {
   const descMatch = t.match(/(?:Contact\s*Person)\s*[:\s]*([^\n]+)/i);
   if (descMatch) contactPerson = descMatch[1].trim().slice(0, 100);
 
-  const itemSection = t.match(/(?:Item|Description|Particulars|Goods)[\s\S]*?(?=\s*(?:Total|Grand|Subtotal|Amount|Tax)|$)/i);
+  const itemSection = t.match(/(?:Item|Description|Particulars|Goods|S\.?No)[\s\S]*?(?=\s*(?:Total|Grand|Subtotal|Amount|Tax)|$)/i);
   const itemBlock = itemSection ? itemSection[0] : t;
-  const amountPattern = /[\d,]+(?:\.\d{2})?/g;
+  const amountPattern = /\d{1,3}(,\d{3})*(\.\d{2})?|\d+(\.\d{2})?/g;
+
+  // Row pattern: optional sno, quantity (number), description, price (number with optional decimals)
   const descLinePattern = /(?:^|\n)\s*(\d+)\s+([^\d\n][^\n]*?)\s+(\d+(?:,\d+)*(?:\.\d{2})?)\s+([\d,]+(?:\.\d{2})?)\s*$/gm;
   let m;
   let sno = 0;
   while ((m = descLinePattern.exec(itemBlock)) !== null) {
-    sno++;
-    const qty = toNum(m[2].trim()) || 1;
+    const qtyNum = toNum(m[1]);
+    const qty = qtyNum > 0 ? qtyNum : 1;
     const price = toNum(m[3]) || toNum(m[4]);
-    const lineTotal = qty * price;
-    lineItems.push({
-      sno,
-      description: m[2].trim().slice(0, 300) || "Item",
-      quantity: qty,
-      unit: "Nos",
-      unit_price: price,
-      line_total: Math.round(lineTotal * 100) / 100,
-      gst_rate: 18,
-      gst_amount: Math.round(lineTotal * 0.18 * 100) / 100,
-    });
+    if (/\d+/.test(String(qty)) && /\d+(\.\d{2})?$/.test(m[3] || m[4] || "")) {
+      sno++;
+      const lineTotal = qty * price;
+      lineItems.push({
+        sno,
+        description: m[2].trim().slice(0, 300) || "Item",
+        quantity: qty,
+        unit: "Nos",
+        unit_price: price,
+        line_total: Math.round(lineTotal * 100) / 100,
+        gst_rate: 18,
+        gst_amount: Math.round(lineTotal * 0.18 * 100) / 100,
+      });
+    }
   }
   if (lineItems.length === 0) {
-    const simpleLines = itemBlock.split(/\n/).filter((l) => l.length > 10 && /[a-zA-Z]/.test(l) && /\d/.test(l));
+    const simpleLines = itemBlock.split(/\n/).filter((l) => l.length > 8 && /[a-zA-Z]/.test(l) && /\d/.test(l));
     for (let i = 0; i < Math.min(simpleLines.length, 50); i++) {
       const line = simpleLines[i];
       const amounts = line.match(amountPattern);

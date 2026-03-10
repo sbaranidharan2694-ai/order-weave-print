@@ -71,15 +71,27 @@ function matchKnownParty(partyName: string): { name: string; type: string; categ
 const fmt = (n: number) =>
   n > 0 ? "₹" + n.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "";
 
-/** When debit and credit are both set (e.g. from old parse), show only the one that matches the transaction type */
+/** Parse amount from string or number; strip commas */
+function parseAmount(value: string | number | null | undefined): number {
+  if (value == null) return 0;
+  if (typeof value === "number") return isNaN(value) ? 0 : value;
+  const n = parseFloat(String(value).replace(/,/g, ""));
+  return isNaN(n) ? 0 : n;
+}
+
+/** When debit and credit are both set, show only the one that matches the transaction type. NEFT Credit → credit only; NEFT Debit → debit only; IMPS/Cheque/Other by details */
 function getDisplayDebitCredit(tx: Transaction): { debit: number; credit: number } {
-  const debit = Number(tx.debit) || 0;
-  const credit = Number(tx.credit) || 0;
+  const debit = parseAmount(tx.debit);
+  const credit = parseAmount(tx.credit);
   if (debit === 0 && credit === 0) return { debit: 0, credit: 0 };
+  const details = (tx.details ?? "").toUpperCase();
   if (debit > 0 && credit > 0) {
-    const category = classifyTransaction(tx.details ?? "");
-    const isCreditType = /credit|receipt|cr\b|upi\/cr|neft\s*cr|imps/i.test(category) || /NEFT-G|UPI\/CR|NEFT\s+CR|CREDIT|CR\s*--/i.test(tx.details ?? "");
-    const isDebitType = /debit|payment|dr\b|upi\/dr|chq\s+paid|atw|atm/i.test(category) || /UPI\/DR|NEFT\s+DR|DEBIT|DR\s*--/i.test(tx.details ?? "");
+    const isCreditType =
+      /NEFT[\s-]*(?:G\s|CR|CREDIT)|UPI\/CR|IMPS.*CR|CREDIT\b|CR\s*--|CASH\s+DEP/i.test(details) ||
+      details.includes("NEFT-G") || details.includes("UPI/CR");
+    const isDebitType =
+      /NEFT[\s-]*(?:DR|DEBIT)|UPI\/DR|CHQ\s+PAID|ATW|ATM\s+WDL|DEBIT\b|DR\s*--/i.test(details) ||
+      details.includes("UPI/DR") || details.includes("CHQ PAID");
     if (isCreditType && !isDebitType) return { debit: 0, credit: Math.max(debit, credit) };
     if (isDebitType && !isCreditType) return { debit: Math.max(debit, credit), credit: 0 };
   }
@@ -127,9 +139,9 @@ export function TransactionTable({
     setCurrentPage(1);
   }, [search, viewMode]);
 
-  // Sort by date (chronological: oldest first) so "By Date" and all views show consistent order
+  // Sort by date descending (newest first) so "By Date" and all views show consistent order
   const sortedByDate = useMemo(
-    () => [...transactions].sort((a, b) => (a.date || "").localeCompare(b.date || "")),
+    () => [...transactions].sort((a, b) => (b.date || "").localeCompare(a.date || "")),
     [transactions]
   );
 
@@ -153,6 +165,25 @@ export function TransactionTable({
 
   const totalDebit = filtered.reduce((s, t) => s + getDisplayDebitCredit(t).debit, 0);
   const totalCredit = filtered.reduce((s, t) => s + getDisplayDebitCredit(t).credit, 0);
+
+  // Running balance (ledger): balance = previousBalance + credit - debit, in chronological order
+  const runningBalanceMap = useMemo(() => {
+    const chrono = [...filtered].sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+    const map = new Map<string, number>();
+    if (chrono.length === 0) return map;
+    const first = chrono[0];
+    const firstDc = getDisplayDebitCredit(first);
+    let running = parseAmount(first.balance) - firstDc.credit + firstDc.debit;
+    for (const t of chrono) {
+      map.set(t.id, running);
+      const { debit, credit } = getDisplayDebitCredit(t);
+      running = running + credit - debit;
+    }
+    return map;
+  }, [filtered]);
+
+  const getDisplayBalance = (tx: Transaction): number =>
+    runningBalanceMap.get(tx.id) ?? parseAmount(tx.balance);
 
   const byParty = filtered.reduce(
     (g, tx) => {
@@ -300,7 +331,7 @@ export function TransactionTable({
                         {fmt(displayCredit)}
                       </td>
                       <td className="px-3 py-2.5 text-xs text-right font-medium tabular-nums">
-                        ₹{(tx.balance ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                        ₹{getDisplayBalance(tx).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                       </td>
                     </tr>
                   );
@@ -444,7 +475,7 @@ export function TransactionTable({
                               {fmt(c)}
                             </td>
                             <td className="px-4 py-2 text-xs text-right w-28 tabular-nums">
-                              ₹{(tx.balance ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                              ₹{getDisplayBalance(tx).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                             </td>
                           </tr>
                         );
@@ -535,7 +566,7 @@ export function TransactionTable({
                               {fmt(c)}
                             </td>
                             <td className="px-4 py-2 text-xs text-right w-28 tabular-nums">
-                              ₹{(tx.balance ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                              ₹{getDisplayBalance(tx).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                             </td>
                           </tr>
                         );

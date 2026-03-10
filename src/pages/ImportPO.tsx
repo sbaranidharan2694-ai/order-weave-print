@@ -317,6 +317,21 @@ export default function ImportPO() {
     toast.success(msg);
   }, []);
 
+  /** Try rule-based parser; return parsed PO if it has at least one line item, else null */
+  const tryRuleParserFallback = useCallback((extractedText: string): any | null => {
+    if (!extractedText || extractedText.trim().length < 10) return null;
+    try {
+      const fallback = parsePOText(extractedText);
+      if (fallback && Array.isArray(fallback.line_items) && fallback.line_items.length > 0) {
+        console.log("[ImportPO] Rule parser fallback OK, line items:", fallback.line_items.length);
+        return fallback;
+      }
+    } catch (e) {
+      console.warn("[ImportPO] Rule parser error:", e);
+    }
+    return null;
+  }, []);
+
   /* ─── Parse ─── */
   const handleParse = async () => {
     if (!file) return;
@@ -346,7 +361,7 @@ export default function ImportPO() {
       }
 
       setRawText(text);
-      console.log("[ImportPO] PDF/text length:", text.length);
+      console.log("[ImportPO] Extracted text length:", text.length, "source:", ext);
 
       if (parseAttemptsRef.current >= 3) {
         setParseRetriesExhausted(true);
@@ -368,26 +383,46 @@ export default function ImportPO() {
       }>("parse-po", { pdfText: text });
 
       const { data: body, error: aiError } = aiResult;
+      console.log("[ImportPO] AI response success:", body?.success, "hasData:", !!body?.data, "error:", aiError || body?.error);
 
       if (aiError) {
+        const fallback = tryRuleParserFallback(text);
+        if (fallback) {
+          applyParsedToForm(fallback, "rule-based parser (AI unavailable)");
+          setParseTime(Math.round((Date.now() - startTime) / 1000));
+          return;
+        }
         setParseState("error");
         setParseError(aiError);
         return;
       }
 
       if (body?.success === false) {
+        const fallback = tryRuleParserFallback(text);
+        if (fallback) {
+          applyParsedToForm(fallback, "rule-based parser");
+          setParseTime(Math.round((Date.now() - startTime) / 1000));
+          console.log("[ImportPO] Used rule parser fallback after AI failure, line items:", fallback.line_items?.length);
+          return;
+        }
         const rawPreview = (body.raw_ai_text || body.parse_error || "").slice(0, 1500);
         setParseFailureRawText(rawPreview);
         setParseFailureError(body.error || body.parse_error || "AI could not parse this PO format.");
         setParseState("error");
         setParseRetriesExhausted(parseAttemptsRef.current >= 3);
         setShowParseFailureModal(true);
-        console.warn("[ImportPO] Parse failed:", body.error, "raw length:", (body.raw_ai_text || "").length);
+        console.warn("[ImportPO] Parse failed, no fallback:", body.error, "raw length:", (body.raw_ai_text || "").length);
         return;
       }
 
       const d = body?.data ?? body;
       if (!d || typeof d !== "object") {
+        const fallback = tryRuleParserFallback(text);
+        if (fallback) {
+          applyParsedToForm(fallback, "rule-based parser");
+          setParseTime(Math.round((Date.now() - startTime) / 1000));
+          return;
+        }
         setParseFailureRawText("");
         setParseFailureError("No parsed data returned.");
         setParseState("error");
@@ -395,21 +430,27 @@ export default function ImportPO() {
         return;
       }
 
-      const hasPoNumber = !!(d.po_number && String(d.po_number).trim());
       const hasLineItems = Array.isArray(d.line_items) && d.line_items.length > 0;
-      if (!hasPoNumber || !hasLineItems) {
-        setParseFailureRawText(JSON.stringify(d).slice(0, 1000));
-        setParseFailureError("PO number or line items missing. You can retry or use the rule-based parser.");
-        setParseState("error");
-        setParseRetriesExhausted(parseAttemptsRef.current >= 3);
-        setShowParseFailureModal(true);
-        console.warn("[ImportPO] Validation failed: po_number?", hasPoNumber, "line_items?", d.line_items?.length);
+      if (hasLineItems) {
+        applyParsedToForm(d);
+        setParseTime(Math.round((Date.now() - startTime) / 1000));
+        toast.success(`PO parsed: ${d.line_items.length} line item(s) found`);
+        console.log("[ImportPO] Populated form, line items:", d.line_items.length, "po_number:", d.po_number || "(missing)");
         return;
       }
 
-      applyParsedToForm(d);
-      setParseTime(Math.round((Date.now() - startTime) / 1000));
-      toast.success(`PO parsed: ${(d.line_items || []).length} line item(s) found`);
+      const fallback = tryRuleParserFallback(text);
+      if (fallback && fallback.line_items && fallback.line_items.length > 0) {
+        applyParsedToForm(fallback, "rule-based parser");
+        setParseTime(Math.round((Date.now() - startTime) / 1000));
+        return;
+      }
+      setParseFailureRawText(JSON.stringify(d).slice(0, 1000));
+      setParseFailureError("No line items found. You can retry or use the rule-based parser.");
+      setParseState("error");
+      setParseRetriesExhausted(parseAttemptsRef.current >= 3);
+      setShowParseFailureModal(true);
+      console.warn("[ImportPO] No line items in AI or fallback");
     } catch (err: any) {
       setParseState("error");
       setParseError(err.message || "Parsing failed");
