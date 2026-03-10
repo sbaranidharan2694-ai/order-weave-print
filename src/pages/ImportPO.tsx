@@ -27,6 +27,7 @@ import { format } from "date-fns";
 import { extractTextFromPdf } from "@/utils/extractPdfText";
 import { extractTextFromExcel } from "@/utils/extractExcelText";
 import { parsePOText } from "@/utils/parsePOText";
+import * as XLSX from "xlsx";
 
 /* ─── Constants ─── */
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
@@ -268,8 +269,58 @@ export default function ImportPO() {
     }
   };
 
+  /* ─── Excel preview ─── */
+  const renderExcelPreview = async (f: File) => {
+    if (!canvasContainerRef.current) return;
+    canvasContainerRef.current.innerHTML = "";
+    try {
+      const buf = await f.arrayBuffer();
+      const workbook = XLSX.read(buf, { type: "array" });
+      const sheetName = workbook.SheetNames[0];
+      if (!sheetName) return;
+      const sheet = workbook.Sheets[sheetName];
+      if (!sheet) return;
+      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" }) as (string | number)[][];
+      if (rows.length === 0) {
+        canvasContainerRef.current.innerHTML = "<p class='text-sm text-muted-foreground p-4'>Sheet is empty.</p>";
+        return;
+      }
+      const table = document.createElement("table");
+      table.className = "w-full border-collapse text-sm border border-border rounded overflow-hidden";
+      const thead = document.createElement("thead");
+      const tbody = document.createElement("tbody");
+      const maxRows = Math.min(rows.length, 50);
+      for (let i = 0; i < maxRows; i++) {
+        const row = rows[i] ?? [];
+        const tr = document.createElement("tr");
+        const cells = Array.isArray(row) ? row : [row];
+        for (let j = 0; j < cells.length; j++) {
+          const cell = document.createElement(i === 0 ? "th" : "td");
+          cell.className = i === 0 ? "px-2 py-1.5 text-left font-medium bg-muted border-b border-border" : "px-2 py-1 border-b border-border";
+          cell.textContent = cells[j] != null ? String(cells[j]).trim() : "";
+          tr.appendChild(cell);
+        }
+        (i === 0 ? thead : tbody).appendChild(tr);
+      }
+      if (thead.rows.length > 0) table.appendChild(thead);
+      table.appendChild(tbody);
+      const wrap = document.createElement("div");
+      wrap.className = "rounded border border-border overflow-auto max-h-[560px]";
+      wrap.appendChild(table);
+      canvasContainerRef.current.appendChild(wrap);
+    } catch (err) {
+      console.error("Excel preview error:", err);
+      if (canvasContainerRef.current) {
+        canvasContainerRef.current.innerHTML = `<p class="text-sm text-muted-foreground p-4">Could not preview Excel file.</p>`;
+      }
+    }
+  };
+
   useEffect(() => {
-    if (file && file.type === "application/pdf") renderPdfPreview(file);
+    if (!file) return;
+    const ext = file.name.toLowerCase().split(".").pop() || "";
+    if (file.type === "application/pdf") renderPdfPreview(file);
+    else if (ext === "xlsx" || file.type === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") renderExcelPreview(file);
   }, [file]);
 
   /** Populate form from parsed PO object (AI or rule-based). */
