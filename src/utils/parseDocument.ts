@@ -1,12 +1,8 @@
 import { extractTextFromPdf } from "./extractPdfText";
 import { parseBankStatementWithAI, type BankStatementData } from "./parseBankStatementAI";
-import {
-  parsePurchaseOrder,
-  type PurchaseOrderData,
-} from "./parsePurchaseOrder";
 
-export type ParsedDocument = BankStatementData | PurchaseOrderData;
-export type { BankStatementData, PurchaseOrderData };
+export type ParsedDocument = BankStatementData;
+export type { BankStatementData };
 
 export type DocType = "bank_statement" | "purchase_order" | "unknown";
 
@@ -56,7 +52,6 @@ export async function parseDocument(
   }
 
   try {
-    // For bank statements, use built-in parser
     if (forceMode === "bank_statement" || !forceMode) {
       try {
         const { data, pageCount } = await parseBankStatementWithAI(file);
@@ -68,15 +63,12 @@ export async function parseDocument(
           pageCount,
         };
       } catch (aiErr) {
-        // If forced bank_statement, propagate error
         if (forceMode === "bank_statement") {
           throw aiErr;
         }
-        // Otherwise fall through to try PO
       }
     }
 
-    // For purchase orders, extract text and parse locally
     const { text: rawText, pageCount } = await extractTextFromPdf(file);
     if (!rawText || rawText.trim().length < 50) {
       return {
@@ -88,15 +80,10 @@ export async function parseDocument(
       };
     }
 
-    if (forceMode === "purchase_order") {
-      const data = parsePurchaseOrder(rawText);
-      return { success: true, docType: "purchase_order", data, rawText, fileName: file.name, pageCount };
-    }
-
     return {
       success: false,
       docType: "unknown",
-      error: "Could not identify document type.",
+      error: "Could not identify document type. Use Import PO page for purchase orders.",
       fileName: file.name,
       rawText,
     };
