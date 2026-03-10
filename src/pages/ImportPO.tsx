@@ -306,7 +306,17 @@ export default function ImportPO() {
       const d = aiResult?.data;
       if (!d) {
         setParseState("error");
-        setParseError("AI did not return structured data. Enter details manually.");
+        const serverError = (aiResult as any)?.error || "";
+        const hint = serverError.includes("API key")
+          ? "AI API key not configured. Ask your admin to set LOVABLE_API_KEY in Supabase Edge Function secrets."
+          : serverError.includes("Rate limit") || serverError.includes("429")
+          ? "AI rate limit reached. Please wait 1 minute and try again."
+          : serverError.includes("402") || serverError.includes("credits")
+          ? "AI credits exhausted. Add credits in your Lovable workspace settings."
+          : serverError
+          ? `AI parsing failed: ${serverError}`
+          : "AI could not parse this PO format.";
+        setParseError(hint + " You can enter the details manually.");
         return;
       }
 
@@ -753,23 +763,44 @@ export default function ImportPO() {
           )}
 
           {parseState === "error" && (
-            <Card className="border-destructive/50">
-              <CardContent className="p-4">
-                <div className="flex items-start gap-3 text-destructive">
-                  <AlertTriangle className="h-5 w-5 mt-0.5 flex-shrink-0" />
-                  <div>
-                    <p className="font-medium">Parsing Failed</p>
-                    <p className="text-sm mt-1 text-muted-foreground">{parseError}</p>
-                    <div className="flex gap-2 mt-3">
-                      <Button size="sm" onClick={() => { setParseState("parsed"); setLineItems([emptyLine(1)]); }}>
-                        Enter Manually
-                      </Button>
-                      <Button size="sm" variant="outline" onClick={handleParse}>Retry</Button>
-                    </div>
-                  </div>
+            <div className="space-y-4 p-6">
+              <div className="flex items-start gap-3 p-4 bg-red-50 border border-red-200 rounded-lg">
+                <AlertTriangle className="h-5 w-5 text-red-500 mt-0.5 shrink-0" />
+                <div className="space-y-1">
+                  <p className="font-medium text-red-800">Parse Failed</p>
+                  <p className="text-sm text-red-600">{parseError}</p>
                 </div>
-              </CardContent>
-            </Card>
+              </div>
+              <div className="flex gap-3">
+                <Button variant="outline" onClick={handleParse} disabled={!file}>
+                  <RefreshCw className="mr-2 h-4 w-4" /> Retry
+                </Button>
+                <Button
+                  onClick={() => {
+                    setParseState("parsed");
+                    setLineItems([emptyLine(1)]);
+                    setHeader({
+                      po_number: "",
+                      po_date: format(new Date(), "yyyy-MM-dd"),
+                      customer_name: "",
+                      customer_address: "",
+                      customer_gst: "",
+                      customer_phone: "",
+                      customer_email: "",
+                      customer_contact_person: "",
+                      payment_terms: "",
+                      delivery_date: "",
+                      shipping_address: "",
+                      notes: "",
+                      discount_amount: 0,
+                    });
+                    toast.info("Manual mode — fill in the PO details");
+                  }}
+                >
+                  <FileText className="mr-2 h-4 w-4" /> Enter Manually
+                </Button>
+              </div>
+            </div>
           )}
 
           {parseState === "parsed" && (

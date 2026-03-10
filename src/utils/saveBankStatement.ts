@@ -1,4 +1,5 @@
 import { supabase } from "@/integrations/supabase/client";
+import { extractCounterparty } from "@/utils/extractCounterparty";
 
 function n(val: unknown): number {
   if (!val && val !== 0) return 0;
@@ -11,27 +12,14 @@ function s(val: unknown): string {
   return String(val).trim();
 }
 
-function extractParty(details: string): string {
-  const upi = details.match(/UPI\/(?:DR|CR)\/\d+\/([^/]+)/i);
-  if (upi) return upi[1].trim();
-  const neft = details.match(/NEFT\s+Cr--[A-Z0-9]+-([^-]+)/i);
-  if (neft) return neft[1].trim();
-  const imps = details.match(/IMPS--\d+-([A-Z\s]+)/i);
-  if (imps) return imps[1].trim();
-  if (/ATW\s+using/i.test(details)) return "ATM Withdrawal";
-  if (/Chq\s+Paid/i.test(details)) return "Cheque Payment";
-  if (/GOOGLE/i.test(details)) return "Google Pay";
-  if (/SWIGGY/i.test(details)) return "Swiggy";
-  return details.substring(0, 40).trim() || "Unknown";
-}
+/** @deprecated Use extractCounterparty from @/utils/extractCounterparty. Kept for backward compatibility. */
+export const extractParty = extractCounterparty;
 
 const ACCOUNT_KEY: Record<string, string> = {
   "0244020077280": "superprinters",
   "0244020080155": "superscreens",
   "0244011477662": "revathy",
 };
-
-export { extractParty };
 
 export async function saveBankStatementToDb(
   parsed: any,
@@ -111,7 +99,7 @@ export async function saveBankStatementToDb(
         credit: n(tx.credit),
         balance: n(tx.balance),
         type: s(tx.type) || (n(tx.debit) > 0 ? "debit" : "credit"),
-        counterparty: extractParty(s(tx.details)),
+        counterparty: extractCounterparty(s(tx.details)),
       });
 
     if (txErr) {

@@ -4,7 +4,8 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { ChevronLeft, ChevronRight, Search, Calendar } from "lucide-react";
+import { ChevronLeft, ChevronRight, Search } from "lucide-react";
+import { extractCounterparty, classifyTransaction } from "@/utils/extractCounterparty";
 
 /** Known parties for auto-categorization */
 const KNOWN_PARTIES: Record<string, { name: string; type: string; category: string }> = {
@@ -37,43 +38,10 @@ function titleCase(s: string): string {
   return s.toLowerCase().replace(/(?:^|\s)\S/g, (c) => c.toUpperCase());
 }
 
-function extractParty(details: string | null): string {
-  if (!details) return "Unknown";
-  const d = details.trim();
-  
-  // UPI/DR or UPI/CR - party after 3rd slash
-  const upi = d.match(/UPI\/(?:DR|CR)\/\d+\/([^/]+)/i);
-  if (upi) return titleCase(upi[1].trim().slice(0, 25));
-  
-  // NEFT CR - party after last dash
-  const neft = d.match(/NEFT\s*Cr--[A-Z0-9]+-([^-]+)/i);
-  if (neft) return titleCase(neft[1].trim().slice(0, 25));
-  
-  // NEFT Dr
-  const neftDr = d.match(/NEFT\s*Dr--[A-Z0-9]+-([^-]+)/i);
-  if (neftDr) return titleCase(neftDr[1].trim().slice(0, 25));
-  
-  // IMPS
-  const imps = d.match(/IMPS--\d+-([A-Z\s]+)/i);
-  if (imps) return titleCase(imps[1].trim().slice(0, 25));
-  
-  // CHQ PAID
-  if (/CHQ\s+PAID.*TP.*CASH/i.test(d)) return "Cash Withdrawal";
-  if (/CHQ\s+DEP/i.test(d)) {
-    const m = d.match(/CHQ\s*DEP\s*-\s*([^-]+)/i);
-    return m ? titleCase(m[1].trim().slice(0, 25)) : "Cheque Deposit";
-  }
-  
-  // ATM
-  if (/ATW\s+using|ATM|Issuer\s+ATM/i.test(d)) return "ATM Withdrawal";
-  
-  // Bank Charges
-  if (/charge|chrg|commission|gst\s+on|cess\s+on/i.test(d)) return "Bank Charges";
-  
-  // GOOGLE
-  if (/GOOGLE/i.test(d)) return "Google Pay";
-  
-  return titleCase(d.substring(0, 25).trim()) || "Unknown";
+/** Party name: from DB counterparty or extracted from details */
+function getPartyName(tx: Transaction): string {
+  if (tx.counterparty?.trim()) return titleCase(tx.counterparty.trim().slice(0, 25));
+  return titleCase(extractCounterparty(tx.details ?? "").slice(0, 25)) || "Unknown";
 }
 
 function getTransactionType(details: string | null): { label: string; color: string } {
@@ -107,7 +75,7 @@ const ROWS_PER_PAGE = 25;
 
 interface TransactionTableProps {
   transactions: Transaction[];
-  defaultView?: "byDate" | "byParty";
+  defaultView?: "byDate" | "byParty" | "byCategory";
   isDateFiltered?: boolean;
   totalUnfiltered?: number;
 }
@@ -118,15 +86,24 @@ export function TransactionTable({
   isDateFiltered = false,
   totalUnfiltered,
 }: TransactionTableProps) {
-  const [viewMode, setViewMode] = useState<"byDate" | "byParty">(defaultView);
+  const [viewMode, setViewMode] = useState<"byDate" | "byParty" | "byCategory">(defaultView);
   const [expandedParties, setExpandedParties] = useState<Set<string>>(new Set());
+  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
 
   useEffect(() => {
     if (transactions.length > 0 && viewMode === "byParty") {
       setExpandedParties(
-        new Set(transactions.slice(0, 5).map((t) => extractParty(t.details ?? "")))
+        new Set(transactions.slice(0, 5).map((t) => getPartyName(t)))
+      );
+    }
+  }, [transactions.length, viewMode]);
+
+  useEffect(() => {
+    if (transactions.length > 0 && viewMode === "byCategory") {
+      setExpandedCategories(
+        new Set(transactions.slice(0, 5).map((t) => classifyTransaction(t.details ?? "")))
       );
     }
   }, [transactions.length, viewMode]);
@@ -141,9 +118,9 @@ export function TransactionTable({
     return transactions.filter(
       (t) =>
         (t.details ?? "").toLowerCase().includes(s) ||
-        extractParty(t.details ?? "").toLowerCase().includes(s) ||
+        getPartyName(t).toLowerCase().includes(s) ||
         (t.date ?? "").toLowerCase().includes(s) ||
-        (t.counterparty ?? "").toLowerCase().includes(s)
+        classifyTransaction(t.details ?? "").toLowerCase().includes(s)
     );
   }, [transactions, search]);
 
@@ -158,8 +135,17 @@ export function TransactionTable({
 
   const byParty = filtered.reduce(
     (g, tx) => {
-      const p = tx.counterparty || extractParty(tx.details ?? "");
+      const p = getPartyName(tx);
       (g[p] = g[p] || []).push(tx);
+      return g;
+    },
+    {} as Record<string, Transaction[]>
+  );
+
+  const byCategory = filtered.reduce(
+    (g, tx) => {
+      const cat = classifyTransaction(tx.details ?? "");
+      (g[cat] = g[cat] || []).push(tx);
       return g;
     },
     {} as Record<string, Transaction[]>
@@ -171,12 +157,18 @@ export function TransactionTable({
       a.reduce((s, t) => s + (t.credit || 0) + (t.debit || 0), 0)
   );
 
+  const sortedCategories = Object.entries(byCategory).sort(
+    ([, a], [, b]) =>
+      b.reduce((s, t) => s + (t.credit || 0) + (t.debit || 0), 0) -
+      a.reduce((s, t) => s + (t.credit || 0) + (t.debit || 0), 0)
+  );
+
   return (
     <div className="space-y-4">
       {/* Controls */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex gap-1 rounded-lg bg-muted p-1">
-          {(["byDate", "byParty"] as const).map((mode) => (
+          {(["byDate", "byParty", "byCategory"] as const).map((mode) => (
             <button
               key={mode}
               type="button"
@@ -188,7 +180,7 @@ export function TransactionTable({
                   : "text-muted-foreground hover:text-foreground"
               )}
             >
-              {mode === "byDate" ? "By Date" : "By Party"}
+              {mode === "byDate" ? "By Date" : mode === "byParty" ? "By Party" : "By Category"}
             </button>
           ))}
         </div>
@@ -238,8 +230,9 @@ export function TransactionTable({
               </thead>
               <tbody className="divide-y divide-border">
                 {paginatedData.map((tx, i) => {
-                  const party = tx.counterparty || extractParty(tx.details ?? "");
+                  const party = getPartyName(tx);
                   const txType = getTransactionType(tx.details);
+                  const category = classifyTransaction(tx.details ?? "");
                   const knownParty = matchKnownParty(party);
                   const isEven = i % 2 === 0;
                   
@@ -276,7 +269,7 @@ export function TransactionTable({
                       </td>
                       <td className="px-3 py-2.5">
                         <Badge className={cn("text-[10px] px-2 py-0.5 font-medium", txType.color)}>
-                          {txType.label}
+                          {category}
                         </Badge>
                       </td>
                       <td className="px-3 py-2.5 text-xs text-right font-medium text-red-600 dark:text-red-400 tabular-nums">
@@ -402,6 +395,7 @@ export function TransactionTable({
                     <tbody className="divide-y divide-border">
                       {partyTxns.map((tx, i) => {
                         const txType = getTransactionType(tx.details);
+                        const category = classifyTransaction(tx.details ?? "");
                         return (
                           <tr 
                             key={tx.id || i} 
@@ -418,8 +412,98 @@ export function TransactionTable({
                             </td>
                             <td className="px-4 py-2 w-20">
                               <Badge className={cn("text-[10px] px-2 py-0.5", txType.color)}>
-                                {txType.label}
+                                {category}
                               </Badge>
+                            </td>
+                            <td className="px-4 py-2 text-xs text-right font-medium text-red-600 dark:text-red-400 w-28 tabular-nums">
+                              {fmt(tx.debit ?? 0)}
+                            </td>
+                            <td className="px-4 py-2 text-xs text-right font-medium text-green-600 dark:text-green-400 w-28 tabular-nums">
+                              {fmt(tx.credit ?? 0)}
+                            </td>
+                            <td className="px-4 py-2 text-xs text-right w-28 tabular-nums">
+                              ₹{(tx.balance ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* By Category View */}
+      {viewMode === "byCategory" && (
+        <div className="space-y-2">
+          {sortedCategories.map(([category, categoryTxns]) => {
+            const cCredits = categoryTxns.reduce((s, t) => s + (t.credit || 0), 0);
+            const cDebits = categoryTxns.reduce((s, t) => s + (t.debit || 0), 0);
+            const isOpen = expandedCategories.has(category);
+            const txType = getTransactionType(categoryTxns[0]?.details);
+
+            return (
+              <div key={category} className="border rounded-xl overflow-hidden bg-card">
+                <button
+                  type="button"
+                  className="flex w-full items-center justify-between px-4 py-3 bg-muted/30 hover:bg-muted/50 transition-colors text-left"
+                  onClick={() =>
+                    setExpandedCategories((prev) => {
+                      const next = new Set(prev);
+                      if (isOpen) next.delete(category);
+                      else next.add(category);
+                      return next;
+                    })
+                  }
+                >
+                  <div className="flex items-center gap-3">
+                    <Badge className={cn("text-[10px] px-2 py-0.5", txType?.color)}>
+                      {category}
+                    </Badge>
+                    <span className="text-xs bg-muted text-muted-foreground px-2 py-0.5 rounded-full">
+                      {categoryTxns.length} txn{categoryTxns.length !== 1 ? "s" : ""}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-4">
+                    {cCredits > 0 && (
+                      <span className="text-sm font-semibold text-green-600 dark:text-green-400 tabular-nums">
+                        +{fmt(cCredits)}
+                      </span>
+                    )}
+                    {cDebits > 0 && (
+                      <span className="text-sm font-semibold text-red-600 dark:text-red-400 tabular-nums">
+                        -{fmt(cDebits)}
+                      </span>
+                    )}
+                    <span className="text-muted-foreground text-xs">
+                      {isOpen ? "▲" : "▼"}
+                    </span>
+                  </div>
+                </button>
+                {isOpen && (
+                  <table className="w-full text-sm">
+                    <tbody className="divide-y divide-border">
+                      {categoryTxns.map((tx, i) => {
+                        const typeStyle = getTransactionType(tx.details);
+                        return (
+                          <tr
+                            key={tx.id || i}
+                            className={cn(
+                              "hover:bg-muted/30 transition-colors",
+                              i % 2 === 0 ? "bg-background" : "bg-muted/10"
+                            )}
+                          >
+                            <td className="px-4 py-2 text-xs text-muted-foreground whitespace-nowrap w-24 font-mono">
+                              {tx.date}
+                            </td>
+                            <td className="px-4 py-2 text-xs max-w-sm truncate" title={tx.details ?? ""}>
+                              {tx.details?.slice(0, 50) ?? "—"}
+                            </td>
+                            <td className="px-4 py-2 text-xs truncate" title={getPartyName(tx)}>
+                              {getPartyName(tx).slice(0, 20)}
                             </td>
                             <td className="px-4 py-2 text-xs text-right font-medium text-red-600 dark:text-red-400 w-28 tabular-nums">
                               {fmt(tx.debit ?? 0)}

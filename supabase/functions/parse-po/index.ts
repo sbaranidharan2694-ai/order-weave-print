@@ -70,32 +70,37 @@ IMPORTANT: line_items MUST always be an array, even if empty [].`;
 /**
  * Robustly extract JSON from AI response text.
  * Handles markdown fences, preamble text, trailing text.
+ * Uses brace-counting to find the matching closing brace.
  */
 function extractJson(raw: string): Record<string, unknown> | null {
   if (!raw || !raw.trim()) return null;
-
   let s = raw.trim();
-
-  // Strip markdown code fences (```json ... ``` or ``` ... ```)
   s = s.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/i, "");
 
-  // Find outermost { ... }
   const start = s.indexOf("{");
-  const end = s.lastIndexOf("}");
-  if (start < 0 || end <= start) return null;
+  if (start < 0) return null;
+
+  let depth = 0;
+  let end = -1;
+  for (let i = start; i < s.length; i++) {
+    if (s[i] === "{") depth++;
+    else if (s[i] === "}") {
+      depth--;
+      if (depth === 0) {
+        end = i;
+        break;
+      }
+    }
+  }
+  if (end < 0) return null;
 
   const candidate = s.slice(start, end + 1);
-
   try {
     return JSON.parse(candidate);
-  } catch (e) {
-    console.error("[parse-po] JSON.parse failed on candidate:", (e as Error).message, "first 200 chars:", candidate.slice(0, 200));
-    // Try fixing common issues: trailing commas
+  } catch {
     try {
-      const fixed = candidate.replace(/,\s*([}\]])/g, "$1");
-      return JSON.parse(fixed);
+      return JSON.parse(candidate.replace(/,\s*([}\]])/g, "$1"));
     } catch {
-      console.error("[parse-po] JSON.parse failed even after fix attempt");
       return null;
     }
   }
@@ -171,6 +176,7 @@ serve(async (req) => {
 
     const data = await response.json();
     const rawContent = data?.choices?.[0]?.message?.content ?? "";
+    console.log("[parse-po] AI response length:", rawContent.length, "| first 100 chars:", rawContent.slice(0, 100));
 
     // Extract JSON from response
     let parsed: Record<string, unknown> | null = null;

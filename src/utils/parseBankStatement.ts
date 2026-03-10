@@ -1,3 +1,5 @@
+import { extractCounterparty, classifyTransaction } from "@/utils/extractCounterparty";
+
 export interface Transaction {
   date: string;
   details: string;
@@ -6,7 +8,8 @@ export interface Transaction {
   credit: number;
   balance: number;
   type: "debit" | "credit";
-  counterparty: string;
+  counterparty: string;  // Person/company name (stored in DB)
+  category: string;      // Classification for UI (NOT stored in DB)
 }
 
 export interface BankStatementData {
@@ -82,18 +85,6 @@ function normalizeDateToken(raw: string): string {
   return `${y}-${mon.slice(0, 1).toUpperCase()}${mon.slice(1, 3).toLowerCase()}-${d.padStart(2, "0")}`;
 }
 
-function categorise(detail: string): string {
-  const d = detail.toUpperCase();
-  if (d.includes("GOOGLE") || d.includes("IMPS")) return "Digital Receipt";
-  if (d.includes("UPI/CR")) return "UPI Receipt";
-  if (d.includes("UPI/DR")) return "UPI Payment";
-  if (d.includes("NEFT") && (d.includes("CR") || d.includes("CREDIT"))) return "NEFT Receipt";
-  if (d.includes("ATW") || d.includes("ATM")) return "ATM Withdrawal";
-  if (d.includes("CHQ") || d.includes("CLEARING")) return "Cheque";
-  if (d.includes("SWIGGY") || d.includes("ZOMATO")) return "Food";
-  return "Other";
-}
-
 function parseSummaryTotals(joined: string): {
   openingBalance: number;
   totalDebits: number;
@@ -135,9 +126,21 @@ function isTransactionHeaderLine(line: string): boolean {
   );
 }
 
-function parseTabularTransactions(lines: string[]): Transaction[] {
+/** True if block looks like B/F (brought forward) line — skip as transaction, optionally extract opening balance */
+function isBFLine(clean: string): boolean {
+  return /B\/F|BROUGHT\s+FORWARD|OPENING\s+BALANCE\s+BF/i.test(clean);
+}
+
+/** Extract opening balance from a B/F line if present (e.g. "B/F ... 12345.67") */
+function extractOpeningBalanceFromBF(clean: string): number {
+  const amounts = [...clean.matchAll(/[\d,]+\.\d{2}/g)];
+  return amounts.length > 0 ? toNum(amounts[amounts.length - 1][0]) : 0;
+}
+
+function parseTransactions(lines: string[]): { transactions: Transaction[]; openingBalanceFromBF: number } {
   const blocks: string[] = [];
   let current: string[] = [];
+  let openingBalanceFromBF = 0;
 
   for (const rawLine of lines) {
     const line = rawLine.replace(/\|/g, " ").replace(/\s+/g, " ").trim();
@@ -162,6 +165,13 @@ function parseTabularTransactions(lines: string[]): Transaction[] {
     const clean = block.replace(/\s+/g, " ").trim();
     const start = clean.match(DATE_PREFIX);
     if (!start) continue;
+
+    // Skip B/F lines; capture opening balance from them
+    if (isBFLine(clean)) {
+      const ob = extractOpeningBalanceFromBF(clean);
+      if (ob > 0) openingBalanceFromBF = ob;
+      continue;
+    }
 
     const date = normalizeDateToken(start[1]);
     let rest = clean.slice(start[0].length).trim();
@@ -192,6 +202,9 @@ function parseTabularTransactions(lines: string[]): Transaction[] {
       bodyEndIndex = lastThree[0].index ?? rest.length;
     }
 
+    // Skip zero-amount lines (no debit and no credit)
+    if (debit === 0 && credit === 0) continue;
+
     let body = rest.slice(0, bodyEndIndex).trim();
 
     const refMatches = [...body.matchAll(/\b([A-Z0-9]{6,20})\b/g)];
@@ -211,7 +224,8 @@ function parseTabularTransactions(lines: string[]): Transaction[] {
       credit,
       balance,
       type: isDebit ? "debit" : "credit",
-      counterparty: categorise(body),
+      counterparty: extractCounterparty(body),
+      category: classifyTransaction(body),
     });
   }
 
@@ -219,200 +233,7 @@ function parseTabularTransactions(lines: string[]): Transaction[] {
     new Map(out.map((t) => [`${t.date}|${t.refNo}|${t.debit}|${t.credit}|${t.balance}|${t.details}`, t])).values(),
   );
 
-  return deduped;
-}
-
-function parsePipeTableTransactions(lines: string[]): Transaction[] {
-  const out: Transaction[] = [];
-
-  for (const rawLine of lines) {
-    if (!rawLine.includes("|")) continue;
-
-    const cols = rawLine
-      .split("|")
-      .map((c) => c.trim())
-      .filter((c) => c.length > 0);
-
-    if (cols.length < 5) continue;
-    if (!DATE_PREFIX.test(cols[0])) continue;
-
-    const date = normalizeDateToken(cols[0]);
-
-    const amountCols = cols.filter((c) => /^(?:[\d,]+\.\d{2}|-|)$/i.test(c));
-    const debit = toNum(amountCols.at(-3) ?? "0");
-    const credit = toNum(amountCols.at(-2) ?? "0");
-    const balance = toNum(amountCols.at(-1) ?? "0");
-
-    const middleStart = cols.length >= 7 ? 2 : 1;
-    const middleEnd = Math.max(middleStart, cols.length - 3);
-    const middle = cols.slice(middleStart, middleEnd).filter(Boolean);
-
-    let refNo = "";
-    if (middle.length > 1) {
-      const tail = middle[middle.length - 1] ?? "";
-      if (/^[A-Z0-9]{5,20}$/i.test(tail)) {
-        refNo = tail;
-        middle.pop();
-      }
-    }
-
-    const details = middle.join(" ").replace(/\s+/g, " ").trim() || "Transaction";
-    if (/^(TRANS\s+DATE|VALUE\s+DATE|DEBITS?|CREDITS?|BALANCE)$/i.test(details)) continue;
-
-    const isDebit = debit > 0 && credit === 0;
-
-    out.push({
-      date,
-      details,
-      refNo,
-      debit,
-      credit,
-      balance,
-      type: isDebit ? "debit" : "credit",
-      counterparty: categorise(details),
-    });
-  }
-
-  return Array.from(
-    new Map(out.map((t) => [`${t.date}|${t.refNo}|${t.debit}|${t.credit}|${t.balance}|${t.details}`, t])).values(),
-  );
-}
-
-function parseLooseTransactions(lines: string[]): Transaction[] {
-  const DATE_RE = /(\d{1,2}[-/\s](?:[A-Za-z]{3}|\d{1,2})[-/\s]?\d{2,4})/i;
-  const MONEY_RE = /[\d,]+\.\d{2}/g;
-  const out: Transaction[] = [];
-
-  for (const rawLine of lines) {
-    const line = rawLine.replace(/\|/g, " ").replace(/\s+/g, " ").trim();
-    if (!line) continue;
-
-    const dateMatch = line.match(DATE_RE);
-    if (!dateMatch) continue;
-
-    if (/^(TRANS\s+DATE|VALUE\s+DATE|DEBITS?|CREDITS?|BALANCE|PAGE\s+\d+)/i.test(line)) continue;
-
-    let rest = line;
-    const firstDate = dateMatch[1];
-    const secondDate = rest.slice(rest.indexOf(firstDate) + firstDate.length).match(DATE_RE)?.[1];
-
-    rest = rest.replace(firstDate, "").trim();
-    if (secondDate) rest = rest.replace(secondDate, "").trim();
-
-    const amountMatches = [...rest.matchAll(MONEY_RE)];
-    if (amountMatches.length < 2) continue;
-
-    const balance = toNum(amountMatches[amountMatches.length - 1][0]);
-
-    let debit = 0;
-    let credit = 0;
-    let detailsCutIndex = amountMatches[amountMatches.length - 2].index ?? rest.length;
-
-    if (amountMatches.length >= 3) {
-      debit = toNum(amountMatches[amountMatches.length - 3][0]);
-      credit = toNum(amountMatches[amountMatches.length - 2][0]);
-      detailsCutIndex = amountMatches[amountMatches.length - 3].index ?? rest.length;
-    } else {
-      const txAmount = toNum(amountMatches[amountMatches.length - 2][0]);
-      const upper = rest.toUpperCase();
-      if (/\b(UPI\/DR|DEBIT|CHQ\s+PAID|ATW|ATM|CHARGE|CHRG|GST|TAX)\b/.test(upper)) debit = txAmount;
-      else credit = txAmount;
-    }
-
-    let body = rest.slice(0, detailsCutIndex).replace(/\s+/g, " ").trim();
-
-    const refMatches = [...body.matchAll(/\b([A-Z0-9]{6,20})\b/g)];
-    const refNo = refMatches.length ? (refMatches[refMatches.length - 1][1] ?? "") : "";
-    if (refNo) {
-      body = body.replace(new RegExp(`\\b${refNo}\\b`), "").replace(/\s+/g, " ").trim();
-    }
-
-    if (!body) body = "Transaction";
-
-    const isDebit = debit > 0 && credit === 0;
-    out.push({
-      date: normalizeDateToken(firstDate),
-      details: body,
-      refNo,
-      debit,
-      credit,
-      balance,
-      type: isDebit ? "debit" : "credit",
-      counterparty: categorise(body),
-    });
-  }
-
-  return Array.from(
-    new Map(out.map((t) => [`${t.date}|${t.refNo}|${t.debit}|${t.credit}|${t.balance}|${t.details}`, t])).values(),
-  );
-}
-
-function parseLegacyTransactions(lines: string[]): Transaction[] {
-  const DATE_RE = /^(\d{1,2}(?:[-/\s])[A-Z]{3}(?:[-/\s])?\d{4})\s*(.*)/i;
-  const BAL_RE = /INR\s+([\d,]+\.\d{2})\s*Cr/i;
-  const AMOUNT_RE = /\b(\d{1,3}(?:,\d{3})*\.\d{2})\b/g;
-
-  const transactions: Transaction[] = [];
-  let i = 0;
-
-  while (i < lines.length) {
-    const dateMatch = lines[i].match(DATE_RE);
-    if (!dateMatch) {
-      i++;
-      continue;
-    }
-
-    const date = normalizeDateToken(dateMatch[1]);
-    const detailParts: string[] = [dateMatch[2]];
-
-    let j = i + 1;
-    while (j < lines.length) {
-      const nextLine = lines[j];
-      if (DATE_RE.test(nextLine)) break;
-      if (/end\s+of\s+statement/i.test(nextLine)) break;
-      detailParts.push(nextLine);
-      j++;
-    }
-
-    const fullText = detailParts.join(" ");
-    const balMatch = fullText.match(BAL_RE);
-    const balance = balMatch ? toNum(balMatch[1]) : 0;
-    const refMatch = fullText.match(/\b(\d{12,20})\b/);
-    const refNo = refMatch?.[1] ?? "";
-
-    const isDebit = /UPI\/DR|ATW\s+using|Chq\s+Paid|Issuer\s+ATM\s+Fin|DEBIT/i.test(fullText);
-    const isCredit = /UPI\/CR|NEFT\s+Cr--|IMPS--|NEFT\s+Cr\b|CREDIT/i.test(fullText);
-
-    const allAmounts = [...fullText.matchAll(AMOUNT_RE)]
-      .map((m) => toNum(m[1]))
-      .filter((a) => a > 0 && Math.abs(a - balance) > 0.01);
-
-    const txAmount = allAmounts.length > 0 ? Math.min(...allAmounts) : 0;
-
-    const details = fullText
-      .replace(BAL_RE, "")
-      .replace(/\b\d{12,20}\b/g, "")
-      .replace(AMOUNT_RE, "")
-      .replace(/\s+/g, " ")
-      .trim();
-
-    if (balance > 0 || txAmount > 0) {
-      transactions.push({
-        date,
-        details,
-        refNo,
-        debit: isDebit ? txAmount : 0,
-        credit: isCredit ? txAmount : 0,
-        balance,
-        type: isDebit ? "debit" : "credit",
-        counterparty: categorise(fullText),
-      });
-    }
-
-    i = j;
-  }
-
-  return transactions;
+  return { transactions: deduped, openingBalanceFromBF };
 }
 
 /** Strip page-boundary contamination from extracted text lines. */
@@ -441,19 +262,11 @@ export function parseBankStatement(rawText: string): BankStatementData {
     .map((l) => cleanPageBoundary(l))
     .filter((l) => l.length > 0);
 
-  // Keep pipe-containing lines for pipeTableTransactions
-  const pipeLines = rawLines.map((l) => l.replace(/#/g, " ").replace(/\s+/g, " ").trim()).filter(Boolean);
-  // Stripped version (no pipes) for other parsers
   const lines = rawLines.map((l) => l.replace(/[|#]/g, " ").replace(/\s+/g, " ").trim()).filter(Boolean);
 
   const joined = lines.join(" ");
-  // Also filter out lines that are just page headers/footers
   const filteredLines = lines.filter(
     (l) => !/^(CSB\s+Bank|Trusted\s+Heritage|1800\s+266|customercare@|CIN:|www\.csb|Website:|Nominee\s+Details|Legends\s+for\s+Trans|Disclaimer:|Statement\s+Generated|END\s+OF\s+STATEMENT|\*{3,})/i.test(l)
-  );
-
-  const rawLinesFilt = rawLines.filter(
-    (l) => !/^(CSB\s+Bank|Trusted\s+Heritage|1800\s+266|customercare@|CIN:|www\.csbbank)/i.test(l.replace(/[|#]/g, " ").trim())
   );
 
   const accountHolderMatch =
@@ -483,13 +296,8 @@ export function parseBankStatement(rawText: string): BankStatementData {
 
   const summary = parseSummaryTotals(joined);
 
-  const tabularTransactions = parseTabularTransactions(filteredLines);
-  const pipeTableTransactions = parsePipeTableTransactions(pipeLines);
-  const looseTransactions = parseLooseTransactions(filteredLines);
-  const legacyTransactions = parseLegacyTransactions(filteredLines);
-
-  const allResults = [tabularTransactions, pipeTableTransactions, looseTransactions, legacyTransactions];
-  const transactions = allResults.sort((a, b) => b.length - a.length)[0] ?? [];
+  const { transactions: parsedTxns, openingBalanceFromBF } = parseTransactions(filteredLines);
+  const transactions = parsedTxns;
 
   // Clean transaction details of any remaining page-boundary text
   for (const txn of transactions) {
@@ -497,10 +305,22 @@ export function parseBankStatement(rawText: string): BankStatementData {
     if (!txn.details) txn.details = "Transaction";
   }
 
-  const totalCredits = summary.totalCredits > 0 ? summary.totalCredits : transactions.reduce((s, t) => s + (t.credit || 0), 0);
-  const totalDebits = summary.totalDebits > 0 ? summary.totalDebits : transactions.reduce((s, t) => s + (t.debit || 0), 0);
-  const openingBalance = summary.openingBalance > 0 ? summary.openingBalance : transactions[0]?.balance ?? 0;
+  const parsedTotalCredits = transactions.reduce((s, t) => s + (t.credit || 0), 0);
+  const parsedTotalDebits = transactions.reduce((s, t) => s + (t.debit || 0), 0);
+  const totalCredits = summary.totalCredits > 0 ? summary.totalCredits : parsedTotalCredits;
+  const totalDebits = summary.totalDebits > 0 ? summary.totalDebits : parsedTotalDebits;
+  const openingBalance = openingBalanceFromBF > 0
+    ? openingBalanceFromBF
+    : (summary.openingBalance > 0 ? summary.openingBalance : transactions[0]?.balance ?? 0);
   const closingBalance = summary.closingBalance > 0 ? summary.closingBalance : transactions[transactions.length - 1]?.balance ?? 0;
+
+  // Validation: compare parsed totals to reported totals when available
+  if (summary.totalCredits > 0 && Math.abs(parsedTotalCredits - summary.totalCredits) > 0.02) {
+    console.warn(`[parseBankStatement] Credits mismatch: parsed=${parsedTotalCredits}, reported=${summary.totalCredits}`);
+  }
+  if (summary.totalDebits > 0 && Math.abs(parsedTotalDebits - summary.totalDebits) > 0.02) {
+    console.warn(`[parseBankStatement] Debits mismatch: parsed=${parsedTotalDebits}, reported=${summary.totalDebits}`);
+  }
 
   console.log(`[parseBankStatement] ${accountHolder} | ${accountNumber} | ${transactions.length} transactions`);
 
