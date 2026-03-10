@@ -127,17 +127,23 @@ export function TransactionTable({
     setCurrentPage(1);
   }, [search, viewMode]);
 
+  // Sort by date (chronological: oldest first) so "By Date" and all views show consistent order
+  const sortedByDate = useMemo(
+    () => [...transactions].sort((a, b) => (a.date || "").localeCompare(b.date || "")),
+    [transactions]
+  );
+
   const filtered = useMemo(() => {
-    if (search.trim() === "") return transactions;
+    if (search.trim() === "") return sortedByDate;
     const s = search.toLowerCase();
-    return transactions.filter(
-      (t) =>
+    return sortedByDate.filter(
+        (t) =>
         (t.details ?? "").toLowerCase().includes(s) ||
         getPartyName(t).toLowerCase().includes(s) ||
         (t.date ?? "").toLowerCase().includes(s) ||
         classifyTransaction(t.details ?? "").toLowerCase().includes(s)
     );
-  }, [transactions, search]);
+  }, [sortedByDate, search]);
 
   const totalPages = Math.ceil(filtered.length / ROWS_PER_PAGE);
   const paginatedData = useMemo(() => {
