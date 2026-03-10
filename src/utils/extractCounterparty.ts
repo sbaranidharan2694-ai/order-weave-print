@@ -11,6 +11,10 @@ export function extractCounterparty(details: string): string {
   const neft = details.match(/NEFT\s+(?:CR|DR)--[A-Z0-9]+-([A-Z][A-Z0-9\s&.,']+?)(?:-[A-Z]{2,4}\s*$|-[A-Z]{4}\d|$)/i);
   if (neft) return neft[1].trim().replace(/\s+/g, ' ');
 
+  // NEFT-G: "NEFT-G G ORGANICS EXPORTS PRIVATE LREF-HDF" → "G G ORGANICS EXPORTS PRIVATE"
+  const neftG = details.match(/NEFT-G\s+([A-Z][A-Z0-9\s&.,']+?)(?:\s+(?:LREF|PVT|LTD|HDF|REF)-|$)/i);
+  if (neftG) return neftG[1].trim().replace(/\s+/g, ' ');
+
   // IMPS: "IMPS--12345-JOHN DOE" → "JOHN DOE"
   const imps = details.match(/IMPS--\d+-([A-Z][A-Z\s]+)/i);
   if (imps) return imps[1].trim();
@@ -40,7 +44,7 @@ export function classifyTransaction(details: string): string {
   const d = details.toUpperCase();
   if (d.includes("UPI/CR")) return "UPI Credit";
   if (d.includes("UPI/DR")) return "UPI Debit";
-  if (d.includes("NEFT") && (d.includes("CR") || d.includes("CREDIT"))) return "NEFT Credit";
+  if (d.includes("NEFT-G") || (d.includes("NEFT") && (d.includes("CR") || d.includes("CREDIT")))) return "NEFT Credit";
   if (d.includes("NEFT") && (d.includes("DR") || d.includes("DEBIT"))) return "NEFT Debit";
   if (d.includes("IMPS")) return "IMPS";
   if (d.includes("CHQ") || d.includes("CLEARING")) return "Cheque";

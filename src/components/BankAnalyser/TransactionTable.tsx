@@ -50,7 +50,7 @@ function getTransactionType(details: string | null): { label: string; color: str
   
   if (d.includes("UPI/CR")) return { label: "UPI", color: "bg-blue-500/15 text-blue-700 dark:text-blue-400" };
   if (d.includes("UPI/DR")) return { label: "UPI", color: "bg-blue-500/15 text-blue-700 dark:text-blue-400" };
-  if (d.includes("NEFT") && (d.includes("CR") || d.includes("CREDIT"))) return { label: "NEFT", color: "bg-purple-500/15 text-purple-700 dark:text-purple-400" };
+  if (d.includes("NEFT-G") || (d.includes("NEFT") && (d.includes("CR") || d.includes("CREDIT")))) return { label: "NEFT", color: "bg-purple-500/15 text-purple-700 dark:text-purple-400" };
   if (d.includes("NEFT")) return { label: "NEFT", color: "bg-purple-500/15 text-purple-700 dark:text-purple-400" };
   if (d.includes("IMPS")) return { label: "IMPS", color: "bg-teal-500/15 text-teal-700 dark:text-teal-400" };
   if (d.includes("CHQ") || d.includes("CLEARING")) return { label: "Cheque", color: "bg-orange-500/15 text-orange-700 dark:text-orange-400" };
@@ -70,6 +70,21 @@ function matchKnownParty(partyName: string): { name: string; type: string; categ
 
 const fmt = (n: number) =>
   n > 0 ? "₹" + n.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "";
+
+/** When debit and credit are both set (e.g. from old parse), show only the one that matches the transaction type */
+function getDisplayDebitCredit(tx: Transaction): { debit: number; credit: number } {
+  const debit = Number(tx.debit) || 0;
+  const credit = Number(tx.credit) || 0;
+  if (debit === 0 && credit === 0) return { debit: 0, credit: 0 };
+  if (debit > 0 && credit > 0) {
+    const category = classifyTransaction(tx.details ?? "");
+    const isCreditType = /credit|receipt|cr\b|upi\/cr|neft\s*cr|imps/i.test(category) || /NEFT-G|UPI\/CR|NEFT\s+CR|CREDIT|CR\s*--/i.test(tx.details ?? "");
+    const isDebitType = /debit|payment|dr\b|upi\/dr|chq\s+paid|atw|atm/i.test(category) || /UPI\/DR|NEFT\s+DR|DEBIT|DR\s*--/i.test(tx.details ?? "");
+    if (isCreditType && !isDebitType) return { debit: 0, credit: Math.max(debit, credit) };
+    if (isDebitType && !isCreditType) return { debit: Math.max(debit, credit), credit: 0 };
+  }
+  return { debit, credit };
+}
 
 const ROWS_PER_PAGE = 25;
 
@@ -130,8 +145,8 @@ export function TransactionTable({
     return filtered.slice(start, start + ROWS_PER_PAGE);
   }, [filtered, currentPage]);
 
-  const totalDebit = filtered.reduce((s, t) => s + (t.debit || 0), 0);
-  const totalCredit = filtered.reduce((s, t) => s + (t.credit || 0), 0);
+  const totalDebit = filtered.reduce((s, t) => s + getDisplayDebitCredit(t).debit, 0);
+  const totalCredit = filtered.reduce((s, t) => s + getDisplayDebitCredit(t).credit, 0);
 
   const byParty = filtered.reduce(
     (g, tx) => {
@@ -235,7 +250,7 @@ export function TransactionTable({
                   const category = classifyTransaction(tx.details ?? "");
                   const knownParty = matchKnownParty(party);
                   const isEven = i % 2 === 0;
-                  
+                  const { debit: displayDebit, credit: displayCredit } = getDisplayDebitCredit(tx);
                   return (
                     <tr 
                       key={tx.id || i} 
@@ -273,10 +288,10 @@ export function TransactionTable({
                         </Badge>
                       </td>
                       <td className="px-3 py-2.5 text-xs text-right font-medium text-red-600 dark:text-red-400 tabular-nums">
-                        {fmt(tx.debit ?? 0)}
+                        {fmt(displayDebit)}
                       </td>
                       <td className="px-3 py-2.5 text-xs text-right font-medium text-green-600 dark:text-green-400 tabular-nums">
-                        {fmt(tx.credit ?? 0)}
+                        {fmt(displayCredit)}
                       </td>
                       <td className="px-3 py-2.5 text-xs text-right font-medium tabular-nums">
                         ₹{(tx.balance ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
@@ -342,8 +357,8 @@ export function TransactionTable({
       {viewMode === "byParty" && (
         <div className="space-y-2">
           {sortedParties.map(([party, partyTxns]) => {
-            const pCredits = partyTxns.reduce((s, t) => s + (t.credit || 0), 0);
-            const pDebits = partyTxns.reduce((s, t) => s + (t.debit || 0), 0);
+            const pCredits = partyTxns.reduce((s, t) => s + getDisplayDebitCredit(t).credit, 0);
+            const pDebits = partyTxns.reduce((s, t) => s + getDisplayDebitCredit(t).debit, 0);
             const isOpen = expandedParties.has(party);
             const knownParty = matchKnownParty(party);
 
@@ -396,6 +411,7 @@ export function TransactionTable({
                       {partyTxns.map((tx, i) => {
                         const txType = getTransactionType(tx.details);
                         const category = classifyTransaction(tx.details ?? "");
+                        const { debit: d, credit: c } = getDisplayDebitCredit(tx);
                         return (
                           <tr 
                             key={tx.id || i} 
@@ -416,10 +432,10 @@ export function TransactionTable({
                               </Badge>
                             </td>
                             <td className="px-4 py-2 text-xs text-right font-medium text-red-600 dark:text-red-400 w-28 tabular-nums">
-                              {fmt(tx.debit ?? 0)}
+                              {fmt(d)}
                             </td>
                             <td className="px-4 py-2 text-xs text-right font-medium text-green-600 dark:text-green-400 w-28 tabular-nums">
-                              {fmt(tx.credit ?? 0)}
+                              {fmt(c)}
                             </td>
                             <td className="px-4 py-2 text-xs text-right w-28 tabular-nums">
                               ₹{(tx.balance ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
@@ -440,8 +456,8 @@ export function TransactionTable({
       {viewMode === "byCategory" && (
         <div className="space-y-2">
           {sortedCategories.map(([category, categoryTxns]) => {
-            const cCredits = categoryTxns.reduce((s, t) => s + (t.credit || 0), 0);
-            const cDebits = categoryTxns.reduce((s, t) => s + (t.debit || 0), 0);
+            const cCredits = categoryTxns.reduce((s, t) => s + getDisplayDebitCredit(t).credit, 0);
+            const cDebits = categoryTxns.reduce((s, t) => s + getDisplayDebitCredit(t).debit, 0);
             const isOpen = expandedCategories.has(category);
             const txType = getTransactionType(categoryTxns[0]?.details);
 
@@ -488,6 +504,7 @@ export function TransactionTable({
                     <tbody className="divide-y divide-border">
                       {categoryTxns.map((tx, i) => {
                         const typeStyle = getTransactionType(tx.details);
+                        const { debit: d, credit: c } = getDisplayDebitCredit(tx);
                         return (
                           <tr
                             key={tx.id || i}
@@ -506,10 +523,10 @@ export function TransactionTable({
                               {getPartyName(tx).slice(0, 20)}
                             </td>
                             <td className="px-4 py-2 text-xs text-right font-medium text-red-600 dark:text-red-400 w-28 tabular-nums">
-                              {fmt(tx.debit ?? 0)}
+                              {fmt(d)}
                             </td>
                             <td className="px-4 py-2 text-xs text-right font-medium text-green-600 dark:text-green-400 w-28 tabular-nums">
-                              {fmt(tx.credit ?? 0)}
+                              {fmt(c)}
                             </td>
                             <td className="px-4 py-2 text-xs text-right w-28 tabular-nums">
                               ₹{(tx.balance ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}

@@ -67,22 +67,50 @@ function normalizeAccountNumber(raw: string): string {
   return raw.replace(/\D/g, "").trim();
 }
 
+const MONTH_NAMES: Record<string, string> = {
+  jan: "01", feb: "02", mar: "03", apr: "04", may: "05", jun: "06",
+  jul: "07", aug: "08", sep: "09", oct: "10", nov: "11", dec: "12",
+};
+
+/** Normalize to YYYY-MM-DD for consistent sorting and display */
 function normalizeDateToken(raw: string): string {
   const s = raw.trim().replace(/[\s/]+/g, "-");
+  // YYYY-Mon-DD (e.g. 2025-Mar-29) → YYYY-MM-DD
+  let m = s.match(/^(\d{4})-([A-Za-z]{3})-(\d{1,2})$/i);
+  if (m) {
+    const [, y, mon, d] = m;
+    const mm = MONTH_NAMES[mon.slice(0, 3).toLowerCase()] ?? "01";
+    return `${y}-${mm}-${d.padStart(2, "0")}`;
+  }
   // DD-MM-YY → YYYY-MM-DD (assume 20xx)
-  let m = s.match(/^(\d{1,2})-(\d{1,2})-(\d{2})$/);
+  m = s.match(/^(\d{1,2})-(\d{1,2})-(\d{2})$/);
   if (m) {
     const [, d, mon, yy] = m;
     const y = parseInt(yy, 10) < 50 ? "20" + yy : "19" + yy;
     return `${y}-${mon.padStart(2, "0")}-${d.padStart(2, "0")}`;
   }
-  // DD-MONYYYY (no separator between month and year) → DD-MON-YYYY
+  // DD-MON-YYYY or DD-Mon-YYYY
   const fixed = s.replace(/^(\d{1,2})-([A-Za-z]{3})(\d{4})$/, "$1-$2-$3");
   m = fixed.match(/^(\d{1,2})-([A-Za-z]{3}|\d{1,2})-(\d{4})$/);
   if (!m) return raw.trim();
   const [, d, mon, y] = m;
   if (/^\d{1,2}$/.test(mon)) return `${y}-${mon.padStart(2, "0")}-${d.padStart(2, "0")}`;
-  return `${y}-${mon.slice(0, 1).toUpperCase()}${mon.slice(1, 3).toLowerCase()}-${d.padStart(2, "0")}`;
+  const mm = MONTH_NAMES[mon.slice(0, 3).toLowerCase()] ?? "01";
+  return `${y}-${mm}-${d.padStart(2, "0")}`;
+}
+
+/** Fix debit/credit when description clearly indicates type (e.g. "NEFT Credit" → credit only; avoid same amount in both) */
+function correctDebitCreditFromDescription(details: string, debit: number, credit: number): { debit: number; credit: number } {
+  const d = details.toUpperCase();
+  const isCredit = /NEFT[\s-]*(?:G\s|CR|CREDIT)|UPI\/CR|IMPS.*CR|CREDIT\b|CR\s*--|CASH\s+DEP/i.test(d);
+  const isDebit = /NEFT[\s-]*(?:DR|DEBIT)|UPI\/DR|CHQ\s+PAID|ATW|ATM\s+WDL|DEBIT\b|DR\s*--/i.test(d);
+  const amount = debit || credit;
+  if (amount === 0) return { debit: 0, credit: 0 };
+  if (debit > 0 && credit > 0) {
+    if (isCredit && !isDebit) return { debit: 0, credit: Math.max(debit, credit) };
+    if (isDebit && !isCredit) return { debit: Math.max(debit, credit), credit: 0 };
+  }
+  return { debit, credit };
 }
 
 function parseSummaryTotals(joined: string): {
@@ -112,8 +140,8 @@ function parseSummaryTotals(joined: string): {
   };
 }
 
-/** Match transaction date at start: DD-MM-YYYY, DD/MM/YYYY, DD-Mon-YYYY, DD-MM-YY */
-const DATE_PREFIX = /^(\d{1,2}[-/\s](?:[A-Za-z]{3}|\d{1,2})[-/\s]?\d{2,4})/i;
+/** Match transaction date at start: DD-MM-YYYY, DD-Mon-YYYY, DD-MM-YY, or YYYY-Mon-DD (e.g. 2025-Mar-29) */
+const DATE_PREFIX = /^(\d{1,2}[-/\s](?:[A-Za-z]{3}|\d{1,2})[-/\s]?\d{2,4}|\d{4}[-/\s][A-Za-z]{3}[-/\s]\d{1,2})/i;
 
 /** True if line is a section/column header, not transaction content */
 function isTransactionHeaderLine(line: string): boolean {
@@ -215,13 +243,14 @@ function parseTransactions(lines: string[]): { transactions: Transaction[]; open
 
     if (!body) body = "Transaction";
 
-    const isDebit = debit > 0 && credit === 0;
+    const { debit: d, credit: c } = correctDebitCreditFromDescription(body, debit, credit);
+    const isDebit = d > 0 && c === 0;
     out.push({
       date,
       details: body,
       refNo,
-      debit,
-      credit,
+      debit: d,
+      credit: c,
       balance,
       type: isDebit ? "debit" : "credit",
       counterparty: extractCounterparty(body),
@@ -265,13 +294,14 @@ function parsePipeTableTransactions(lines: string[]): Transaction[] {
     }
     const details = middle.join(" ").replace(/\s+/g, " ").trim() || "Transaction";
     if (/^(TRANS\s+DATE|VALUE\s+DATE|DEBITS?|CREDITS?|BALANCE)$/i.test(details)) continue;
-    const isDebit = debit > 0 && credit === 0;
+    const { debit: d, credit: c } = correctDebitCreditFromDescription(details, debit, credit);
+    const isDebit = d > 0 && c === 0;
     out.push({
       date,
       details,
       refNo,
-      debit,
-      credit,
+      debit: d,
+      credit: c,
       balance,
       type: isDebit ? "debit" : "credit",
       counterparty: extractCounterparty(details),
@@ -282,7 +312,7 @@ function parsePipeTableTransactions(lines: string[]): Transaction[] {
 }
 
 function parseLooseTransactions(lines: string[]): Transaction[] {
-  const DATE_RE = /(\d{1,2}[-/\s](?:[A-Za-z]{3}|\d{1,2})[-/\s]?\d{2,4})/i;
+  const DATE_RE = /(\d{1,2}[-/\s](?:[A-Za-z]{3}|\d{1,2})[-/\s]?\d{2,4}|\d{4}[-/\s][A-Za-z]{3}[-/\s]\d{1,2})/i;
   const MONEY_RE = /[\d,]+\.\d{2}/g;
   const out: Transaction[] = [];
   for (const rawLine of lines) {
@@ -318,13 +348,14 @@ function parseLooseTransactions(lines: string[]): Transaction[] {
     const refNo = refMatches.length ? (refMatches[refMatches.length - 1][1] ?? "") : "";
     if (refNo) body = body.replace(new RegExp(`\\b${refNo}\\b`), "").replace(/\s+/g, " ").trim();
     if (!body) body = "Transaction";
-    const isDebit = debit > 0 && credit === 0;
+    const { debit: d, credit: c } = correctDebitCreditFromDescription(body, debit, credit);
+    const isDebit = d > 0 && c === 0;
     out.push({
       date: normalizeDateToken(firstDate),
       details: body,
       refNo,
-      debit,
-      credit,
+      debit: d,
+      credit: c,
       balance,
       type: isDebit ? "debit" : "credit",
       counterparty: extractCounterparty(body),
@@ -364,14 +395,17 @@ function parseLegacyTransactions(lines: string[]): Transaction[] {
     const txAmount = allAmounts.length > 0 ? Math.min(...allAmounts) : 0;
     const details = fullText.replace(BAL_RE, "").replace(/\b\d{12,20}\b/g, "").replace(AMOUNT_RE, "").replace(/\s+/g, " ").trim();
     if (balance > 0 || txAmount > 0) {
+      const debitVal = isDebit ? txAmount : 0;
+      const creditVal = isCredit ? txAmount : 0;
+      const { debit: d, credit: c } = correctDebitCreditFromDescription(fullText, debitVal, creditVal);
       transactions.push({
         date,
         details: details || "Transaction",
         refNo,
-        debit: isDebit ? txAmount : 0,
-        credit: isCredit ? txAmount : 0,
+        debit: d,
+        credit: c,
         balance,
-        type: isDebit ? "debit" : "credit",
+        type: d > 0 ? "debit" : "credit",
         counterparty: extractCounterparty(fullText),
         category: classifyTransaction(fullText),
       });
@@ -457,6 +491,9 @@ export function parseBankStatement(rawText: string): BankStatementData {
   const best = candidates.sort((a, b) => b.transactions.length - a.transactions.length)[0];
   const transactions = best.transactions;
   const effectiveOpeningFromBF = best.openingBalanceFromBF;
+
+  // Sort by date (YYYY-MM-DD) so columns display in chronological order
+  transactions.sort((a, b) => (a.date || "").localeCompare(b.date || ""));
 
   // Clean transaction details of any remaining page-boundary text
   for (const txn of transactions) {
