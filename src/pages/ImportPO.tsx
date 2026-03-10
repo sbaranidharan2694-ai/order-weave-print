@@ -505,75 +505,66 @@ export default function ImportPO() {
       );
       if (liErr) throw new Error("Line items creation failed: " + liErr.message);
 
-      // 5. Create orders — generate order_no via RPC for each
-      const orderIds: string[] = [];
-      const orderNos: string[] = [];
-      const errors: string[] = [];
+      // 5. Create one order per PO (not per line item) — single order linked to this PO
+      const validLineCount = lineItems.filter(li => li.quantity > 0 && li.description?.trim()).length;
+      let orderId: string | null = null;
+      let orderNo: string | null = null;
 
-      for (const li of lineItems) {
-        if (li.quantity <= 0 || !li.description) continue;
+      if (validLineCount > 0) {
+        const { data: generatedOrderNo, error: rpcErr } = await supabase.rpc("generate_order_no");
+        if (rpcErr || !generatedOrderNo) {
+          toast.warning(`PO saved but order number generation failed: ${rpcErr?.message || "unknown"}`);
+        } else {
+          const totalQty = lineItems.reduce((s, li) => s + (li.quantity || 0), 0);
+          const orderDeliveryDate = deliveryDate || format(new Date(), "yyyy-MM-dd");
 
-        // Generate order number
-        const { data: orderNo, error: rpcErr } = await supabase.rpc("generate_order_no");
-        if (rpcErr || !orderNo) {
-          errors.push(`Failed to generate order number: ${rpcErr?.message || "unknown"}`);
-          continue;
-        }
+          const { data: order, error: oErr } = await supabase.from("orders").insert({
+            order_no: generatedOrderNo,
+            customer_name: header.customer_name.trim(),
+            contact_no: header.customer_phone || "",
+            email: header.customer_email || null,
+            source: "purchase_order",
+            status: "Order Received",
+            product_type: "Purchase Order",
+            quantity: totalQty,
+            size: "",
+            color_mode: "full_color" as any,
+            paper_type: "",
+            special_instructions: `PO #${header.po_number} — ${validLineCount} line item(s). See PO for details.`,
+            order_date: safeDate(header.po_date) || format(new Date(), "yyyy-MM-dd"),
+            delivery_date: orderDeliveryDate,
+            amount: totals.grand,
+            advance_paid: 0,
+            po_id: poId,
+            po_number: header.po_number,
+            po_contact_person: header.customer_contact_person,
+            gstin: header.customer_gst,
+            hsn_code: lineItems[0]?.hsn_code ?? "",
+            base_amount: totals.subtotal,
+            cgst_percent: isIntrastate(header.customer_gst) ? 9 : 0,
+            cgst_amount: isIntrastate(header.customer_gst) ? totals.cgst : 0,
+            sgst_percent: isIntrastate(header.customer_gst) ? 9 : 0,
+            sgst_amount: isIntrastate(header.customer_gst) ? totals.sgst : 0,
+            igst_percent: isIntrastate(header.customer_gst) ? 0 : 18,
+            igst_amount: isIntrastate(header.customer_gst) ? 0 : totals.igst,
+            total_tax_amount: totals.totalGst,
+          } as any).select("id, order_no").single();
 
-        const pt = productTypes.find(p =>
-          p.hsn_code === li.hsn_code || p.name.toLowerCase().includes(li.description.toLowerCase().split(" ")[0])
-        );
-
-        const orderDeliveryDate = deliveryDate || format(new Date(), "yyyy-MM-dd");
-
-        const { data: order, error: oErr } = await supabase.from("orders").insert({
-          order_no: orderNo,
-          customer_name: header.customer_name.trim(),
-          contact_no: header.customer_phone || "",
-          email: header.customer_email || null,
-          source: "purchase_order",
-          status: "Order Received",
-          product_type: pt?.name || "Other",
-          quantity: li.quantity,
-          size: pt?.default_size || "",
-          color_mode: (pt?.default_color_mode || "full_color") as any,
-          paper_type: pt?.default_paper_type || "",
-          special_instructions: `PO #${header.po_number} — ${li.description}`,
-          order_date: safeDate(header.po_date) || format(new Date(), "yyyy-MM-dd"),
-          delivery_date: orderDeliveryDate,
-          amount: li.line_total,
-          advance_paid: 0,
-          po_id: poId,
-          po_number: header.po_number,
-          po_contact_person: header.customer_contact_person,
-          gstin: header.customer_gst,
-          hsn_code: li.hsn_code,
-          base_amount: li.quantity * li.unit_price,
-          cgst_percent: isIntrastate(header.customer_gst) ? li.gst_rate / 2 : 0,
-          cgst_amount: isIntrastate(header.customer_gst) ? li.gst_amount / 2 : 0,
-          sgst_percent: isIntrastate(header.customer_gst) ? li.gst_rate / 2 : 0,
-          sgst_amount: isIntrastate(header.customer_gst) ? li.gst_amount / 2 : 0,
-          igst_percent: isIntrastate(header.customer_gst) ? 0 : li.gst_rate,
-          igst_amount: isIntrastate(header.customer_gst) ? 0 : li.gst_amount,
-          total_tax_amount: li.gst_amount,
-        } as any).select("id, order_no").single();
-
-        if (oErr) {
-          errors.push(`Order for "${li.description}" failed: ${oErr.message}`);
-          continue;
-        }
-        if (order) {
-          orderIds.push(order.id);
-          orderNos.push(order.order_no);
-          await supabase.from("order_tags").insert({ order_id: order.id, tag_name: "From PO" } as any);
+          if (oErr) {
+            toast.warning(`PO saved but order creation failed: ${oErr.message}`);
+          } else if (order) {
+            orderId = order.id;
+            orderNo = order.order_no;
+            await supabase.from("order_tags").insert({ order_id: order.id, tag_name: "From PO" } as any);
+          }
         }
       }
 
-      // 6. Update PO status and link first order UUID
-      const newStatus = orderIds.length > 0 ? "Processed" : (errors.length > 0 ? "Failed" : "Imported");
+      // 6. Update PO status and link the single order
+      const newStatus = orderId ? "Processed" : (validLineCount === 0 ? "Imported" : "Failed");
       const updatePayload: Record<string, any> = { status: newStatus };
-      if (orderIds.length > 0) {
-        updatePayload.linked_order_id = orderIds[0]; // UUID, not order_no
+      if (orderId) {
+        updatePayload.linked_order_id = orderId;
       }
       await supabase.from("purchase_orders").update(updatePayload).eq("id", poId);
 
@@ -581,12 +572,9 @@ export default function ImportPO() {
       qc.invalidateQueries({ queryKey: ["orders"] });
       qc.invalidateQueries({ queryKey: ["customers"] });
 
-      if (errors.length > 0) {
-        toast.warning(`PO imported with ${errors.length} error(s): ${errors[0]}`);
-      }
-      if (orderNos.length > 0) {
-        toast.success(`✅ PO #${header.po_number} imported! ${orderNos.length} order(s) created: ${orderNos.join(", ")}`);
-      } else if (errors.length === 0) {
+      if (orderNo) {
+        toast.success(`✅ PO #${header.po_number} imported! 1 order created: ${orderNo} (${validLineCount} line items)`);
+      } else if (validLineCount === 0) {
         toast.info("PO saved but no orders created (no valid line items).");
       }
 
