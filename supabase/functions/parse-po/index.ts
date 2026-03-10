@@ -67,24 +67,45 @@ Calculate missing fields: line_total = qty × unit_price, gst_amount = line_tota
 confidence: high if PO number + customer + items found, medium if some missing, low if mostly guessing.
 IMPORTANT: line_items MUST always be an array, even if empty [].`;
 
-/**
- * Robustly extract JSON from AI response text.
- * Handles markdown fences, preamble text, trailing text.
- * Uses brace-counting to find the matching closing brace.
- */
-function extractJson(raw: string): Record<string, unknown> | null {
-  if (!raw || !raw.trim()) return null;
-  let s = raw.trim();
-  s = s.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/i, "");
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
+/**
+ * Aggressively clean AI output before JSON parsing.
+ * Removes markdown fences, leading text, comments, trailing commas, normalizes.
+ */
+function cleanPotentialJson(text: string): string {
+  if (!text || typeof text !== "string") return "";
+  let s = text.trim();
+  if (!s) return "";
+
+  s = s.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/i, "");
+  s = s.replace(/\/\*[\s\S]*?\*\//g, "");
+  s = s.replace(/\/\/[^\n]*/g, "");
+  s = s.replace(/\s+/g, " ");
   const start = s.indexOf("{");
-  if (start < 0) return null;
+  if (start < 0) return "";
+  const lastBrace = s.lastIndexOf("}");
+  if (lastBrace < start) return "";
+  s = s.slice(start, lastBrace + 1);
+  s = s.replace(/,(\s*[}\]])/g, "$1");
+  return s;
+}
+
+/**
+ * Extract JSON between first { and last }, then try parse with cleaning.
+ */
+function extractAndParse(raw: string): { parsed: Record<string, unknown> | null; parseError?: string } {
+  const cleaned = cleanPotentialJson(raw);
+  const firstBrace = cleaned.indexOf("{");
+  if (firstBrace < 0) return { parsed: null, parseError: "No opening brace found" };
 
   let depth = 0;
   let end = -1;
-  for (let i = start; i < s.length; i++) {
-    if (s[i] === "{") depth++;
-    else if (s[i] === "}") {
+  for (let i = firstBrace; i < cleaned.length; i++) {
+    if (cleaned[i] === "{") depth++;
+    else if (cleaned[i] === "}") {
       depth--;
       if (depth === 0) {
         end = i;
@@ -92,18 +113,45 @@ function extractJson(raw: string): Record<string, unknown> | null {
       }
     }
   }
-  if (end < 0) return null;
+  if (end < 0) return { parsed: null, parseError: "Unbalanced braces" };
 
-  const candidate = s.slice(start, end + 1);
-  try {
-    return JSON.parse(candidate);
-  } catch {
+  let candidate = cleaned.slice(firstBrace, end + 1);
+
+  const attempts = [
+    candidate,
+    candidate.replace(/,(\s*[}\]])/g, "$1"),
+    candidate.replace(/,(\s*[}\]])/g, "$1").replace(/(\d)\s+(\d)/g, "$1,$2"),
+  ];
+
+  for (let i = 0; i < attempts.length; i++) {
     try {
-      return JSON.parse(candidate.replace(/,\s*([}\]])/g, "$1"));
-    } catch {
-      return null;
+      const parsed = JSON.parse(attempts[i]) as Record<string, unknown>;
+      if (parsed && typeof parsed === "object") return { parsed };
+    } catch (e) {
+      if (i === attempts.length - 1) {
+        return { parsed: null, parseError: (e as Error).message };
+      }
     }
   }
+  return { parsed: null, parseError: "All parse attempts failed" };
+}
+
+function ensureMinimumStructure(parsed: Record<string, unknown>): Record<string, unknown> {
+  if (!Array.isArray(parsed.line_items)) parsed.line_items = [];
+  const items = parsed.line_items as Array<Record<string, unknown>>;
+  for (let i = 0; i < items.length; i++) {
+    const li = items[i];
+    if (!li || typeof li !== "object") continue;
+    const qty = Number(li.quantity ?? li.qty ?? 1) || 1;
+    const price = Number(li.unit_price ?? 0) || 0;
+    li.quantity = qty;
+    li.unit_price = price;
+    if (li.line_total == null || Number(li.line_total) === 0) {
+      li.line_total = Math.round(qty * price * 100) / 100;
+    }
+    li.unit = li.unit ?? li.uom ?? "Nos";
+  }
+  return parsed;
 }
 
 serve(async (req) => {
@@ -111,112 +159,149 @@ serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  const jsonResponse = (body: object, status = 200) =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+
   try {
     const { pdfText } = await req.json();
     if (!pdfText || typeof pdfText !== "string") {
-      return new Response(
-        JSON.stringify({ error: "Missing or invalid pdfText" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      return jsonResponse({ success: false, error: "Missing or invalid pdfText", raw_ai_text: "" }, 400);
     }
 
     if (pdfText.length > 500_000) {
-      return new Response(
-        JSON.stringify({ error: "Payload too large. Maximum 500KB." }),
-        { status: 413, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      return jsonResponse(
+        { success: false, error: "Payload too large. Maximum 500KB.", raw_ai_text: "" },
+        413
       );
     }
 
     const apiKey = Deno.env.get("LOVABLE_API_KEY");
     if (!apiKey) {
-      return new Response(
-        JSON.stringify({ error: "AI API key not configured. Ensure Lovable Cloud is enabled." }),
-        { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      return jsonResponse({
+        success: false,
+        error: "AI API key not configured. Ensure Lovable Cloud is enabled.",
+        raw_ai_text: "",
+      }, 503);
     }
+
+    console.log("[parse-po] PDF text length:", pdfText.length);
 
     const trimmed = pdfText.length > 180_000 ? pdfText.slice(0, 180_000) : pdfText;
+    const maxAttempts = 3;
+    const backoffMs = 300;
 
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
-        temperature: 0,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: `Parse this purchase order and return ONLY the JSON:\n\n${trimmed}` },
-        ],
-      }),
-    });
-
-    if (!response.ok) {
-      const errText = await response.text();
-      console.error("[parse-po] AI gateway error:", response.status, errText);
-      if (response.status === 429) {
-        return new Response(
-          JSON.stringify({ error: "Rate limit exceeded. Please wait and try again." }),
-          { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-      if (response.status === 402) {
-        return new Response(
-          JSON.stringify({ error: "AI credits exhausted. Please add credits in workspace settings." }),
-          { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-      return new Response(
-        JSON.stringify({ error: `AI gateway returned ${response.status}` }),
-        { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    const data = await response.json();
-    const rawContent = data?.choices?.[0]?.message?.content ?? "";
-    console.log("[parse-po] AI response length:", rawContent.length, "| first 100 chars:", rawContent.slice(0, 100));
-
-    // Extract JSON from response
+    let rawContent = "";
+    let lastError = "";
     let parsed: Record<string, unknown> | null = null;
 
-    // Try tool_calls first
-    const toolCall = data?.choices?.[0]?.message?.tool_calls?.[0];
-    if (toolCall?.function?.arguments) {
-      try { parsed = JSON.parse(toolCall.function.arguments); } catch { /* fallback */ }
-    }
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: "google/gemini-2.5-flash",
+            temperature: 0,
+            messages: [
+              { role: "system", content: systemPrompt },
+              { role: "user", content: `Parse this purchase order and return ONLY the JSON:\n\n${trimmed}` },
+            ],
+          }),
+        });
 
-    // Then try content with robust extraction
-    if (!parsed && rawContent) {
-      parsed = extractJson(rawContent);
+        if (!response.ok) {
+          const errText = await response.text();
+          console.error("[parse-po] AI gateway error attempt", attempt, response.status, errText.slice(0, 200));
+          lastError = `AI gateway ${response.status}: ${errText.slice(0, 150)}`;
+          if (response.status === 429 || response.status === 502) {
+            await sleep(backoffMs * attempt);
+            continue;
+          }
+          if (response.status === 402) {
+            return jsonResponse({
+              success: false,
+              error: "AI credits exhausted. Add credits in workspace settings.",
+              parse_error: lastError,
+              raw_ai_text: "",
+            });
+          }
+          if (attempt === maxAttempts) {
+            return jsonResponse({
+              success: false,
+              error: lastError,
+              parse_error: lastError,
+              raw_ai_text: "",
+            });
+          }
+          await sleep(backoffMs * attempt);
+          continue;
+        }
+
+        const data = await response.json();
+        rawContent = data?.choices?.[0]?.message?.content ?? "";
+        console.log("[parse-po] Attempt", attempt, "AI response length:", rawContent.length, "first 120:", rawContent.slice(0, 120));
+
+        const toolCall = data?.choices?.[0]?.message?.tool_calls?.[0];
+        if (toolCall?.function?.arguments) {
+          try {
+            parsed = JSON.parse(toolCall.function.arguments) as Record<string, unknown>;
+            break;
+          } catch {
+            // fall through to content extraction
+          }
+        }
+
+        if (rawContent) {
+          const result = extractAndParse(rawContent);
+          if (result.parsed) {
+            parsed = result.parsed;
+            break;
+          }
+          lastError = result.parseError ?? "Parse failed";
+          console.log("[parse-po] Parse attempt", attempt, "failed:", lastError);
+        }
+
+        if (attempt < maxAttempts) await sleep(backoffMs * attempt);
+      } catch (e) {
+        lastError = e instanceof Error ? e.message : String(e);
+        console.error("[parse-po] Attempt", attempt, "error:", lastError);
+        if (attempt < maxAttempts) await sleep(backoffMs * attempt);
+      }
     }
 
     if (!parsed) {
-      console.error("[parse-po] Could not extract JSON from AI response. Raw content (first 500):", rawContent.slice(0, 500));
-      return new Response(
-        JSON.stringify({ error: "AI did not return structured data. Try again or enter manually.", rawPreview: rawContent.slice(0, 200) }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      return jsonResponse({
+        success: false,
+        error: "Failed to parse AI response",
+        parse_error: lastError || "No valid JSON extracted",
+        raw_ai_text: rawContent.slice(0, 2000),
+      });
     }
 
-    // Guarantee line_items is always an array
-    if (!Array.isArray(parsed.line_items)) {
-      parsed.line_items = [];
-      if (!Array.isArray(parsed.warnings)) parsed.warnings = [];
-      (parsed.warnings as string[]).push("No line items could be extracted");
-    }
+    parsed = ensureMinimumStructure(parsed);
 
-    return new Response(
-      JSON.stringify({ success: true, data: parsed }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    return jsonResponse({
+      success: true,
+      data: parsed,
+      raw_ai_text: rawContent ? rawContent.slice(0, 500) : undefined,
+    });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "PO parsing failed";
     console.error("[parse-po] Error:", e);
-    return new Response(
-      JSON.stringify({ error: msg }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    return jsonResponse(
+      {
+        success: false,
+        error: msg,
+        parse_error: msg,
+        raw_ai_text: "",
+      },
+      500
     );
   }
 });

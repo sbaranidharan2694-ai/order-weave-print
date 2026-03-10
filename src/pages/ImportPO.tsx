@@ -26,6 +26,7 @@ import {
 import { format } from "date-fns";
 import { extractTextFromPdf } from "@/utils/extractPdfText";
 import { extractTextFromExcel } from "@/utils/extractExcelText";
+import { parsePOText } from "@/utils/parsePOText";
 
 /* ─── Constants ─── */
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
@@ -147,6 +148,11 @@ export default function ImportPO() {
   const [showDiscard, setShowDiscard] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [history, setHistory] = useState<any[]>([]);
+  const [showParseFailureModal, setShowParseFailureModal] = useState(false);
+  const [parseFailureRawText, setParseFailureRawText] = useState("");
+  const [parseFailureError, setParseFailureError] = useState("");
+  const [parseRetriesExhausted, setParseRetriesExhausted] = useState(false);
+  const parseAttemptsRef = useRef(0);
 
   const [header, setHeader] = useState<POHeader>(emptyHeader());
   const [lineItems, setLineItems] = useState<LineItem[]>([]);
@@ -217,10 +223,13 @@ export default function ImportPO() {
       toast.error("Unsupported format. Use PDF, PNG, JPG, or XLSX."); return;
     }
     setFile(f);
+    parseAttemptsRef.current = 0;
+    setParseRetriesExhausted(false);
     setParseState("empty");
     setParseError("");
     setWarnings([]);
     setLineItems([]);
+    setShowParseFailureModal(false);
     if (["png", "jpg", "jpeg"].includes(ext)) {
       setFilePreviewUrl(URL.createObjectURL(f));
     } else {
@@ -263,11 +272,57 @@ export default function ImportPO() {
     if (file && file.type === "application/pdf") renderPdfPreview(file);
   }, [file]);
 
+  /** Populate form from parsed PO object (AI or rule-based). */
+  const applyParsedToForm = useCallback((d: any, source?: string) => {
+    const cust = d.customer || {};
+    setHeader({
+      po_number: d.po_number || "",
+      po_date: d.po_date || format(new Date(), "yyyy-MM-dd"),
+      customer_name: cust.name || d.vendor_name || "",
+      customer_address: cust.address || d.delivery_address || "",
+      customer_gst: cust.gst_number || d.gstin || "",
+      customer_phone: cust.phone || d.contact_no || "",
+      customer_email: cust.email || d.contact_email || "",
+      customer_contact_person: cust.contact_person || d.contact_person || "",
+      payment_terms: d.payment_terms || "",
+      delivery_date: d.delivery_date || "",
+      shipping_address: d.shipping_address || "",
+      notes: d.notes || d.remarks || "",
+      discount_amount: d.discount_amount || 0,
+    });
+    const items: LineItem[] = (d.line_items || []).map((li: any, idx: number) => {
+      const qty = Number(li.quantity ?? li.qty ?? 1) || 1;
+      const price = Number(li.unit_price ?? 0) || 0;
+      const gstRate = Number(li.gst_rate ?? 18) || 18;
+      const base = qty * price;
+      const gstAmt = Math.round(base * gstRate / 100 * 100) / 100;
+      return {
+        sno: idx + 1,
+        description: li.description || "",
+        quantity: qty,
+        unit: li.unit || li.uom || "Nos",
+        unit_price: price,
+        hsn_code: li.hsn_code || "",
+        gst_rate: gstRate,
+        gst_amount: gstAmt,
+        line_total: Math.round((base + gstAmt) * 100) / 100,
+      };
+    });
+    if (items.length === 0) items.push(emptyLine(1));
+    setLineItems(items);
+    setConfidence(d.confidence || "medium");
+    setWarnings(d.warnings || []);
+    setParseState("parsed");
+    const msg = source ? `Parsed with ${source}. Please verify.` : `PO parsed: ${items.length} line item(s) found`;
+    toast.success(msg);
+  }, []);
+
   /* ─── Parse ─── */
   const handleParse = async () => {
     if (!file) return;
     setParseState("loading");
     setParseError("");
+    setShowParseFailureModal(false);
     const startTime = Date.now();
 
     try {
@@ -291,11 +346,28 @@ export default function ImportPO() {
       }
 
       setRawText(text);
+      console.log("[ImportPO] PDF/text length:", text.length);
 
-      const { data: aiResult, error: aiError } = await invokeEdgeFunction<{
+      if (parseAttemptsRef.current >= 3) {
+        setParseRetriesExhausted(true);
+        toast.error("Max parse attempts reached. Use Rule Parser or enter manually.");
+        setParseState("error");
+        setParseFailureError("Max retries reached");
+        setParseFailureRawText("");
+        setShowParseFailureModal(true);
+        return;
+      }
+      parseAttemptsRef.current += 1;
+
+      const aiResult = await invokeEdgeFunction<{
         success?: boolean;
         data?: any;
+        error?: string;
+        parse_error?: string;
+        raw_ai_text?: string;
       }>("parse-po", { pdfText: text });
+
+      const { data: body, error: aiError } = aiResult;
 
       if (aiError) {
         setParseState("error");
@@ -303,72 +375,76 @@ export default function ImportPO() {
         return;
       }
 
-      const d = aiResult?.data;
-      if (!d) {
+      if (body?.success === false) {
+        const rawPreview = (body.raw_ai_text || body.parse_error || "").slice(0, 1500);
+        setParseFailureRawText(rawPreview);
+        setParseFailureError(body.error || body.parse_error || "AI could not parse this PO format.");
         setParseState("error");
-        const serverError = (aiResult as any)?.error || "";
-        const hint = serverError.includes("API key")
-          ? "AI API key not configured. Ask your admin to set LOVABLE_API_KEY in Supabase Edge Function secrets."
-          : serverError.includes("Rate limit") || serverError.includes("429")
-          ? "AI rate limit reached. Please wait 1 minute and try again."
-          : serverError.includes("402") || serverError.includes("credits")
-          ? "AI credits exhausted. Add credits in your Lovable workspace settings."
-          : serverError
-          ? `AI parsing failed: ${serverError}`
-          : "AI could not parse this PO format.";
-        setParseError(hint + " You can enter the details manually.");
+        setParseRetriesExhausted(parseAttemptsRef.current >= 3);
+        setShowParseFailureModal(true);
+        console.warn("[ImportPO] Parse failed:", body.error, "raw length:", (body.raw_ai_text || "").length);
         return;
       }
 
-      // Populate header
-      const cust = d.customer || {};
-      setHeader({
-        po_number: d.po_number || "",
-        po_date: d.po_date || format(new Date(), "yyyy-MM-dd"),
-        customer_name: cust.name || d.vendor_name || "",
-        customer_address: cust.address || d.delivery_address || "",
-        customer_gst: cust.gst_number || d.gstin || "",
-        customer_phone: cust.phone || d.contact_no || "",
-        customer_email: cust.email || d.contact_email || "",
-        customer_contact_person: cust.contact_person || d.contact_person || "",
-        payment_terms: d.payment_terms || "",
-        delivery_date: d.delivery_date || "",
-        shipping_address: d.shipping_address || "",
-        notes: d.notes || d.remarks || "",
-        discount_amount: d.discount_amount || 0,
-      });
+      const d = body?.data ?? body;
+      if (!d || typeof d !== "object") {
+        setParseFailureRawText("");
+        setParseFailureError("No parsed data returned.");
+        setParseState("error");
+        setShowParseFailureModal(true);
+        return;
+      }
 
-      // Populate line items
-      const items: LineItem[] = (d.line_items || []).map((li: any, idx: number) => {
-        const qty = Number(li.quantity || li.qty) || 1;
-        const price = Number(li.unit_price) || 0;
-        const gstRate = Number(li.gst_rate) || 18;
-        const base = qty * price;
-        const gstAmt = Math.round(base * gstRate / 100 * 100) / 100;
-        return {
-          sno: idx + 1,
-          description: li.description || "",
-          quantity: qty,
-          unit: li.unit || li.uom || "Nos",
-          unit_price: price,
-          hsn_code: li.hsn_code || "",
-          gst_rate: gstRate,
-          gst_amount: gstAmt,
-          line_total: Math.round((base + gstAmt) * 100) / 100,
-        };
-      });
+      const hasPoNumber = !!(d.po_number && String(d.po_number).trim());
+      const hasLineItems = Array.isArray(d.line_items) && d.line_items.length > 0;
+      if (!hasPoNumber || !hasLineItems) {
+        setParseFailureRawText(JSON.stringify(d).slice(0, 1000));
+        setParseFailureError("PO number or line items missing. You can retry or use the rule-based parser.");
+        setParseState("error");
+        setParseRetriesExhausted(parseAttemptsRef.current >= 3);
+        setShowParseFailureModal(true);
+        console.warn("[ImportPO] Validation failed: po_number?", hasPoNumber, "line_items?", d.line_items?.length);
+        return;
+      }
 
-      if (items.length === 0) items.push(emptyLine(1));
-      setLineItems(items);
-      setConfidence(d.confidence || "medium");
-      setWarnings(d.warnings || []);
+      applyParsedToForm(d);
       setParseTime(Math.round((Date.now() - startTime) / 1000));
-      setParseState("parsed");
-      toast.success(`PO parsed: ${items.length} line item(s) found`);
+      toast.success(`PO parsed: ${(d.line_items || []).length} line item(s) found`);
     } catch (err: any) {
       setParseState("error");
       setParseError(err.message || "Parsing failed");
+      setParseFailureError(err.message || "Parsing failed");
+      setParseFailureRawText("");
+      setShowParseFailureModal(true);
     }
+  };
+
+  const handleUseRuleParser = () => {
+    if (!rawText || rawText.trim().length < 10) {
+      toast.error("No text available for rule parser. Extract text from a PDF first.");
+      return;
+    }
+    console.log("[ImportPO] Using rule-based fallback parser, text length:", rawText.length);
+    try {
+      const fallback = parsePOText(rawText);
+      applyParsedToForm(fallback, "rule-based parser");
+      setShowParseFailureModal(false);
+      setParseFailureRawText("");
+      setParseFailureError("");
+    } catch (e) {
+      console.error("[ImportPO] Rule parser error:", e);
+      toast.error("Rule parser failed. Please enter details manually.");
+    }
+  };
+
+  const handleOpenManualEditor = () => {
+    setShowParseFailureModal(false);
+    setParseFailureRawText("");
+    setParseFailureError("");
+    setParseState("parsed");
+    setLineItems([emptyLine(1)]);
+    setHeader(emptyHeader());
+    toast.info("Manual mode — fill in the PO details");
   };
 
   /* ─── Line item operations ─── */
@@ -763,33 +839,54 @@ export default function ImportPO() {
                 <Button variant="outline" onClick={handleParse} disabled={!file}>
                   <RefreshCw className="mr-2 h-4 w-4" /> Retry
                 </Button>
-                <Button
-                  onClick={() => {
-                    setParseState("parsed");
-                    setLineItems([emptyLine(1)]);
-                    setHeader({
-                      po_number: "",
-                      po_date: format(new Date(), "yyyy-MM-dd"),
-                      customer_name: "",
-                      customer_address: "",
-                      customer_gst: "",
-                      customer_phone: "",
-                      customer_email: "",
-                      customer_contact_person: "",
-                      payment_terms: "",
-                      delivery_date: "",
-                      shipping_address: "",
-                      notes: "",
-                      discount_amount: 0,
-                    });
-                    toast.info("Manual mode — fill in the PO details");
-                  }}
-                >
-                  <FileText className="mr-2 h-4 w-4" /> Enter Manually
+                <Button variant="outline" onClick={() => handleUseRuleParser()} disabled={!rawText?.trim()}>
+                  <FileText className="mr-2 h-4 w-4" /> Use Rule Parser
+                </Button>
+                <Button variant="secondary" onClick={handleOpenManualEditor}>
+                  <FileText className="mr-2 h-4 w-4" /> Open Manual Editor
                 </Button>
               </div>
             </div>
           )}
+
+          <AlertDialog open={showParseFailureModal} onOpenChange={setShowParseFailureModal}>
+            <AlertDialogContent className="max-w-lg max-h-[85vh] overflow-hidden flex flex-col">
+              <AlertDialogHeader>
+                <AlertDialogTitle>AI could not fully parse this PO</AlertDialogTitle>
+                <AlertDialogDescription asChild>
+                  <div className="space-y-2">
+                    <p>You can retry, use the rule-based parser, or edit the form manually.</p>
+                    {parseFailureError && (
+                      <p className="text-sm text-muted-foreground font-mono bg-muted/50 p-2 rounded truncate" title={parseFailureError}>
+                        {parseFailureError}
+                      </p>
+                    )}
+                    {parseFailureRawText && (
+                      <div className="mt-2">
+                        <p className="text-xs font-medium text-muted-foreground mb-1">Raw AI output (truncated):</p>
+                        <pre className="text-xs bg-muted/50 p-2 rounded overflow-auto max-h-32 font-mono whitespace-pre-wrap break-words">
+                          {parseFailureRawText.slice(0, 800)}
+                          {parseFailureRawText.length > 800 ? "…" : ""}
+                        </pre>
+                      </div>
+                    )}
+                  </div>
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter className="flex-shrink-0">
+                <AlertDialogCancel>Close</AlertDialogCancel>
+                <Button variant="outline" onClick={handleParse} disabled={!file || parseRetriesExhausted}>
+                  <RefreshCw className="mr-2 h-4 w-4" /> Retry Parse
+                </Button>
+                <Button variant="outline" onClick={handleUseRuleParser} disabled={!rawText?.trim()}>
+                  Use Rule Parser
+                </Button>
+                <Button onClick={handleOpenManualEditor}>
+                  Open Manual Editor
+                </Button>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
 
           {parseState === "parsed" && (
             <>
