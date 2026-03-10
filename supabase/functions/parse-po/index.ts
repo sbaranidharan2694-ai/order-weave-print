@@ -64,7 +64,42 @@ Return this EXACT JSON:
 
 If a field is not found, use null for strings and 0 for numbers.
 Calculate missing fields: line_total = qty × unit_price, gst_amount = line_total × gst_rate/100, subtotal = sum of line_totals, total = subtotal + taxes - discount.
-confidence: high if PO number + customer + items found, medium if some missing, low if mostly guessing.`;
+confidence: high if PO number + customer + items found, medium if some missing, low if mostly guessing.
+IMPORTANT: line_items MUST always be an array, even if empty [].`;
+
+/**
+ * Robustly extract JSON from AI response text.
+ * Handles markdown fences, preamble text, trailing text.
+ */
+function extractJson(raw: string): Record<string, unknown> | null {
+  if (!raw || !raw.trim()) return null;
+
+  let s = raw.trim();
+
+  // Strip markdown code fences (```json ... ``` or ``` ... ```)
+  s = s.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/i, "");
+
+  // Find outermost { ... }
+  const start = s.indexOf("{");
+  const end = s.lastIndexOf("}");
+  if (start < 0 || end <= start) return null;
+
+  const candidate = s.slice(start, end + 1);
+
+  try {
+    return JSON.parse(candidate);
+  } catch (e) {
+    console.error("[parse-po] JSON.parse failed on candidate:", (e as Error).message, "first 200 chars:", candidate.slice(0, 200));
+    // Try fixing common issues: trailing commas
+    try {
+      const fixed = candidate.replace(/,\s*([}\]])/g, "$1");
+      return JSON.parse(fixed);
+    } catch {
+      console.error("[parse-po] JSON.parse failed even after fix attempt");
+      return null;
+    }
+  }
+}
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -95,7 +130,6 @@ serve(async (req) => {
       );
     }
 
-    // Trim text for AI context window
     const trimmed = pdfText.length > 180_000 ? pdfText.slice(0, 180_000) : pdfText;
 
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
@@ -123,6 +157,12 @@ serve(async (req) => {
           { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
+      if (response.status === 402) {
+        return new Response(
+          JSON.stringify({ error: "AI credits exhausted. Please add credits in workspace settings." }),
+          { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
       return new Response(
         JSON.stringify({ error: `AI gateway returned ${response.status}` }),
         { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -141,24 +181,24 @@ serve(async (req) => {
       try { parsed = JSON.parse(toolCall.function.arguments); } catch { /* fallback */ }
     }
 
-    // Then try content
+    // Then try content with robust extraction
     if (!parsed && rawContent) {
-      let jsonStr = rawContent.trim();
-      // Strip markdown code blocks
-      jsonStr = jsonStr.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
-      // Find JSON object
-      const start = jsonStr.indexOf("{");
-      const end = jsonStr.lastIndexOf("}");
-      if (start >= 0 && end > start) {
-        try { parsed = JSON.parse(jsonStr.slice(start, end + 1)); } catch { /* fallback */ }
-      }
+      parsed = extractJson(rawContent);
     }
 
     if (!parsed) {
+      console.error("[parse-po] Could not extract JSON from AI response. Raw content (first 500):", rawContent.slice(0, 500));
       return new Response(
-        JSON.stringify({ error: "AI did not return structured data. Try again or enter manually." }),
+        JSON.stringify({ error: "AI did not return structured data. Try again or enter manually.", rawPreview: rawContent.slice(0, 200) }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
+    }
+
+    // Guarantee line_items is always an array
+    if (!Array.isArray(parsed.line_items)) {
+      parsed.line_items = [];
+      if (!Array.isArray(parsed.warnings)) parsed.warnings = [];
+      (parsed.warnings as string[]).push("No line items could be extracted");
     }
 
     return new Response(

@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX IF NOT EXISTS purchase_orders_po_number_unique ON public.purchase_orders (po_number);

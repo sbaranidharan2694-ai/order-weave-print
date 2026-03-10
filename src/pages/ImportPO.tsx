@@ -17,7 +17,7 @@ import { useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Upload, Loader2, FileText, Trash2, CheckCircle2, X, PlusCircle,
-  AlertTriangle, ChevronDown, Eye, RotateCcw, FileWarning
+  AlertTriangle, ChevronDown, Eye, RotateCcw, FileWarning, RefreshCw
 } from "lucide-react";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -106,6 +106,25 @@ function emptyLine(sno: number): LineItem {
   return { sno, description: "", quantity: 1, unit: "Nos", unit_price: 0, hsn_code: "", gst_rate: 18, gst_amount: 0, line_total: 0 };
 }
 
+function emptyHeader(): POHeader {
+  return {
+    po_number: "", po_date: format(new Date(), "yyyy-MM-dd"),
+    customer_name: "", customer_address: "", customer_gst: "",
+    customer_phone: "", customer_email: "", customer_contact_person: "",
+    payment_terms: "", delivery_date: "", shipping_address: "", notes: "", discount_amount: 0,
+  };
+}
+
+/** Validate a date string is a real YYYY-MM-DD; return null if invalid */
+function safeDate(d: string | null | undefined): string | null {
+  if (!d || typeof d !== "string") return null;
+  const trimmed = d.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return null;
+  const parsed = new Date(trimmed + "T00:00:00");
+  if (isNaN(parsed.getTime())) return null;
+  return trimmed;
+}
+
 /* ─── Component ─── */
 export default function ImportPO() {
   const navigate = useNavigate();
@@ -129,28 +148,20 @@ export default function ImportPO() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [history, setHistory] = useState<any[]>([]);
 
-  const [header, setHeader] = useState<POHeader>({
-    po_number: "", po_date: format(new Date(), "yyyy-MM-dd"),
-    customer_name: "", customer_address: "", customer_gst: "",
-    customer_phone: "", customer_email: "", customer_contact_person: "",
-    payment_terms: "", delivery_date: "", shipping_address: "", notes: "", discount_amount: 0,
-  });
+  const [header, setHeader] = useState<POHeader>(emptyHeader());
   const [lineItems, setLineItems] = useState<LineItem[]>([]);
 
   // Customer matching
   const customerMatch = useMemo(() => {
     if (!header.customer_name && !header.customer_gst && !header.customer_phone) return null;
-    // Exact GST match
     if (header.customer_gst && header.customer_gst.length === 15) {
       const m = customers.find(c => c.gstin?.toUpperCase() === header.customer_gst.toUpperCase());
       if (m) return { type: "exact" as const, customer: m };
     }
-    // Exact phone match
     if (header.customer_phone && header.customer_phone.length >= 10) {
       const m = customers.find(c => c.contact_no === header.customer_phone);
       if (m) return { type: "exact" as const, customer: m };
     }
-    // Fuzzy name match
     if (header.customer_name.length >= 3) {
       const q = header.customer_name.toLowerCase();
       const m = customers.find(c => c.name.toLowerCase().includes(q) || q.includes(c.name.toLowerCase()));
@@ -160,12 +171,13 @@ export default function ImportPO() {
   }, [header.customer_name, header.customer_gst, header.customer_phone, customers]);
 
   // Duplicate PO check
-  const [dupPO, setDupPO] = useState<{ date: string } | null>(null);
+  const [dupPO, setDupPO] = useState<{ id: string; date: string } | null>(null);
   useEffect(() => {
     if (!header.po_number) { setDupPO(null); return; }
     const check = async () => {
-      const { data } = await supabase.from("purchase_orders").select("created_at").eq("po_number", header.po_number).maybeSingle();
-      setDupPO(data ? { date: data.created_at || "" } : null);
+      const { data } = await supabase.from("purchase_orders")
+        .select("id, created_at").eq("po_number", header.po_number).maybeSingle();
+      setDupPO(data ? { id: data.id, date: data.created_at || "" } : null);
     };
     const t = setTimeout(check, 500);
     return () => clearTimeout(t);
@@ -186,12 +198,16 @@ export default function ImportPO() {
   const amountInWords = useMemo(() => totals.grand > 0 ? numberToWords(totals.grand) : "", [totals.grand]);
 
   // Load history
+  const loadHistory = useCallback(async () => {
+    const { data } = await supabase.from("purchase_orders")
+      .select("id, po_number, vendor_name, total_amount, status, created_at, linked_order_id")
+      .order("created_at", { ascending: false }).limit(20);
+    setHistory(data || []);
+  }, []);
+
   useEffect(() => {
-    if (!historyOpen) return;
-    supabase.from("purchase_orders").select("id, po_number, vendor_name, total_amount, status, created_at, linked_order_id")
-      .order("created_at", { ascending: false }).limit(20)
-      .then(({ data }) => setHistory(data || []));
-  }, [historyOpen]);
+    if (historyOpen) loadHistory();
+  }, [historyOpen, loadHistory]);
 
   /* ─── File handling ─── */
   const acceptFile = (f: File) => {
@@ -205,7 +221,6 @@ export default function ImportPO() {
     setParseError("");
     setWarnings([]);
     setLineItems([]);
-    // Preview URL for images
     if (["png", "jpg", "jpeg"].includes(ext)) {
       setFilePreviewUrl(URL.createObjectURL(f));
     } else {
@@ -363,35 +378,55 @@ export default function ImportPO() {
     setLineItems(items => [...items, emptyLine(items.length + 1)]);
   };
 
-  /* ─── Create Order ─── */
+  /* ─── Create Order (with transaction safety) ─── */
   const handleCreate = async () => {
+    // --- Validations ---
     if (!header.po_number) { toast.error("PO Number is required"); return; }
+    if (!header.customer_name.trim()) { toast.error("Customer name is required"); return; }
     if (lineItems.length === 0 || lineItems.every(li => li.quantity <= 0)) {
       toast.error("At least one line item with qty > 0 required"); return;
     }
+    // Block duplicate
+    if (dupPO) {
+      toast.error(`PO #${header.po_number} already imported on ${formatDateDisplay(dupPO.date)}. Duplicates not allowed.`);
+      return;
+    }
+
     setCreating(true);
+    let poId: string | null = null;
+
     try {
-      // 1. Create/find customer
+      // 1. Customer: find or create
       let customerId: string | null = null;
       if (customerMatch?.type === "exact") {
         customerId = customerMatch.customer.id;
       } else {
-        // Check by name
-        const { data: existing } = await supabase.from("customers")
-          .select("id").ilike("name", header.customer_name).maybeSingle();
+        // Search by GST first, then name
+        let existing: { id: string } | null = null;
+        if (header.customer_gst && header.customer_gst.length === 15) {
+          const { data } = await supabase.from("customers")
+            .select("id").eq("gstin", header.customer_gst.toUpperCase()).maybeSingle();
+          existing = data;
+        }
+        if (!existing && header.customer_name.trim()) {
+          const { data } = await supabase.from("customers")
+            .select("id").ilike("name", header.customer_name.trim()).maybeSingle();
+          existing = data;
+        }
         if (existing) {
           customerId = existing.id;
-        } else if (header.customer_name) {
+        } else if (header.customer_name.trim()) {
           const { data: newC, error: cErr } = await supabase.from("customers").insert({
-            name: header.customer_name,
-            contact_no: header.customer_phone || "0000000000",
+            name: header.customer_name.trim(),
+            contact_no: header.customer_phone || "",
             email: header.customer_email || null,
             gstin: header.customer_gst || null,
             address: header.customer_address || null,
             total_orders: 0, total_spend: 0,
           }).select("id").single();
-          if (cErr) console.error("Customer create error:", cErr);
-          else { customerId = newC.id; toast.success(`New customer '${header.customer_name}' created`); }
+          if (cErr) throw new Error("Customer creation failed: " + cErr.message);
+          customerId = newC.id;
+          toast.success(`New customer '${header.customer_name}' created`);
         }
       }
 
@@ -406,17 +441,18 @@ export default function ImportPO() {
         }
       }
 
-      // 3. Insert PO
+      // 3. Insert PO with status "Imported"
+      const deliveryDate = safeDate(header.delivery_date);
       const { data: poRec, error: poErr } = await supabase.from("purchase_orders").insert({
         po_number: header.po_number,
-        po_date: header.po_date || null,
-        vendor_name: header.customer_name,
+        po_date: safeDate(header.po_date) || null,
+        vendor_name: header.customer_name.trim(),
         contact_no: header.customer_phone || null,
         contact_person: header.customer_contact_person || null,
         customer_email: header.customer_email || null,
         gstin: header.customer_gst || null,
         delivery_address: header.customer_address || null,
-        delivery_date: header.delivery_date || null,
+        delivery_date: deliveryDate,
         payment_terms: header.payment_terms || null,
         currency: "INR",
         subtotal: totals.subtotal,
@@ -436,8 +472,8 @@ export default function ImportPO() {
         status: "Imported",
       } as any).select("id").single();
 
-      if (poErr) throw poErr;
-      const poId = poRec.id;
+      if (poErr) throw new Error("PO creation failed: " + poErr.message);
+      poId = poRec.id;
 
       // 4. Insert line items
       const { error: liErr } = await supabase.from("purchase_order_line_items").insert(
@@ -457,18 +493,33 @@ export default function ImportPO() {
           status: "pending",
         })) as any
       );
-      if (liErr) console.error("Line items error:", liErr);
+      if (liErr) throw new Error("Line items creation failed: " + liErr.message);
 
-      // 5. Create orders for each line item
+      // 5. Create orders — generate order_no via RPC for each
+      const orderIds: string[] = [];
       const orderNos: string[] = [];
+      const errors: string[] = [];
+
       for (const li of lineItems) {
         if (li.quantity <= 0 || !li.description) continue;
+
+        // Generate order number
+        const { data: orderNo, error: rpcErr } = await supabase.rpc("generate_order_no");
+        if (rpcErr || !orderNo) {
+          errors.push(`Failed to generate order number: ${rpcErr?.message || "unknown"}`);
+          continue;
+        }
+
         const pt = productTypes.find(p =>
           p.hsn_code === li.hsn_code || p.name.toLowerCase().includes(li.description.toLowerCase().split(" ")[0])
         );
+
+        const orderDeliveryDate = deliveryDate || format(new Date(), "yyyy-MM-dd");
+
         const { data: order, error: oErr } = await supabase.from("orders").insert({
-          customer_name: header.customer_name,
-          contact_no: header.customer_phone || "0000000000",
+          order_no: orderNo,
+          customer_name: header.customer_name.trim(),
+          contact_no: header.customer_phone || "",
           email: header.customer_email || null,
           source: "purchase_order",
           status: "Order Received",
@@ -478,8 +529,8 @@ export default function ImportPO() {
           color_mode: (pt?.default_color_mode || "full_color") as any,
           paper_type: pt?.default_paper_type || "",
           special_instructions: `PO #${header.po_number} — ${li.description}`,
-          order_date: header.po_date || format(new Date(), "yyyy-MM-dd"),
-          delivery_date: header.delivery_date || format(new Date(), "yyyy-MM-dd"),
+          order_date: safeDate(header.po_date) || format(new Date(), "yyyy-MM-dd"),
+          delivery_date: orderDeliveryDate,
           amount: li.line_total,
           advance_paid: 0,
           po_id: poId,
@@ -496,27 +547,64 @@ export default function ImportPO() {
           igst_amount: isIntrastate(header.customer_gst) ? 0 : li.gst_amount,
           total_tax_amount: li.gst_amount,
         } as any).select("id, order_no").single();
-        if (oErr) { console.error("Order create error:", oErr); continue; }
+
+        if (oErr) {
+          errors.push(`Order for "${li.description}" failed: ${oErr.message}`);
+          continue;
+        }
         if (order) {
+          orderIds.push(order.id);
           orderNos.push(order.order_no);
           await supabase.from("order_tags").insert({ order_id: order.id, tag_name: "From PO" } as any);
         }
       }
 
-      // 6. Link first order to PO
-      if (orderNos.length > 0) {
-        await supabase.from("purchase_orders").update({ linked_order_id: orderNos[0] } as any).eq("id", poId);
+      // 6. Update PO status and link first order UUID
+      const newStatus = orderIds.length > 0 ? "Processed" : (errors.length > 0 ? "Failed" : "Imported");
+      const updatePayload: Record<string, any> = { status: newStatus };
+      if (orderIds.length > 0) {
+        updatePayload.linked_order_id = orderIds[0]; // UUID, not order_no
       }
+      await supabase.from("purchase_orders").update(updatePayload).eq("id", poId);
 
       qc.invalidateQueries({ queryKey: ["purchase_orders"] });
       qc.invalidateQueries({ queryKey: ["orders"] });
-      toast.success(`✅ PO #${header.po_number} imported! ${orderNos.length} order(s) created: ${orderNos.join(", ")}`);
+      qc.invalidateQueries({ queryKey: ["customers"] });
+
+      if (errors.length > 0) {
+        toast.warning(`PO imported with ${errors.length} error(s): ${errors[0]}`);
+      }
+      if (orderNos.length > 0) {
+        toast.success(`✅ PO #${header.po_number} imported! ${orderNos.length} order(s) created: ${orderNos.join(", ")}`);
+      } else if (errors.length === 0) {
+        toast.info("PO saved but no orders created (no valid line items).");
+      }
+
       navigate("/orders");
     } catch (err: any) {
-      toast.error("Failed: " + (err.message || String(err)));
+      // Mark PO as Failed if it was created
+      if (poId) {
+        await supabase.from("purchase_orders").update({ status: "Failed" } as any).eq("id", poId);
+      }
+      toast.error("Import failed: " + (err.message || String(err)));
     } finally {
       setCreating(false);
     }
+  };
+
+  /* ─── Retry: re-process a previously imported/failed PO ─── */
+  const handleRetry = async (po: any) => {
+    if (!po?.id || !po?.parsed_raw) {
+      toast.error("No parsed data available for retry");
+      return;
+    }
+    const raw = po.parsed_raw as any;
+    if (raw.header) setHeader(raw.header);
+    if (raw.lineItems) setLineItems(raw.lineItems);
+    if (raw.rawText) setRawText(raw.rawText);
+    setParseState("parsed");
+    setConfidence("medium");
+    toast.info(`Loaded PO #${po.po_number} for retry. Review and click "Create Order from PO".`);
   };
 
   /* ─── Re-parse ─── */
@@ -549,7 +637,7 @@ export default function ImportPO() {
   const handleDiscard = () => {
     setFile(null); setFilePreviewUrl(null); setParseState("empty"); setParseError("");
     setLineItems([]); setRawText(""); setWarnings([]);
-    setHeader({ po_number: "", po_date: format(new Date(), "yyyy-MM-dd"), customer_name: "", customer_address: "", customer_gst: "", customer_phone: "", customer_email: "", customer_contact_person: "", payment_terms: "", delivery_date: "", shipping_address: "", notes: "", discount_amount: 0 });
+    setHeader(emptyHeader());
     setShowDiscard(false);
   };
 
@@ -578,7 +666,6 @@ export default function ImportPO() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* LEFT PANEL — Upload & Preview */}
         <div className="space-y-4">
-          {/* Upload zone */}
           <Card>
             <CardContent className="p-4">
               <div
@@ -616,7 +703,6 @@ export default function ImportPO() {
             </CardContent>
           </Card>
 
-          {/* Document Preview */}
           {file && (
             <Card>
               <CardHeader className="py-3 px-4">
@@ -637,7 +723,6 @@ export default function ImportPO() {
 
         {/* RIGHT PANEL — Form */}
         <div className="space-y-4">
-          {/* STATE: Empty */}
           {parseState === "empty" && !file && (
             <Card className="h-64 flex items-center justify-center">
               <div className="text-center text-muted-foreground">
@@ -657,7 +742,6 @@ export default function ImportPO() {
             </Card>
           )}
 
-          {/* STATE: Loading */}
           {parseState === "loading" && (
             <Card className="h-64 flex items-center justify-center">
               <div className="text-center">
@@ -668,7 +752,6 @@ export default function ImportPO() {
             </Card>
           )}
 
-          {/* STATE: Error */}
           {parseState === "error" && (
             <Card className="border-destructive/50">
               <CardContent className="p-4">
@@ -689,7 +772,6 @@ export default function ImportPO() {
             </Card>
           )}
 
-          {/* STATE: Parsed */}
           {parseState === "parsed" && (
             <>
               {/* Parse status bar */}
@@ -702,7 +784,7 @@ export default function ImportPO() {
                 {parseTime > 0 && <span className="text-xs text-muted-foreground">Parsed in {parseTime}s</span>}
                 {dupPO && (
                   <Badge variant="destructive" className="text-xs">
-                    ⚠️ PO already imported on {formatDateDisplay(dupPO.date)}
+                    ⚠️ PO already imported on {formatDateDisplay(dupPO.date)} — duplicate blocked
                   </Badge>
                 )}
               </div>
@@ -749,7 +831,6 @@ export default function ImportPO() {
               <Card>
                 <CardHeader className="py-3 px-4"><CardTitle className="text-sm">👤 Customer</CardTitle></CardHeader>
                 <CardContent className="px-4 pb-4">
-                  {/* Match indicator */}
                   {customerMatch?.type === "exact" && (
                     <div className="mb-3 p-2 bg-success/10 border border-success/30 rounded-md flex items-center justify-between">
                       <span className="text-xs text-success font-medium">✅ Existing Customer: {customerMatch.customer.name}</span>
@@ -915,7 +996,7 @@ export default function ImportPO() {
 
               {/* Action Buttons */}
               <div className="flex flex-wrap gap-2 sticky bottom-0 bg-background py-3 border-t">
-                <Button onClick={handleCreate} disabled={creating || !header.po_number} className="flex-1 sm:flex-none">
+                <Button onClick={handleCreate} disabled={creating || !header.po_number || !header.customer_name.trim() || !!dupPO} className="flex-1 sm:flex-none">
                   {creating ? <><Loader2 className="h-4 w-4 mr-1 animate-spin" />Creating...</> : "✅ Create Order from PO"}
                 </Button>
                 <Button variant="outline" onClick={handleReparse} disabled={!rawText}>
@@ -950,6 +1031,7 @@ export default function ImportPO() {
                       <th className="text-left p-2">Customer</th>
                       <th className="text-right p-2">Amount (₹)</th>
                       <th className="text-center p-2">Status</th>
+                      <th className="text-center p-2">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -960,9 +1042,24 @@ export default function ImportPO() {
                         <td className="p-2">{po.vendor_name || "—"}</td>
                         <td className="p-2 text-right">{formatINR(po.total_amount || 0)}</td>
                         <td className="p-2 text-center">
-                          <Badge variant={po.status === "Imported" ? "default" : "secondary"} className="text-xs">
-                            {po.status || "Pending"}
+                          <Badge
+                            variant={po.status === "Processed" ? "default" : po.status === "Failed" ? "destructive" : "secondary"}
+                            className="text-xs"
+                          >
+                            {po.status || "Imported"}
                           </Badge>
+                        </td>
+                        <td className="p-2 text-center">
+                          {(po.status === "Imported" || po.status === "Failed") && (
+                            <Button variant="ghost" size="sm" className="h-6 text-xs" onClick={() => handleRetry(po)}>
+                              <RefreshCw className="h-3 w-3 mr-1" />Retry
+                            </Button>
+                          )}
+                          {po.status === "Processed" && po.linked_order_id && (
+                            <Button variant="ghost" size="sm" className="h-6 text-xs" onClick={() => navigate(`/orders/${po.linked_order_id}`)}>
+                              View Order
+                            </Button>
+                          )}
                         </td>
                       </tr>
                     ))}
