@@ -27,6 +27,7 @@ import { format } from "date-fns";
 import { extractTextFromPdf } from "@/utils/extractPdfText";
 import { extractTextFromExcel } from "@/utils/extractExcelText";
 import { parsePOText } from "@/utils/parsePOText";
+import { generateDocSignature, lookupPatterns, applyLearnedMappings, extractWithLearnedMappings, learnFromParse } from "@/utils/poPatternLearning";
 import * as XLSX from "xlsx";
 
 /* ─── Constants ─── */
