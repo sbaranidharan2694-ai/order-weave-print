@@ -18,6 +18,7 @@ const Customers = lazy(() => import("@/pages/Customers"));
 const CustomerDetail = lazy(() => import("@/pages/CustomerDetail"));
 const SettingsPage = lazy(() => import("@/pages/SettingsPage"));
 const ImportPO = lazy(() => import("@/pages/ImportPO"));
+const ProductionJobs = lazy(() => import("@/pages/ProductionJobs"));
 const BankAnalyser = lazy(() => import("@/pages/BankAnalyser"));
 const Attendance = lazy(() => import("@/pages/Attendance"));
 const Login = lazy(() => import("@/pages/Login"));
@@ -66,6 +67,7 @@ function AppContent() {
                   <Route path="/orders/:id" element={<OrderDetail />} />
                   <Route path="/orders/:id/edit" element={<EditOrder />} />
                   <Route path="/import-po" element={<ImportPO />} />
+                  <Route path="/production-jobs" element={<ProductionJobs />} />
                   <Route path="/bank-analyser" element={<BankAnalyser />} />
                   <Route path="/attendance" element={<Attendance />} />
                   <Route path="/customers" element={<Customers />} />

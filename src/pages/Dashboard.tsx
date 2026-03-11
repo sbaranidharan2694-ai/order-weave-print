@@ -1,11 +1,12 @@
 import { useOrders, useOrdersToday } from "@/hooks/useOrders";
+import { useProductionJobs } from "@/hooks/useProductionJobs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusBadge } from "@/components/StatusBadge";
 import {
   Package, AlertCircle, Truck, AlertTriangle, CalendarDays,
-  ArrowRight, MessageCircle, Activity, PlusCircle,
+  ArrowRight, MessageCircle, Activity, PlusCircle, Briefcase,
 } from "lucide-react";
 import { format, parseISO, isBefore, differenceInDays, isToday, subDays, formatDistanceToNow } from "date-fns";
 import { ORDER_STATUSES, STATUS_EMOJIS } from "@/lib/constants";
@@ -28,7 +29,18 @@ const PIPELINE_GROUPS = [
 export default function Dashboard() {
   const { data: orders = [], isLoading } = useOrders();
   const { data: todayCount = 0 } = useOrdersToday();
+  const { data: productionJobs = [] } = useProductionJobs();
   const navigate = useNavigate();
+
+  const jobStats = useMemo(() => {
+    const pending = productionJobs.filter(j =>
+      ["design_review", "plate_making", "cutting_binding", "quality_check"].includes(j.status)
+    ).length;
+    const printing = productionJobs.filter(j => j.status === "printing").length;
+    const ready = productionJobs.filter(j => j.status === "ready_dispatch").length;
+    const completed = productionJobs.filter(j => j.status === "completed").length;
+    return { pending, printing, ready, completed };
+  }, [productionJobs]);
 
   const yesterday = subDays(new Date(), 1);
   const stats = useMemo(() => {
@@ -180,6 +192,36 @@ export default function Dashboard() {
             );
           })}
         </div>
+      </section>
+
+      {/* Production Jobs Summary */}
+      <section>
+        <h2 className="section-label">Production Jobs</h2>
+        <Card className="rounded-2xl border border-[#E5E7EB] overflow-hidden">
+          <CardContent className="p-4">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <button type="button" onClick={() => navigate("/production-jobs?status=design_review")} className="text-left p-3 rounded-xl border border-border/80 hover:bg-muted/50 transition-colors">
+                <p className="text-xl font-bold tabular-nums text-foreground">{jobStats.pending}</p>
+                <p className="text-xs text-muted-foreground font-medium">Jobs Pending</p>
+              </button>
+              <button type="button" onClick={() => navigate("/production-jobs?status=printing")} className="text-left p-3 rounded-xl border border-border/80 hover:bg-muted/50 transition-colors">
+                <p className="text-xl font-bold tabular-nums text-[#F59E0B]">{jobStats.printing}</p>
+                <p className="text-xs text-muted-foreground font-medium">Jobs Printing</p>
+              </button>
+              <button type="button" onClick={() => navigate("/production-jobs?status=ready_dispatch")} className="text-left p-3 rounded-xl border border-border/80 hover:bg-muted/50 transition-colors">
+                <p className="text-xl font-bold tabular-nums text-[#16A34A]">{jobStats.ready}</p>
+                <p className="text-xs text-muted-foreground font-medium">Ready to Dispatch</p>
+              </button>
+              <button type="button" onClick={() => navigate("/production-jobs?status=completed")} className="text-left p-3 rounded-xl border border-border/80 hover:bg-muted/50 transition-colors">
+                <p className="text-xl font-bold tabular-nums text-[#6B7280]">{jobStats.completed}</p>
+                <p className="text-xs text-muted-foreground font-medium">Jobs Completed</p>
+              </button>
+            </div>
+            <Button variant="outline" size="sm" className="mt-3 gap-1" onClick={() => navigate("/production-jobs")}>
+              <Briefcase className="h-3.5 w-3.5" /> View all production jobs
+            </Button>
+          </CardContent>
+        </Card>
       </section>
 
       {/* Urgent Attention - Overdue */}

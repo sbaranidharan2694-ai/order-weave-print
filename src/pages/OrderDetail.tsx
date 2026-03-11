@@ -1,7 +1,9 @@
 import { useParams, useNavigate } from "react-router-dom";
 import { useOrder, useStatusLogs, useUpdateOrderStatus, useCreateOrder } from "@/hooks/useOrders";
 import { useFulfillments, useAddFulfillment, useUpdateFulfillment, useDeleteFulfillment, type Fulfillment } from "@/hooks/useFulfillments";
+import { useProductionJobsByOrder, useUpdateJobStatus, useUpdateJob } from "@/hooks/useProductionJobs";
 import { useNotificationLogs, useLogNotification } from "@/hooks/useNotificationLogs";
+import { JOB_STATUSES, JOB_STATUS_LABELS } from "@/lib/productionJobConstants";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -10,7 +12,7 @@ import { NotifyPrompt } from "@/components/NotifyPrompt";
 import { ORDER_STATUSES, STATUS_EMOJIS, WHATSAPP_STATUS_TEMPLATES, fillWhatsAppTemplate } from "@/lib/constants";
 import { useSettings } from "@/hooks/useSettings";
 import { format, parseISO, formatDistanceToNow } from "date-fns";
-import { MessageCircle, Mail, Pencil, Printer, ArrowLeft, Copy, Plus, Trash2, Bell, CheckCircle2, Clock, ChevronUp, ChevronDown } from "lucide-react";
+import { MessageCircle, Mail, Pencil, Printer, ArrowLeft, Copy, Plus, Trash2, Bell, CheckCircle2, Clock, ChevronUp, ChevronDown, Briefcase, ExternalLink } from "lucide-react";
 import { useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -48,6 +50,9 @@ export default function OrderDetail() {
   const deleteFulfillment = useDeleteFulfillment();
   const updateStatus = useUpdateOrderStatus();
   const createOrder = useCreateOrder();
+  const { data: productionJobs = [] } = useProductionJobsByOrder(id);
+  const updateJobStatus = useUpdateJobStatus();
+  const updateJob = useUpdateJob();
 
   const [showStatusModal, setShowStatusModal] = useState(false);
   const [newStatus, setNewStatus] = useState("");
@@ -703,6 +708,81 @@ export default function OrderDetail() {
                       </td>
                     </tr>
                   ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Production Jobs */}
+      <Card className="shadow-card rounded-2xl border border-[#E5E7EB]">
+        <CardHeader className="border-b border-[#F1F5F9]">
+          <CardTitle className="text-sm font-semibold text-[#1E293B] flex items-center justify-between flex-wrap gap-2">
+            <span className="flex items-center gap-2"><Briefcase className="h-4 w-4" /> Production Jobs</span>
+            <Button size="sm" variant="outline" onClick={() => navigate("/production-jobs")} className="gap-1">
+              View all jobs <ExternalLink className="h-3 w-3" />
+            </Button>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          {productionJobs.length === 0 ? (
+            <p className="p-6 text-center text-muted-foreground text-sm">No production jobs for this order. Jobs are created when the order is created.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b bg-muted/50">
+                    <th className="text-left p-3 font-medium text-muted-foreground">Job Number</th>
+                    <th className="text-left p-3 font-medium text-muted-foreground">Item</th>
+                    <th className="text-right p-3 font-medium text-muted-foreground">Qty</th>
+                    <th className="text-left p-3 font-medium text-muted-foreground">Status</th>
+                    <th className="text-left p-3 font-medium text-muted-foreground">Assigned</th>
+                    <th className="text-left p-3 font-medium text-muted-foreground">Progress</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {productionJobs.map((job) => {
+                    const currentIdx = JOB_STATUSES.indexOf(job.status);
+                    return (
+                      <tr key={job.id} className="border-b table-row-hover">
+                        <td className="p-3 font-mono font-semibold text-[#1E293B]">{job.job_number}</td>
+                        <td className="p-3">{job.description}</td>
+                        <td className="p-3 text-right">{job.quantity.toLocaleString("en-IN")}</td>
+                        <td className="p-3">
+                          <Select value={job.status} onValueChange={(v) => updateJobStatus.mutate({ id: job.id, status: v })}>
+                            <SelectTrigger className="h-8 w-[130px] text-xs border-[#E5E7EB]"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              {JOB_STATUSES.map((s) => <SelectItem key={s} value={s}>{JOB_STATUS_LABELS[s] || s}</SelectItem>)}
+                            </SelectContent>
+                          </Select>
+                        </td>
+                        <td className="p-3">
+                          <Select value={job.assigned_to || "unassigned"} onValueChange={(v) => updateJob.mutate({ id: job.id, assigned_to: v === "unassigned" ? null : v })}>
+                            <SelectTrigger className="h-8 w-[110px] text-xs"><SelectValue placeholder="—" /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="unassigned">—</SelectItem>
+                              {(settings?.operator_names || []).map((op) => <SelectItem key={op} value={op}>{op}</SelectItem>)}
+                            </SelectContent>
+                          </Select>
+                        </td>
+                        <td className="p-3">
+                          <div className="flex items-center gap-0.5 flex-wrap" title={JOB_STATUS_LABELS[job.status] || job.status}>
+                            {JOB_STATUSES.map((s, i) => (
+                              <span
+                                key={s}
+                                className={cn(
+                                  "h-2 w-2 rounded-full shrink-0",
+                                  i < currentIdx ? "bg-green-500" : i === currentIdx ? "bg-[#F97316]" : "bg-muted"
+                                )}
+                                aria-hidden
+                              />
+                            ))}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

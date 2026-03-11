@@ -552,6 +552,59 @@ export type Database = {
           },
         ]
       }
+      production_jobs: {
+        Row: {
+          id: string
+          order_id: string
+          order_item_id: string | null
+          job_number: string
+          description: string
+          quantity: number
+          status: string
+          assigned_to: string | null
+          priority: string | null
+          due_date: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          order_id: string
+          order_item_id?: string | null
+          job_number: string
+          description: string
+          quantity?: number
+          status?: string
+          assigned_to?: string | null
+          priority?: string | null
+          due_date?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          order_id?: string
+          order_item_id?: string | null
+          job_number?: string
+          description?: string
+          quantity?: number
+          status?: string
+          assigned_to?: string | null
+          priority?: string | null
+          due_date?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "production_jobs_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: false
+            referencedRelation: "orders"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       payroll_employees: {
         Row: {
           created_at: string

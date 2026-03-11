@@ -1,5 +1,5 @@
 import {
-  LayoutDashboard, ClipboardList, PlusCircle, Users, Settings, FileUp, Building2, UserCheck,
+  LayoutDashboard, ClipboardList, PlusCircle, Users, Settings, FileUp, Building2, UserCheck, Briefcase,
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import {
@@ -14,6 +14,7 @@ const group2 = [
   { title: "Order History", url: "/orders", icon: ClipboardList },
   { title: "New Order", url: "/orders/new", icon: PlusCircle },
   { title: "Import PO", url: "/import-po", icon: FileUp },
+  { title: "Production Jobs", url: "/production-jobs", icon: Briefcase },
 ];
 const group3Label = "FINANCE";
 const group3 = [{ title: "Bank Analyser", url: "/bank-analyser", icon: Building2 }];

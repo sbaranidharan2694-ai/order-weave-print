@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { useProductTypes } from "@/hooks/useProductTypes";
 import { useCustomers } from "@/hooks/useCustomers";
+import { createJobForOrder } from "@/hooks/useProductionJobs";
 import { supabase } from "@/integrations/supabase/client";
 import { invokeEdgeFunction } from "@/utils/invokeEdgeFunction";
 import { numberToWords } from "@/lib/numberToWords";
@@ -815,6 +816,15 @@ export default function ImportPO() {
             orderNo = order.order_no;
             await logAudit("Order created", "order", order.id);
             await supabase.from("order_tags").insert({ order_id: order.id, tag_name: "From PO" } as any);
+            await createJobForOrder({
+              id: order.id,
+              order_no: order.order_no,
+              product_type: "Purchase Order",
+              quantity: totalQty,
+              delivery_date: orderDeliveryDate,
+              assigned_to: null,
+              special_instructions: `PO #${header.po_number} — ${validLineCount} line item(s)`,
+            });
           }
         }
       }

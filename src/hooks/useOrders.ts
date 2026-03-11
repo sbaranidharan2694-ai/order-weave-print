@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { toast } from "sonner";
 import type { Tables, TablesInsert } from "@/integrations/supabase/types";
 import { logAudit } from "@/utils/auditLog";
+import { createJobForOrder } from "@/hooks/useProductionJobs";
 
 export type Order = Tables<"orders">;
 export type OrderInsert = TablesInsert<"orders">;
@@ -148,6 +149,20 @@ export function useCreateOrder() {
         new_status: "Order Received",
         changed_by: "System",
         notes: "Order created",
+      });
+
+      // Create production job for this order (one job per order line)
+      await createJobForOrder({
+        id: data.id,
+        order_no: data.order_no,
+        product_type: data.product_type,
+        quantity: data.quantity,
+        delivery_date: data.delivery_date,
+        assigned_to: data.assigned_to,
+        special_instructions: data.special_instructions,
+        size: data.size,
+        paper_type: data.paper_type,
+        color_mode: data.color_mode,
       });
 
       return data;
