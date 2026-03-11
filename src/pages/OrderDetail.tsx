@@ -79,6 +79,25 @@ export default function OrderDetail() {
     delivery_note: "",
   });
 
+  const sortedFulfillments = useMemo(() => {
+    const list = [...(fulfillments ?? [])];
+    list.sort((a, b) => {
+      let av: string | number = (a as any)[fulfillmentSortCol];
+      let bv: string | number = (b as any)[fulfillmentSortCol];
+      if (fulfillmentSortCol === "fulfillment_date" || fulfillmentSortCol === "invoice_date") {
+        av = av || "";
+        bv = bv || "";
+        return fulfillmentSortDir === "asc" ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av));
+      }
+      if (fulfillmentSortCol === "qty_delivered") {
+        return fulfillmentSortDir === "asc" ? (Number(av) || 0) - (Number(bv) || 0) : (Number(bv) || 0) - (Number(av) || 0);
+      }
+      av = String(av ?? ""); bv = String(bv ?? "");
+      return fulfillmentSortDir === "asc" ? av.localeCompare(bv) : bv.localeCompare(av);
+    });
+    return list;
+  }, [fulfillments, fulfillmentSortCol, fulfillmentSortDir]);
+
   if (!id) return null;
   if (isError && !isLoading) {
     return (
@@ -252,25 +271,6 @@ export default function OrderDetail() {
       setDeleteConfirmFulfillment(null);
     }
   };
-
-  const sortedFulfillments = useMemo(() => {
-    const list = [...fulfillments];
-    list.sort((a, b) => {
-      let av: string | number = (a as any)[fulfillmentSortCol];
-      let bv: string | number = (b as any)[fulfillmentSortCol];
-      if (fulfillmentSortCol === "fulfillment_date" || fulfillmentSortCol === "invoice_date") {
-        av = av || "";
-        bv = bv || "";
-        return fulfillmentSortDir === "asc" ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av));
-      }
-      if (fulfillmentSortCol === "qty_delivered") {
-        return fulfillmentSortDir === "asc" ? (Number(av) || 0) - (Number(bv) || 0) : (Number(bv) || 0) - (Number(av) || 0);
-      }
-      av = String(av ?? ""); bv = String(bv ?? "");
-      return fulfillmentSortDir === "asc" ? av.localeCompare(bv) : bv.localeCompare(av);
-    });
-    return list;
-  }, [fulfillments, fulfillmentSortCol, fulfillmentSortDir]);
 
   const lastDeliveryDate = fulfillments.length > 0
     ? format(parseISO([...fulfillments].sort((a, b) => String(b.fulfillment_date).localeCompare(String(a.fulfillment_date)))[0].fulfillment_date), "dd MMM yyyy")
