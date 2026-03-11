@@ -95,9 +95,9 @@ export default function OrderDetail() {
   const igstAmount = Number(order.igst_amount) || 0;
   const totalTax = Number(order.total_tax_amount) || 0;
   const hasTaxBreakdown = baseAmount > 0 || totalTax > 0;
-  const qtyOrdered = Number(order.qty_ordered) || order.quantity;
-  const qtyFulfilled = Number(order.qty_fulfilled) || 0;
-  const qtyPending = qtyOrdered - qtyFulfilled;
+  const qtyOrdered = order.quantity; // canonical source — never use qty_ordered
+  const qtyFulfilled = Math.min(Number(order.qty_fulfilled) || 0, qtyOrdered);
+  const qtyPending = Math.max(0, qtyOrdered - qtyFulfilled);
   const fulfillmentPct = qtyOrdered > 0 ? Math.round((qtyFulfilled / qtyOrdered) * 100) : 0;
   const operators = settings?.operator_names || [];
   const shopPhone = settings?.contact_number || settings?.whatsapp_number || "9840199878";

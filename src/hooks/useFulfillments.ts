@@ -79,36 +79,43 @@ export function useDeleteFulfillment() {
 }
 
 async function recalcFulfillment(orderId: string) {
-  // Get all fulfillments
   const { data: fulfillments } = await supabase
     .from("order_fulfillments" as any)
     .select("qty_delivered")
     .eq("order_id", orderId);
 
-  const totalFulfilled = (fulfillments || []).reduce((s: number, f: any) => s + (f.qty_delivered || 0), 0);
+  const totalFulfilled = (fulfillments || []).reduce((s: number, f: any) => s + (Number(f.qty_delivered) || 0), 0);
 
-  // Get order qty_ordered
+  // Use `quantity` as the canonical ordered value — never qty_ordered
   const { data: order } = await supabase
     .from("orders")
-    .select("qty_ordered, quantity")
+    .select("quantity")
     .eq("id", orderId)
     .single();
 
-  const qtyOrdered = (order as any)?.qty_ordered || (order as any)?.quantity || 0;
-  const qtyPending = Math.max(0, qtyOrdered - totalFulfilled);
+  const qtyOrdered = Number(order?.quantity) || 0;
+
+  // Clamp: fulfilled can never exceed ordered, pending can never go negative
+  const clampedFulfilled = Math.min(totalFulfilled, qtyOrdered);
+  const qtyPending = Math.max(0, qtyOrdered - clampedFulfilled);
+
+  console.log(`[fulfillment] order=${orderId} ordered=${qtyOrdered} fulfilled=${clampedFulfilled} pending=${qtyPending}`);
+
+  if (totalFulfilled > qtyOrdered) {
+    console.warn(`[fulfillment] WARNING: total delivered (${totalFulfilled}) exceeds ordered (${qtyOrdered})`);
+  }
 
   await supabase
     .from("orders")
     .update({
-      qty_fulfilled: totalFulfilled,
+      qty_ordered: qtyOrdered,
+      qty_fulfilled: clampedFulfilled,
       qty_pending: qtyPending,
     } as any)
     .eq("id", orderId);
 
-  // Auto-set status
-  if (qtyPending === 0 && totalFulfilled > 0) {
-    // Don't auto-change, let toast handle it
-  } else if (totalFulfilled > 0 && qtyPending > 0) {
+  // Auto-set Partially Fulfilled status
+  if (clampedFulfilled > 0 && qtyPending > 0) {
     await supabase
       .from("orders")
       .update({ status: "Partially Fulfilled" as any })
