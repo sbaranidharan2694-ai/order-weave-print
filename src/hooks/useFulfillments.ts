@@ -10,6 +10,10 @@ export type Fulfillment = {
   delivery_note: string | null;
   delivered_by: string | null;
   created_at: string;
+  invoice_number: string | null;
+  invoice_date: string | null;
+  dc_number: string | null;
+  updated_at: string | null;
 };
 
 export function useFulfillments(orderId: string | undefined) {
@@ -38,13 +42,15 @@ export function useAddFulfillment() {
       qty_delivered: number;
       delivery_note?: string;
       delivered_by?: string;
+      invoice_number?: string | null;
+      invoice_date?: string | null;
+      dc_number?: string | null;
     }) => {
       const { error } = await supabase
         .from("order_fulfillments" as any)
         .insert(input as any);
       if (error) throw error;
 
-      // Recalculate
       await recalcFulfillment(input.order_id);
     },
     onSuccess: (_, vars) => {
@@ -52,6 +58,44 @@ export function useAddFulfillment() {
       qc.invalidateQueries({ queryKey: ["orders"] });
       qc.invalidateQueries({ queryKey: ["orders", vars.order_id] });
       toast.success("Delivery recorded!");
+    },
+    onError: (err) => toast.error("Failed: " + err.message),
+  });
+}
+
+export function useUpdateFulfillment() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      id: string;
+      order_id: string;
+      fulfillment_date: string;
+      qty_delivered: number;
+      invoice_number: string | null;
+      invoice_date: string | null;
+      dc_number: string | null;
+      delivery_note?: string | null;
+    }) => {
+      const { error } = await supabase
+        .from("order_fulfillments" as any)
+        .update({
+          fulfillment_date: input.fulfillment_date,
+          qty_delivered: input.qty_delivered,
+          invoice_number: input.invoice_number,
+          invoice_date: input.invoice_date || null,
+          dc_number: input.dc_number,
+          delivery_note: input.delivery_note ?? null,
+          updated_at: new Date().toISOString(),
+        } as any)
+        .eq("id", input.id);
+      if (error) throw error;
+      await recalcFulfillment(input.order_id);
+    },
+    onSuccess: (_, vars) => {
+      qc.invalidateQueries({ queryKey: ["fulfillments", vars.order_id] });
+      qc.invalidateQueries({ queryKey: ["orders"] });
+      qc.invalidateQueries({ queryKey: ["orders", vars.order_id] });
+      toast.success("Delivery updated.");
     },
     onError: (err) => toast.error("Failed: " + err.message),
   });

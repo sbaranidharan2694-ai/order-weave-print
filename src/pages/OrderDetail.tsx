@@ -1,6 +1,6 @@
 import { useParams, useNavigate } from "react-router-dom";
 import { useOrder, useStatusLogs, useUpdateOrderStatus, useCreateOrder } from "@/hooks/useOrders";
-import { useFulfillments, useAddFulfillment, useDeleteFulfillment } from "@/hooks/useFulfillments";
+import { useFulfillments, useAddFulfillment, useUpdateFulfillment, useDeleteFulfillment, type Fulfillment } from "@/hooks/useFulfillments";
 import { useNotificationLogs, useLogNotification } from "@/hooks/useNotificationLogs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,7 @@ import { NotifyPrompt } from "@/components/NotifyPrompt";
 import { ORDER_STATUSES, STATUS_EMOJIS, WHATSAPP_STATUS_TEMPLATES, fillWhatsAppTemplate } from "@/lib/constants";
 import { useSettings } from "@/hooks/useSettings";
 import { format, parseISO, formatDistanceToNow } from "date-fns";
-import { MessageCircle, Mail, Pencil, Printer, ArrowLeft, Copy, Plus, Trash2, Bell, CheckCircle2, Clock } from "lucide-react";
+import { MessageCircle, Mail, Pencil, Printer, ArrowLeft, Copy, Plus, Trash2, Bell, CheckCircle2, Clock, ChevronUp, ChevronDown } from "lucide-react";
 import { useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -29,6 +29,8 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { useMemo } from "react";
 
 const formatContact = (phone: string) => phone.replace(/\D/g, "").slice(-10);
 
@@ -42,6 +44,7 @@ export default function OrderDetail() {
   const { data: notifLogs = [] } = useNotificationLogs(id);
   const logNotification = useLogNotification();
   const addFulfillment = useAddFulfillment();
+  const updateFulfillment = useUpdateFulfillment();
   const deleteFulfillment = useDeleteFulfillment();
   const updateStatus = useUpdateOrderStatus();
   const createOrder = useCreateOrder();
@@ -53,10 +56,26 @@ export default function OrderDetail() {
   const [showNotifyPrompt, setShowNotifyPrompt] = useState(false);
   const [notifyStatus, setNotifyStatus] = useState("");
   const [showFulfillmentForm, setShowFulfillmentForm] = useState(false);
+  const [editingFulfillment, setEditingFulfillment] = useState<Fulfillment | null>(null);
+  const [deleteConfirmFulfillment, setDeleteConfirmFulfillment] = useState<Fulfillment | null>(null);
+  const [fulfillmentSortCol, setFulfillmentSortCol] = useState<"fulfillment_date" | "qty_delivered" | "invoice_number" | "invoice_date" | "dc_number">("fulfillment_date");
+  const [fulfillmentSortDir, setFulfillmentSortDir] = useState<"asc" | "desc">("asc");
   const [fulfillmentForm, setFulfillmentForm] = useState({
     fulfillment_date: format(new Date(), "yyyy-MM-dd"),
     qty_delivered: "",
-    delivered_by: "",
+    invoice_number: "",
+    invoice_date: "",
+    dc_number: "",
+    delivery_note: "",
+  });
+  const [fulfillmentErrors, setFulfillmentErrors] = useState<Record<string, string>>({});
+  const [editFulfillmentErrors, setEditFulfillmentErrors] = useState<Record<string, string>>({});
+  const [editForm, setEditForm] = useState({
+    fulfillment_date: "",
+    qty_delivered: "",
+    invoice_number: "",
+    invoice_date: "",
+    dc_number: "",
     delivery_note: "",
   });
 
@@ -160,14 +179,39 @@ export default function OrderDetail() {
     }
   };
 
+  const today = format(new Date(), "yyyy-MM-dd");
+  const validateAddFulfillment = (): boolean => {
+    const err: Record<string, string> = {};
+    const qty = parseInt(fulfillmentForm.qty_delivered, 10);
+    if (!fulfillmentForm.fulfillment_date) err.fulfillment_date = "Delivery date is required.";
+    else if (fulfillmentForm.fulfillment_date > today) err.fulfillment_date = "Delivery date cannot be in the future.";
+    if (isNaN(qty) || qty <= 0) err.qty_delivered = "Quantity must be greater than 0.";
+    else if (qty > qtyPending) err.qty_delivered = `Quantity must not exceed pending (${qtyPending}).`;
+    if (!fulfillmentForm.invoice_number?.trim()) err.invoice_number = "Invoice number is required.";
+    setFulfillmentErrors(err);
+    return Object.keys(err).length === 0;
+  };
+  const validateEditFulfillment = (editForm: { fulfillment_date: string; qty_delivered: number; invoice_number: string }): boolean => {
+    const err: Record<string, string> = {};
+    if (!editForm.fulfillment_date) err.fulfillment_date = "Delivery date is required.";
+    else if (editForm.fulfillment_date > today) err.fulfillment_date = "Delivery date cannot be in the future.";
+    if (editForm.qty_delivered <= 0) err.qty_delivered = "Quantity must be greater than 0.";
+    if (!editForm.invoice_number?.trim()) err.invoice_number = "Invoice number is required.";
+    setEditFulfillmentErrors(err);
+    return Object.keys(err).length === 0;
+  };
+
   const handleSaveFulfillment = async () => {
-    const qty = parseInt(fulfillmentForm.qty_delivered) || 0;
-    if (qty <= 0) { toast.error("Qty must be > 0"); return; }
-    if (qty > qtyPending) { toast.error(`Cannot deliver more than pending qty (${qtyPending})`); return; }
+    if (!validateAddFulfillment()) return;
+    const qty = parseInt(fulfillmentForm.qty_delivered, 10);
     await addFulfillment.mutateAsync({
-      order_id: order.id, fulfillment_date: fulfillmentForm.fulfillment_date,
-      qty_delivered: qty, delivered_by: fulfillmentForm.delivered_by || undefined,
-      delivery_note: fulfillmentForm.delivery_note || undefined,
+      order_id: order.id,
+      fulfillment_date: fulfillmentForm.fulfillment_date,
+      qty_delivered: qty,
+      invoice_number: fulfillmentForm.invoice_number.trim() || null,
+      invoice_date: fulfillmentForm.invoice_date?.trim() || null,
+      dc_number: fulfillmentForm.dc_number?.trim() || null,
+      delivery_note: fulfillmentForm.delivery_note?.trim() || undefined,
     });
     const newPending = qtyPending - qty;
     if (newPending === 0) {
@@ -176,8 +220,61 @@ export default function OrderDetail() {
       });
     }
     setShowFulfillmentForm(false);
-    setFulfillmentForm({ fulfillment_date: format(new Date(), "yyyy-MM-dd"), qty_delivered: "", delivered_by: "", delivery_note: "" });
+    setFulfillmentErrors({});
+    setFulfillmentForm({ fulfillment_date: format(new Date(), "yyyy-MM-dd"), qty_delivered: "", invoice_number: "", invoice_date: "", dc_number: "", delivery_note: "" });
   };
+
+  const handleUpdateFulfillment = async (editForm: { fulfillment_date: string; qty_delivered: number; invoice_number: string; invoice_date: string; dc_number: string; delivery_note: string }) => {
+    if (!editingFulfillment) return;
+    const maxQty = qtyPending + editingFulfillment.qty_delivered;
+    if (editForm.qty_delivered > maxQty) {
+      setEditFulfillmentErrors({ qty_delivered: `Quantity must not exceed ${maxQty} (pending + this row).` });
+      return;
+    }
+    if (!validateEditFulfillment(editForm)) return;
+    await updateFulfillment.mutateAsync({
+      id: editingFulfillment.id,
+      order_id: order.id,
+      fulfillment_date: editForm.fulfillment_date,
+      qty_delivered: editForm.qty_delivered,
+      invoice_number: editForm.invoice_number.trim() || null,
+      invoice_date: editForm.invoice_date?.trim() || null,
+      dc_number: editForm.dc_number?.trim() || null,
+      delivery_note: editForm.delivery_note?.trim() || null,
+    });
+    setEditingFulfillment(null);
+    setEditFulfillmentErrors({});
+  };
+
+  const handleDeleteFulfillmentConfirm = () => {
+    if (deleteConfirmFulfillment) {
+      deleteFulfillment.mutate({ id: deleteConfirmFulfillment.id, orderId: order.id });
+      setDeleteConfirmFulfillment(null);
+    }
+  };
+
+  const sortedFulfillments = useMemo(() => {
+    const list = [...fulfillments];
+    list.sort((a, b) => {
+      let av: string | number = (a as any)[fulfillmentSortCol];
+      let bv: string | number = (b as any)[fulfillmentSortCol];
+      if (fulfillmentSortCol === "fulfillment_date" || fulfillmentSortCol === "invoice_date") {
+        av = av || "";
+        bv = bv || "";
+        return fulfillmentSortDir === "asc" ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av));
+      }
+      if (fulfillmentSortCol === "qty_delivered") {
+        return fulfillmentSortDir === "asc" ? (Number(av) || 0) - (Number(bv) || 0) : (Number(bv) || 0) - (Number(av) || 0);
+      }
+      av = String(av ?? ""); bv = String(bv ?? "");
+      return fulfillmentSortDir === "asc" ? av.localeCompare(bv) : bv.localeCompare(av);
+    });
+    return list;
+  }, [fulfillments, fulfillmentSortCol, fulfillmentSortDir]);
+
+  const lastDeliveryDate = fulfillments.length > 0
+    ? format(parseISO([...fulfillments].sort((a, b) => String(b.fulfillment_date).localeCompare(String(a.fulfillment_date)))[0].fulfillment_date), "dd MMM yyyy")
+    : null;
 
   const handleWhatsAppNow = () => {
     const template = WHATSAPP_STATUS_TEMPLATES[order.status] || "";
@@ -489,86 +586,241 @@ export default function OrderDetail() {
       {/* Fulfillment Tracker */}
       <Card className="shadow-card rounded-2xl">
         <CardHeader>
-          <CardTitle className="text-sm flex items-center justify-between">
+          <CardTitle className="text-sm flex items-center justify-between flex-wrap gap-2">
             Fulfillment Tracker
-            <Button size="sm" variant="outline" onClick={() => setShowFulfillmentForm(true)}>
-              <Plus className="h-3 w-3 mr-1" /> Record Delivery
+            <Button size="sm" variant="outline" onClick={() => { setFulfillmentErrors({}); setShowFulfillmentForm(true); }}>
+              <Plus className="h-3 w-3 mr-1" /> {fulfillments.length === 0 ? "Record First Delivery" : "Record Delivery"}
             </Button>
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid grid-cols-3 gap-3">
-            <div className="text-center p-3 bg-muted rounded-xl">
-              <p className="text-2xl font-bold text-foreground">{qtyOrdered.toLocaleString("en-IN")}</p>
+          {/* Delivery summary header */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <div className="p-3 bg-muted rounded-xl">
+              <p className="text-lg font-bold text-foreground">{qtyOrdered.toLocaleString("en-IN")}</p>
               <p className="text-xs text-muted-foreground">Ordered</p>
             </div>
-            <div className="text-center p-3 bg-success/10 rounded-xl">
-              <p className="text-2xl font-bold text-success">{qtyFulfilled.toLocaleString("en-IN")}</p>
-              <p className="text-xs text-muted-foreground">Fulfilled</p>
+            <div className="p-3 bg-success/10 rounded-xl">
+              <p className="text-lg font-bold text-success">{qtyFulfilled.toLocaleString("en-IN")}</p>
+              <p className="text-xs text-muted-foreground">Delivered</p>
             </div>
-            <div className="text-center p-3 bg-warning/10 rounded-xl">
-              <p className="text-2xl font-bold text-warning">{Math.max(0, qtyPending).toLocaleString("en-IN")}</p>
+            <div className="p-3 bg-warning/10 rounded-xl">
+              <p className="text-lg font-bold text-warning">{Math.max(0, qtyPending).toLocaleString("en-IN")}</p>
               <p className="text-xs text-muted-foreground">Pending</p>
             </div>
+            <div className="p-3 bg-muted/50 rounded-xl">
+              <p className="text-lg font-bold text-foreground">{lastDeliveryDate ?? "—"}</p>
+              <p className="text-xs text-muted-foreground">Last Delivery</p>
+            </div>
           </div>
-          <div className="relative">
-            <Progress value={fulfillmentPct} className="h-6" />
-            <span className="absolute inset-0 flex items-center justify-center text-xs font-bold text-primary-foreground">{fulfillmentPct}%</span>
-          </div>
-          {fulfillments.length > 0 && (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b bg-muted/50">
-                  <th className="text-left p-2 font-medium text-muted-foreground">Date</th>
-                  <th className="text-left p-2 font-medium text-muted-foreground">Qty</th>
-                  <th className="text-left p-2 font-medium text-muted-foreground">By</th>
-                  <th className="text-left p-2 font-medium text-muted-foreground">Note</th>
-                  <th className="p-2"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {fulfillments.map((f) => (
-                  <tr key={f.id} className="border-b">
-                    <td className="p-2">{format(parseISO(f.fulfillment_date), "dd MMM yyyy")}</td>
-                    <td className="p-2 font-semibold">{f.qty_delivered.toLocaleString("en-IN")}</td>
-                    <td className="p-2 text-muted-foreground">{f.delivered_by || "—"}</td>
-                    <td className="p-2 text-muted-foreground">{f.delivery_note || "—"}</td>
-                    <td className="p-2">
-                      <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive" onClick={() => deleteFulfillment.mutate({ id: f.id, orderId: order.id })}>
-                        <Trash2 className="h-3 w-3" />
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-          {showFulfillmentForm && (
-            <div className="p-4 border rounded-xl space-y-3 bg-muted/30">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div><Label className="text-xs">Fulfillment Date</Label><Input type="date" value={fulfillmentForm.fulfillment_date} onChange={(e) => setFulfillmentForm(f => ({ ...f, fulfillment_date: e.target.value }))} /></div>
-                <div><Label className="text-xs">Qty Delivered *</Label><Input type="number" min={1} max={qtyPending} value={fulfillmentForm.qty_delivered} onChange={(e) => setFulfillmentForm(f => ({ ...f, qty_delivered: e.target.value }))} placeholder={`Max ${qtyPending}`} /></div>
-                <div>
-                  <Label className="text-xs">Delivered By</Label>
-                  {operators.length > 0 ? (
-                    <Select value={fulfillmentForm.delivered_by} onValueChange={(v) => setFulfillmentForm(f => ({ ...f, delivered_by: v }))}>
-                      <SelectTrigger><SelectValue placeholder="Select operator" /></SelectTrigger>
-                      <SelectContent>{operators.map(op => <SelectItem key={op} value={op}>{op}</SelectItem>)}</SelectContent>
-                    </Select>
-                  ) : (
-                    <Input value={fulfillmentForm.delivered_by} onChange={(e) => setFulfillmentForm(f => ({ ...f, delivered_by: e.target.value }))} placeholder="Operator name" />
-                  )}
+          {/* Two-segment progress bar */}
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div className="space-y-1">
+                  <div className="flex h-6 w-full overflow-hidden rounded-full bg-muted">
+                    <div
+                      className="h-full bg-green-600 transition-all"
+                      style={{ width: qtyOrdered > 0 ? `${(qtyFulfilled / qtyOrdered) * 100}%` : "0%" }}
+                    />
+                    <div
+                      className="h-full bg-orange-500/80 transition-all flex-1 min-w-0"
+                      style={{ minWidth: qtyOrdered > 0 && qtyPending > 0 ? "2px" : 0 }}
+                    />
+                  </div>
+                  <p className="text-xs font-medium text-muted-foreground text-center">
+                    {qtyFulfilled.toLocaleString("en-IN")} / {qtyOrdered.toLocaleString("en-IN")} Delivered
+                  </p>
                 </div>
-                <div><Label className="text-xs">Note</Label><Input value={fulfillmentForm.delivery_note} onChange={(e) => setFulfillmentForm(f => ({ ...f, delivery_note: e.target.value }))} placeholder="e.g. First batch" /></div>
-              </div>
-              <div className="flex gap-2">
-                <Button size="sm" onClick={handleSaveFulfillment} disabled={addFulfillment.isPending}>{addFulfillment.isPending ? "Saving..." : "Save"}</Button>
-                <Button size="sm" variant="outline" onClick={() => setShowFulfillmentForm(false)}>Cancel</Button>
-              </div>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Fulfilled: {qtyFulfilled.toLocaleString("en-IN")}</p>
+                <p>Pending: {qtyPending.toLocaleString("en-IN")}</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+          {/* Delivery history table or empty state */}
+          {fulfillments.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground border border-dashed rounded-xl">
+              <p className="text-sm font-medium">No deliveries recorded yet</p>
+              <Button size="sm" variant="outline" className="mt-3" onClick={() => setShowFulfillmentForm(true)}>
+                Record First Delivery
+              </Button>
+            </div>
+          ) : (
+            <div className="overflow-x-auto rounded-lg border">
+              <table className="w-full text-sm min-w-[600px]">
+                <thead className="sticky top-0 z-10 bg-background border-b">
+                  <tr>
+                    {(["fulfillment_date", "qty_delivered", "invoice_number", "invoice_date", "dc_number"] as const).map((col) => (
+                      <th
+                        key={col}
+                        className={cn(
+                          "p-2 font-medium text-muted-foreground text-left cursor-pointer hover:bg-muted/50",
+                          col === "qty_delivered" && "text-right"
+                        )}
+                        onClick={() => {
+                          if (fulfillmentSortCol === col) setFulfillmentSortDir(d => d === "asc" ? "desc" : "asc");
+                          else { setFulfillmentSortCol(col); setFulfillmentSortDir("asc"); }
+                        }}
+                        aria-sort={fulfillmentSortCol === col ? (fulfillmentSortDir === "asc" ? "ascending" : "descending") : undefined}
+                      >
+                        <span className="inline-flex items-center gap-0.5">
+                          {col === "fulfillment_date" ? "Date" : col === "qty_delivered" ? "Qty" : col === "invoice_number" ? "Invoice No" : col === "invoice_date" ? "Invoice Date" : "DC No"}
+                          {fulfillmentSortCol === col && (fulfillmentSortDir === "asc" ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />)}
+                        </span>
+                      </th>
+                    ))}
+                    <th className="p-2 w-20 text-right font-medium text-muted-foreground">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sortedFulfillments.map((f, idx) => (
+                    <tr key={f.id} className={cn("border-b border-border/50", idx % 2 === 1 && "bg-muted/30")}>
+                      <td className="p-2 whitespace-nowrap">{format(parseISO(f.fulfillment_date), "dd MMM yyyy")}</td>
+                      <td className="p-2 text-right font-medium tabular-nums">{f.qty_delivered.toLocaleString("en-IN")}</td>
+                      <td className="p-2">{f.invoice_number?.trim() ? <span className="font-medium">{f.invoice_number}</span> : "—"}</td>
+                      <td className="p-2 whitespace-nowrap">{f.invoice_date ? format(parseISO(f.invoice_date), "dd MMM yyyy") : "—"}</td>
+                      <td className="p-2">{f.dc_number?.trim() || "—"}</td>
+                      <td className="p-2 text-right">
+                        <Button variant="ghost" size="icon" className="h-7 w-7 mr-1" onClick={() => {
+                          setEditingFulfillment(f);
+                          setEditForm({
+                            fulfillment_date: f.fulfillment_date,
+                            qty_delivered: String(f.qty_delivered),
+                            invoice_number: f.invoice_number || "",
+                            invoice_date: f.invoice_date || "",
+                            dc_number: f.dc_number || "",
+                            delivery_note: f.delivery_note || "",
+                          });
+                          setEditFulfillmentErrors({});
+                        }}>
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => setDeleteConfirmFulfillment(f)}>
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
         </CardContent>
       </Card>
+
+      {/* Record Delivery modal */}
+      <Dialog open={showFulfillmentForm} onOpenChange={setShowFulfillmentForm}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>Record Delivery</DialogTitle></DialogHeader>
+          <div className="grid gap-3 py-2">
+            <div>
+              <Label htmlFor="fd-date">Delivery Date</Label>
+              <Input id="fd-date" type="date" value={fulfillmentForm.fulfillment_date} onChange={(e) => setFulfillmentForm(f => ({ ...f, fulfillment_date: e.target.value }))} className={fulfillmentErrors.fulfillment_date ? "border-destructive" : ""} />
+              {fulfillmentErrors.fulfillment_date && <p className="text-xs text-destructive mt-0.5">{fulfillmentErrors.fulfillment_date}</p>}
+            </div>
+            <div>
+              <Label htmlFor="fd-qty">Quantity</Label>
+              <Input id="fd-qty" type="number" min={1} value={fulfillmentForm.qty_delivered} onChange={(e) => setFulfillmentForm(f => ({ ...f, qty_delivered: e.target.value }))} placeholder={`Max ${qtyPending}`} className={fulfillmentErrors.qty_delivered ? "border-destructive" : ""} />
+              <p className="text-xs text-muted-foreground mt-0.5">Quantity must not exceed pending quantity.</p>
+              {fulfillmentErrors.qty_delivered && <p className="text-xs text-destructive mt-0.5">{fulfillmentErrors.qty_delivered}</p>}
+            </div>
+            <div>
+              <Label htmlFor="fd-inv">Invoice Number</Label>
+              <Input id="fd-inv" value={fulfillmentForm.invoice_number} onChange={(e) => setFulfillmentForm(f => ({ ...f, invoice_number: e.target.value }))} placeholder="e.g. INV-001" className={fulfillmentErrors.invoice_number ? "border-destructive" : ""} />
+              {fulfillmentErrors.invoice_number && <p className="text-xs text-destructive mt-0.5">{fulfillmentErrors.invoice_number}</p>}
+            </div>
+            <div>
+              <Label htmlFor="fd-invdate">Invoice Date</Label>
+              <Input id="fd-invdate" type="date" value={fulfillmentForm.invoice_date} onChange={(e) => setFulfillmentForm(f => ({ ...f, invoice_date: e.target.value }))} />
+            </div>
+            <div>
+              <Label htmlFor="fd-dc">DC Number</Label>
+              <Input id="fd-dc" value={fulfillmentForm.dc_number} onChange={(e) => setFulfillmentForm(f => ({ ...f, dc_number: e.target.value }))} placeholder="Delivery Challan No" />
+            </div>
+            <div>
+              <Label htmlFor="fd-notes">Notes (optional)</Label>
+              <Input id="fd-notes" value={fulfillmentForm.delivery_note} onChange={(e) => setFulfillmentForm(f => ({ ...f, delivery_note: e.target.value }))} placeholder="e.g. First batch" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button onClick={handleSaveFulfillment} disabled={addFulfillment.isPending}>{addFulfillment.isPending ? "Saving..." : "Save"}</Button>
+            <Button variant="outline" onClick={() => { setShowFulfillmentForm(false); setFulfillmentErrors({}); }}>Cancel</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Delivery modal */}
+      <Dialog open={!!editingFulfillment} onOpenChange={(open) => !open && setEditingFulfillment(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>Edit Delivery</DialogTitle></DialogHeader>
+          {editingFulfillment && (
+            <>
+              <div className="grid gap-3 py-2">
+                <div>
+                  <Label htmlFor="ef-date">Delivery Date</Label>
+                  <Input id="ef-date" type="date" value={editForm.fulfillment_date} onChange={(e) => setEditForm(f => ({ ...f, fulfillment_date: e.target.value }))} className={editFulfillmentErrors.fulfillment_date ? "border-destructive" : ""} />
+                  {editFulfillmentErrors.fulfillment_date && <p className="text-xs text-destructive mt-0.5">{editFulfillmentErrors.fulfillment_date}</p>}
+                </div>
+                <div>
+                  <Label htmlFor="ef-qty">Quantity Delivered</Label>
+                  <Input id="ef-qty" type="number" min={1} value={editForm.qty_delivered} onChange={(e) => setEditForm(f => ({ ...f, qty_delivered: e.target.value }))} className={editFulfillmentErrors.qty_delivered ? "border-destructive" : ""} />
+                  <p className="text-xs text-muted-foreground mt-0.5">Max: {qtyPending + editingFulfillment.qty_delivered} (pending + this row)</p>
+                  {editFulfillmentErrors.qty_delivered && <p className="text-xs text-destructive mt-0.5">{editFulfillmentErrors.qty_delivered}</p>}
+                </div>
+                <div>
+                  <Label htmlFor="ef-inv">Invoice Number</Label>
+                  <Input id="ef-inv" value={editForm.invoice_number} onChange={(e) => setEditForm(f => ({ ...f, invoice_number: e.target.value }))} className={editFulfillmentErrors.invoice_number ? "border-destructive" : ""} />
+                  {editFulfillmentErrors.invoice_number && <p className="text-xs text-destructive mt-0.5">{editFulfillmentErrors.invoice_number}</p>}
+                </div>
+                <div>
+                  <Label htmlFor="ef-invdate">Invoice Date</Label>
+                  <Input id="ef-invdate" type="date" value={editForm.invoice_date} onChange={(e) => setEditForm(f => ({ ...f, invoice_date: e.target.value }))} />
+                </div>
+                <div>
+                  <Label htmlFor="ef-dc">Delivery Challan No</Label>
+                  <Input id="ef-dc" value={editForm.dc_number} onChange={(e) => setEditForm(f => ({ ...f, dc_number: e.target.value }))} />
+                </div>
+                <div>
+                  <Label htmlFor="ef-notes">Notes (optional)</Label>
+                  <Input id="ef-notes" value={editForm.delivery_note} onChange={(e) => setEditForm(f => ({ ...f, delivery_note: e.target.value }))} />
+                </div>
+              </div>
+              <DialogFooter>
+                <Button
+                  onClick={() => handleUpdateFulfillment({
+                    fulfillment_date: editForm.fulfillment_date,
+                    qty_delivered: parseInt(editForm.qty_delivered, 10) || 0,
+                    invoice_number: editForm.invoice_number,
+                    invoice_date: editForm.invoice_date,
+                    dc_number: editForm.dc_number,
+                    delivery_note: editForm.delivery_note,
+                  })}
+                  disabled={updateFulfillment.isPending}
+                >
+                  {updateFulfillment.isPending ? "Saving..." : "Save"}
+                </Button>
+                <Button variant="outline" onClick={() => setEditingFulfillment(null)}>Cancel</Button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete delivery confirmation */}
+      <AlertDialog open={!!deleteConfirmFulfillment} onOpenChange={(open) => !open && setDeleteConfirmFulfillment(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete delivery record?</AlertDialogTitle>
+            <AlertDialogDescription>Are you sure you want to delete this delivery record?</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDeleteFulfillmentConfirm} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Delete</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Status History */}
       <Card className="shadow-card rounded-2xl">

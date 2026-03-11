@@ -332,6 +332,10 @@ export type Database = {
           id: string
           order_id: string
           qty_delivered: number
+          invoice_number: string | null
+          invoice_date: string | null
+          dc_number: string | null
+          updated_at: string | null
         }
         Insert: {
           created_at?: string
@@ -341,6 +345,10 @@ export type Database = {
           id?: string
           order_id: string
           qty_delivered: number
+          invoice_number?: string | null
+          invoice_date?: string | null
+          dc_number?: string | null
+          updated_at?: string | null
         }
         Update: {
           created_at?: string
@@ -350,6 +358,10 @@ export type Database = {
           id?: string
           order_id?: string
           qty_delivered?: number
+          invoice_number?: string | null
+          invoice_date?: string | null
+          dc_number?: string | null
+          updated_at?: string | null
         }
         Relationships: [
           {
