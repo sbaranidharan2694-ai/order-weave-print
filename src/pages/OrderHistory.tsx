@@ -34,10 +34,10 @@ const defaultColumns: ColumnDef[] = [
   { key: "order_no", label: "Order No.", visible: true, locked: true },
   { key: "created", label: "Created", visible: true },
   { key: "product", label: "Product", visible: true },
+  { key: "status", label: "Status", visible: true },
   { key: "customer", label: "Customer", visible: true },
   { key: "contact", label: "Contact", visible: true },
   { key: "amount", label: "Amount ₹", visible: true },
-  { key: "status", label: "Status", visible: true },
   { key: "delivery", label: "Delivery Date", visible: false },
   { key: "po_number", label: "PO Number", visible: true },
   { key: "source", label: "Source", visible: false },
@@ -107,6 +107,7 @@ export default function OrderHistory() {
     if (sourceFilter !== "all") result = result.filter((o) => o.source === sourceFilter);
     if (dateFilter === "7") result = result.filter((o) => parseISO(o.order_date) >= subDays(new Date(), 7));
     if (dateFilter === "30") result = result.filter((o) => parseISO(o.order_date) >= subDays(new Date(), 30));
+    if (searchParams.get("overdue") === "1") result = result.filter((o) => isBefore(parseISO(o.delivery_date), new Date()) && o.status !== "Delivered" && o.status !== "Cancelled");
 
     result.sort((a, b) => {
       let av: any = (a as any)[sortCol] || "";
@@ -208,18 +209,22 @@ export default function OrderHistory() {
     const overdue = isBefore(parseISO(o.delivery_date), new Date()) && o.status !== "Delivered" && o.status !== "Cancelled";
     switch (colKey) {
       case "order_no": {
-        const hasPO = !!(o as any).po_number;
+        const fromPO = o.source === "purchase_order";
         return (
           <span className="font-mono text-xs font-semibold whitespace-nowrap">
             {o.order_no}
-            {hasPO && <Badge variant="secondary" className="ml-1 text-[10px] bg-sky-100 text-sky-700">PO</Badge>}
+            {fromPO && <Badge variant="secondary" className="ml-1 text-[10px] bg-sky-100 text-sky-700">PO</Badge>}
           </span>
         );
       }
       case "created": return <span className="text-muted-foreground whitespace-nowrap text-xs">{format(parseISO(o.created_at), "dd MMM yyyy, h:mm a")}</span>;
       case "product": return <span className="whitespace-nowrap">{o.product_type}</span>;
       case "customer": return <span className="whitespace-nowrap">{o.customer_name}</span>;
-      case "contact": return <span className="text-muted-foreground whitespace-nowrap">{formatContact(o.contact_no)}</span>;
+      case "contact": return (
+        <a href={`tel:${o.contact_no.replace(/\D/g, "").slice(-10)}`} className="text-[#3B82F6] hover:underline whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+          {formatContact(o.contact_no)}
+        </a>
+      );
       case "amount": return <span className="whitespace-nowrap text-foreground">{Number(o.amount) ? `₹${Number(o.amount).toLocaleString("en-IN")}` : "—"}</span>;
       case "status": return (
         <span onClick={(e) => e.stopPropagation()}>
@@ -240,12 +245,12 @@ export default function OrderHistory() {
       case "source": return <span onClick={(e) => e.stopPropagation()}><SourceBadge source={o.source} /></span>;
       case "actions": return (
         <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => navigate(`/orders/${o.id}`)}><Eye className="h-3.5 w-3.5" /></Button>
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => navigate(`/orders/${o.id}/edit`)}><Pencil className="h-3.5 w-3.5" /></Button>
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openWhatsApp(o)}><MessageCircle className="h-3.5 w-3.5 text-source-whatsapp" /></Button>
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => navigate(`/orders/${o.id}`)} title="View order"><Eye className="h-3.5 w-3.5" /></Button>
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => navigate(`/orders/${o.id}/edit`)} title="Edit order"><Pencil className="h-3.5 w-3.5" /></Button>
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openWhatsApp(o)} title="Send WhatsApp"><MessageCircle className="h-3.5 w-3.5 text-source-whatsapp" /></Button>
           <AlertDialog>
             <AlertDialogTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive"><Trash2 className="h-3.5 w-3.5" /></Button>
+              <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" title="Delete order"><Trash2 className="h-3.5 w-3.5" /></Button>
             </AlertDialogTrigger>
             <AlertDialogContent>
               <AlertDialogHeader>
@@ -268,8 +273,13 @@ export default function OrderHistory() {
     return (
       <div className="space-y-4 animate-fade-in">
         <Skeleton className="h-8 w-48" />
-        <Skeleton className="h-12 w-full" />
-        <Skeleton className="h-64 w-full" />
+        <Skeleton className="h-12 w-full max-w-[420px]" />
+        <div className="rounded-2xl border border-border overflow-hidden">
+          <Skeleton className="h-10 w-full" />
+          {[1, 2, 3, 4, 5, 6].map((i) => (
+            <Skeleton key={i} className="h-12 w-full rounded-none border-t border-border" />
+          ))}
+        </div>
       </div>
     );
   }
@@ -290,7 +300,7 @@ export default function OrderHistory() {
             <PopoverContent className="w-64 p-3" align="end">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-sm font-semibold">Manage Columns</span>
-                <button className="text-xs text-primary hover:underline" onClick={() => setColumns(defaultColumns)}>
+                <button type="button" className="text-xs text-primary hover:underline" onClick={() => setColumns(defaultColumns)} title="Reset columns to default">
                   <RotateCcw className="h-3 w-3 inline mr-1" />Reset
                 </button>
               </div>
@@ -325,9 +335,9 @@ export default function OrderHistory() {
       {/* Filters */}
       <Card className="rounded-2xl border border-border/80 shadow-card">
         <CardContent className="p-4 flex flex-wrap gap-3 items-center">
-          <div className="relative flex-1 min-w-[200px]">
+          <div className="relative flex-1 min-w-[200px] max-w-[420px]">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input aria-label="Search orders by order number, customer, contact, or PO" placeholder="Search order, customer, contact, PO…" value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9 rounded-xl" />
+            <Input aria-label="Search orders by order number, customer, contact, or PO" placeholder="Search order, customer, contact, PO…" value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9 rounded-xl w-full" />
           </div>
           <Select value={statusFilter} onValueChange={setStatusFilter}>
             <SelectTrigger className="w-[160px]"><SelectValue placeholder="Status" /></SelectTrigger>
@@ -402,34 +412,44 @@ export default function OrderHistory() {
                       </td>
                     </tr>
                   ) : (
-                    paginated.map((o) => (
-                      <tr
-                        key={o.id}
-                        className="border-b hover:bg-muted/30 cursor-pointer"
-                        onClick={() => navigate(`/orders/${o.id}`)}
-                      >
-                        {visibleCols.map((col) => (
-                          <td key={col.key} className="p-3">{renderCell(o, col.key)}</td>
-                        ))}
-                      </tr>
-                    ))
+                    <>
+                      {paginated.map((o) => (
+                        <tr
+                          key={o.id}
+                          className="border-b table-row-hover"
+                          onClick={() => navigate(`/orders/${o.id}`)}
+                        >
+                          {visibleCols.map((col) => (
+                            <td key={col.key} className="p-3">{renderCell(o, col.key)}</td>
+                          ))}
+                        </tr>
+                      ))}
+                      {(() => {
+                        const amountIdx = visibleCols.findIndex((c) => c.key === "amount");
+                        if (amountIdx < 0) return null;
+                        return (
+                          <tr className="border-t bg-muted/20" key="subtotal">
+                            <td colSpan={amountIdx} className="p-3" />
+                            <td className="p-3 text-right font-semibold text-sm">
+                              Subtotal (shown): ₹{paginated.reduce((s, o) => s + (Number(o.amount) || 0), 0).toLocaleString("en-IN")}
+                            </td>
+                            <td colSpan={visibleCols.length - amountIdx - 1} className="p-3" />
+                          </tr>
+                        );
+                      })()}
+                    </>
                   )}
                 </tbody>
               </table>
             </div>
-            {/* Summary row */}
-            <div className="flex items-center justify-between p-3 border-t bg-muted/30">
-              <span className="text-sm text-muted-foreground">
-                Showing <strong>{filtered.length}</strong> orders
-              </span>
-              <span className="text-sm font-bold text-foreground">
-                Grand Total: ₹{grandTotal.toLocaleString("en-IN")}
-              </span>
-            </div>
             {/* Pagination */}
-            <div className="flex items-center justify-between p-3 border-t">
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <span>{filtered.length} orders</span>
+            <div className="flex items-center justify-between p-3 border-t flex-wrap gap-2">
+              <span className="text-sm text-muted-foreground">
+                Showing {(page - 1) * perPage + 1}–{Math.min(page * perPage, filtered.length)} of {filtered.length} orders
+              </span>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))} title="Previous page">Previous</Button>
+                <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage((p) => Math.min(totalPages, p + 1))} title="Next page">Next</Button>
                 <Select value={String(perPage)} onValueChange={(v) => { setPerPage(Number(v)); setPage(1); }}>
                   <SelectTrigger className="h-7 w-[80px] text-xs"><SelectValue /></SelectTrigger>
                   <SelectContent>
@@ -438,12 +458,6 @@ export default function OrderHistory() {
                     <SelectItem value="100">100</SelectItem>
                   </SelectContent>
                 </Select>
-                <span>per page</span>
-              </div>
-              <div className="flex gap-1">
-                <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>Prev</Button>
-                <span className="flex items-center px-2 text-sm text-muted-foreground">{page}/{totalPages || 1}</span>
-                <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>Next</Button>
               </div>
             </div>
           </CardContent>

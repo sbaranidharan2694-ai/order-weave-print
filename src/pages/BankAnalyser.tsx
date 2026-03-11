@@ -673,9 +673,17 @@ export default function BankAnalyser() {
       <div className="space-y-6">
         <Skeleton className="h-10 w-64" />
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          {[1,2,3,4].map(i => <Skeleton key={i} className="h-24 rounded-2xl" />)}
+          {[1, 2, 3, 4].map((i) => (
+            <Skeleton key={i} className="h-24 rounded-2xl" />
+          ))}
         </div>
-        <Skeleton className="h-96 rounded-2xl" />
+        <div className="rounded-2xl border border-border overflow-hidden">
+          <Skeleton className="h-10 w-full" />
+          {[1, 2, 3, 4, 5, 6].map((i) => (
+            <Skeleton key={i} className="h-12 w-full rounded-none border-t border-border" />
+          ))}
+        </div>
+        <Skeleton className="h-64 rounded-2xl" />
       </div>
     );
   }
@@ -693,6 +701,7 @@ export default function BankAnalyser() {
           onClick={() => refreshData()}
           disabled={loading}
           className="gap-1"
+          title="Refresh data"
         >
           <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
           Refresh
@@ -700,17 +709,17 @@ export default function BankAnalyser() {
       </div>
 
       <Tabs value={activeTab} onValueChange={handleTabChange} className="print:hidden">
-        <TabsList className="bg-muted w-full justify-start overflow-x-auto flex-nowrap">
-          <TabsTrigger value="overview" className="gap-1"><Home className="h-3.5 w-3.5" />Overview</TabsTrigger>
+        <TabsList className="bg-white border border-[#E5E7EB] rounded-lg p-1 w-full justify-start overflow-x-auto flex-nowrap">
+          <TabsTrigger value="overview" className="gap-1 data-[state=active]:bg-[#1E293B] data-[state=active]:text-white rounded-md"><Home className="h-3.5 w-3.5" />Overview</TabsTrigger>
           {ACCOUNTS.map(a => (
-            <TabsTrigger key={a.key} value={a.key} className="gap-1" title={`${a.label} — CSB Bank ••••${(a as { accountNumber?: string }).accountNumber?.slice(-4) ?? ""}`}>
+            <TabsTrigger key={a.key} value={a.key} className="gap-1 data-[state=active]:bg-[#1E293B] data-[state=active]:text-white rounded-md" title={`${a.label} — CSB Bank ••••${(a as { accountNumber?: string }).accountNumber?.slice(-4) ?? ""}`}>
               <span className="inline-block w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: a.color }} aria-hidden />
               <span>{a.icon}</span>
               <span className="hidden sm:inline">{a.label}</span>
               <span className="sm:hidden">{a.shortLabel}</span>
             </TabsTrigger>
           ))}
-          <TabsTrigger value="reports" className="gap-1"><BarChart3 className="h-3.5 w-3.5" />Reports</TabsTrigger>
+          <TabsTrigger value="reports" className="gap-1 data-[state=active]:bg-[#1E293B] data-[state=active]:text-white rounded-md"><BarChart3 className="h-3.5 w-3.5" />Reports</TabsTrigger>
         </TabsList>
 
         {/* OVERVIEW TAB */}

@@ -6,26 +6,27 @@
 
 @layer base {
   :root {
-    --background: 225 20% 97%;
-    --foreground: 220 40% 13%;
+    /* Brand: primary orange #F97316, accent/CTA navy #1E293B, background #F8FAFC */
+    --background: 210 40% 98%;
+    --foreground: 215 16% 27%;
 
     --card: 0 0% 100%;
-    --card-foreground: 220 40% 13%;
+    --card-foreground: 215 16% 27%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 220 40% 13%;
+    --popover-foreground: 215 16% 27%;
 
-    --primary: 220 44% 20%;
+    --primary: 24 95% 53%;
     --primary-foreground: 0 0% 100%;
 
-    --secondary: 42 95% 48%;
-    --secondary-foreground: 220 40% 13%;
+    --secondary: 217 33% 17%;
+    --secondary-foreground: 0 0% 100%;
 
     --muted: 220 14% 94%;
     --muted-foreground: 220 9% 46%;
 
-    --accent: 42 95% 48%;
-    --accent-foreground: 220 40% 13%;
+    --accent: 217 33% 17%;
+    --accent-foreground: 0 0% 100%;
 
     --destructive: 0 72% 51%;
     --destructive-foreground: 0 0% 100%;
@@ -33,12 +34,12 @@
     --success: 142 76% 36%;
     --success-foreground: 0 0% 100%;
 
-    --warning: 32 95% 44%;
+    --warning: 38 92% 50%;
     --warning-foreground: 0 0% 100%;
 
     --border: 220 13% 90%;
     --input: 220 13% 90%;
-    --ring: 42 95% 48%;
+    --ring: 24 95% 53%;
 
     --radius: 0.75rem;
 
@@ -154,6 +155,30 @@
   80% { transform: translateX(6px); }
 }
 .animate-shake { animation: shake 0.4s ease-in-out; }
+
+/* Section labels: 11px, 600, letter-spacing, gray, bottom border */
+.section-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: #6B7280;
+  border-bottom: 1px solid #E5E7EB;
+  margin-bottom: 16px;
+}
+
+/* Global table/list row hover */
+.table-row-hover:hover {
+  background: #F1F5F9 !important;
+  cursor: pointer;
+  transition: background 150ms ease;
+}
+
+/* Hide Lovable "Edit with Lovable" badge in production */
+[data-lovable],
+[class*="lovable"],
+a[href*="lovable"][target="_blank"]:has(svg) {
+  display: none !important;
+}
 
 /* Mobile bottom nav spacing */
 @media (max-width: 768px) {

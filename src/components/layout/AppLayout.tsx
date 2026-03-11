@@ -2,7 +2,7 @@ import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "./AppSidebar";
 import { MobileBottomNav } from "./MobileBottomNav";
 import { QuickStatusModal } from "@/components/QuickStatusModal";
-import { Bell, LogOut, Zap } from "lucide-react";
+import { Bell, LogOut, Zap, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useOrders } from "@/hooks/useOrders";
 import { useMemo, useState } from "react";
@@ -72,25 +72,30 @@ export function AppLayout({ children }: AppLayoutProps) {
                 <span className="font-bold text-lg text-primary tracking-tight">SUPER</span>
                 <span className="font-bold text-lg text-secondary tracking-tight">PRINTERS</span>
                 <span className="text-[10px] font-medium text-muted-foreground ml-1 hidden sm:inline">OMS</span>
-                <span className="text-[9px] text-muted-foreground/80 ml-1 hidden md:inline" title="Deployment build">{new Date().getFullYear()}</span>
+                <span className="hidden md:inline ml-1 text-[11px] font-medium rounded px-1.5 py-0.5" style={{ background: "#E2E8F0", color: "#64748B" }} title="Deployment build">{new Date().getFullYear()}</span>
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-1 text-xs"
-                onClick={() => setShowQuickStatus(true)}
-              >
-                <Zap className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Quick Update</span>
-              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm" className="gap-1 text-xs">
+                    <Zap className="h-3.5 w-3.5" />
+                    <span className="hidden sm:inline">Bulk Update</span>
+                    <ChevronDown className="h-3.5 w-3.5" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={() => setShowQuickStatus(true)} className="cursor-pointer">Update Order Status</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setShowQuickStatus(true)} className="cursor-pointer">Mark as Dispatched</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setShowQuickStatus(true)} className="cursor-pointer">Mark as Paid</DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
               <Popover>
                 <PopoverTrigger asChild>
-                  <Button variant="ghost" size="icon" className="relative text-muted-foreground">
+                  <Button variant="ghost" size="icon" className="relative text-muted-foreground" title="Notifications">
                     <Bell className="h-5 w-5" />
                     {notifications.length > 0 && (
-                      <span className="absolute -top-0.5 -right-0.5 h-4 w-4 rounded-full bg-destructive text-[10px] font-bold text-destructive-foreground flex items-center justify-center">
+                      <span className="absolute -top-0.5 -right-0.5 h-4 w-4 rounded-full flex items-center justify-center text-[10px] font-bold text-white" style={{ backgroundColor: "#F59E0B" }}>
                         {notifications.length > 9 ? "9+" : notifications.length}
                       </span>
                     )}
@@ -104,17 +109,16 @@ export function AppLayout({ children }: AppLayoutProps) {
                     {notifications.length === 0 ? (
                       <p className="text-sm text-muted-foreground text-center py-6">All clear! 🎉</p>
                     ) : (
-                      notifications.slice(0, 20).map((n, i) => (
+                      notifications.slice(0, 5).map((n, i) => (
                         <NotificationItem key={i} notification={n} />
                       ))
                     )}
                   </div>
                 </PopoverContent>
               </Popover>
-              
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="icon" className="rounded-full h-8 w-8">
+                  <Button variant="ghost" size="icon" className="rounded-full h-8 w-8" title="User menu">
                     <div className="h-8 w-8 rounded-full bg-primary flex items-center justify-center" aria-hidden>
                       <span className="text-xs font-semibold text-primary-foreground">
                         {auth?.user?.email?.slice(0, 2).toUpperCase() ?? "SP"}
@@ -124,9 +128,12 @@ export function AppLayout({ children }: AppLayoutProps) {
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-56">
                   {auth?.user?.email && (
-                    <div className="px-2 py-1.5 text-sm text-muted-foreground truncate">
-                      {auth.user.email}
-                    </div>
+                    <>
+                      <div className="px-2 py-1.5 text-sm font-medium text-foreground truncate">
+                        {auth.user.email}
+                      </div>
+                      <div className="px-2 py-0.5 text-xs text-muted-foreground">Admin</div>
+                    </>
                   )}
                   <DropdownMenuItem onClick={handleLogout} className="gap-2 cursor-pointer">
                     <LogOut className="h-4 w-4" />

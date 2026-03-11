@@ -920,11 +920,11 @@ export default function ImportPO() {
     <div className="animate-fade-in">
       <h1 className="text-2xl font-bold text-foreground mb-4">Import Purchase Order</h1>
 
-      {/* Split screen layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      {/* Split screen layout: left 45%, right 55%, divider */}
+      <div className="grid grid-cols-1 lg:grid-cols-[45%_1px_55%] gap-0 items-stretch">
         {/* LEFT PANEL — Upload & Preview */}
-        <div className="space-y-4">
-          <Card>
+        <div className="space-y-4 min-w-0">
+          <Card className="border border-[#E5E7EB]">
             <CardContent className="p-4">
               <div
                 role="button"
@@ -934,9 +934,9 @@ export default function ImportPO() {
                 onDragOver={e => e.preventDefault()}
                 onClick={() => fileInputRef.current?.click()}
                 onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fileInputRef.current?.click(); } }}
-                className="border-2 border-dashed border-border rounded-lg p-8 text-center hover:border-primary/50 transition-colors cursor-pointer"
+                className="border-2 border-dashed border-[#CBD5E1] rounded-xl p-8 text-center hover:border-primary/50 transition-colors cursor-pointer min-h-[120px] flex flex-col items-center justify-center bg-[#F8FAFC]"
               >
-                <Upload className="h-10 w-10 mx-auto text-muted-foreground mb-3" />
+                <Upload className="h-12 w-12 mx-auto text-[#F97316] mb-3" />
                 <p className="font-medium text-foreground">Drop your Purchase Order here</p>
                 <p className="text-sm text-muted-foreground mt-1">PDF, PNG, JPG, or XLSX — Max 10MB</p>
                 <input ref={fileInputRef} type="file" accept={ACCEPTED_TYPES.join(",")} className="hidden" aria-label="Purchase order file"
@@ -983,8 +983,10 @@ export default function ImportPO() {
           )}
         </div>
 
+        <div className="hidden lg:block w-px bg-border min-h-0 self-stretch" aria-hidden />
+
         {/* RIGHT PANEL — Form */}
-        <div className="space-y-4">
+        <div className="space-y-4 min-w-0">
           {parseState === "empty" && !file && (
             <Card className="h-64 flex items-center justify-center">
               <div className="text-center text-muted-foreground">
@@ -1358,9 +1360,9 @@ export default function ImportPO() {
       <div className="mt-8">
         <Collapsible open={historyOpen} onOpenChange={setHistoryOpen}>
           <CollapsibleTrigger asChild>
-            <Button variant="ghost" className="w-full justify-between">
+            <Button variant="ghost" className="w-full justify-between bg-white border border-[#E5E7EB] rounded-lg py-3.5 px-4 hover:bg-muted/50">
               <span className="text-sm font-medium">Previously Imported POs{history.length === 0 ? " (none yet)" : ""}</span>
-              <ChevronDown className={`h-4 w-4 transition-transform ${historyOpen ? "rotate-180" : ""}`} />
+              <ChevronDown className={`h-4 w-4 transition-transform shrink-0 ${historyOpen ? "rotate-180" : ""}`} />
             </Button>
           </CollapsibleTrigger>
           <CollapsibleContent>

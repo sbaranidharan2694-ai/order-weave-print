@@ -10,6 +10,8 @@ import { useState, useEffect } from "react";
 import { X, Plus, Pencil, Trash2, CheckCircle2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Skeleton } from "@/components/ui/skeleton";
+import { toast } from "sonner";
 
 const GSTIN_REGEX = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
 
@@ -54,7 +56,16 @@ export default function SettingsPage() {
     }
   }, [settings]);
 
-  if (isLoading || !form) return <div className="flex items-center justify-center h-64 text-muted-foreground">Loading...</div>;
+  if (isLoading || !form) {
+    return (
+      <div className="max-w-2xl mx-auto space-y-6 animate-fade-in">
+        <Skeleton className="h-8 w-32" />
+        {[1, 2, 3, 4, 5, 6].map((i) => (
+          <Skeleton key={i} className="h-24 w-full rounded-xl" />
+        ))}
+      </div>
+    );
+  }
 
   const gstinError = gstinTouched && form.gstin && !GSTIN_REGEX.test(form.gstin);
   const gstinValid = form.gstin && GSTIN_REGEX.test(form.gstin);
@@ -93,12 +104,14 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="max-w-2xl mx-auto space-y-6 animate-fade-in">
+    <div className="max-w-2xl mx-auto space-y-6 animate-fade-in pb-24">
       <h1 className="text-2xl font-bold text-foreground">Settings</h1>
 
-      <Card className="shadow-card">
-        <CardHeader><CardTitle className="text-sm">Business Information</CardTitle></CardHeader>
-        <CardContent className="space-y-4">
+      <Card className="shadow-card border border-[#E5E7EB] rounded-xl p-6 mb-6">
+        <CardHeader className="p-0 pb-4 border-b border-[#F1F5F9] mb-4">
+          <CardTitle className="text-[15px] font-semibold text-[#1E293B]">Business Information</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4 p-0">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div><Label>Business Name</Label><Input value={form.business_name} onChange={(e) => update("business_name", e.target.value)} autoComplete="off" /></div>
             <div><Label>Order No. Prefix</Label><Input value={form.order_prefix} onChange={(e) => update("order_prefix", e.target.value)} /></div>
@@ -130,9 +143,11 @@ export default function SettingsPage() {
         { key: "paper_types", label: "Paper Types", val: newPaper, set: setNewPaper },
         { key: "product_types", label: "Product Types", val: newProduct, set: setNewProduct },
       ].map(({ key, label, val, set }) => (
-        <Card key={key} className="shadow-card">
-          <CardHeader><CardTitle className="text-sm">{label}</CardTitle></CardHeader>
-          <CardContent className="space-y-3">
+        <Card key={key} className="shadow-card border border-[#E5E7EB] rounded-xl p-6 mb-6">
+          <CardHeader className="p-0 pb-4 border-b border-[#F1F5F9] mb-4">
+            <CardTitle className="text-[15px] font-semibold text-[#1E293B]">{label}</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3 p-0">
             <div className="flex gap-2">
               <Input value={val} onChange={(e) => set(e.target.value)} placeholder={`Add ${label.toLowerCase()}...`}
                 onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addToList(key, val, set))} />
@@ -140,10 +155,10 @@ export default function SettingsPage() {
             </div>
             <div className="flex flex-wrap gap-2">
               {(form[key] || []).map((item: string, i: number) => (
-                <Badge key={i} variant="secondary" className="gap-1 pr-1">
+                <span key={i} className="inline-flex items-center gap-1 bg-[#F1F5F9] text-[#1E293B] rounded-md py-1 px-2.5 text-[13px]">
                   {item}
-                  <button onClick={() => removeFromList(key, i)} className="ml-1 hover:text-destructive"><X className="h-3 w-3" /></button>
-                </Badge>
+                  <button type="button" onClick={() => removeFromList(key, i)} className="text-[#9CA3AF] hover:text-foreground"><X className="h-3 w-3" /></button>
+                </span>
               ))}
             </div>
           </CardContent>
@@ -151,9 +166,11 @@ export default function SettingsPage() {
       ))}
 
       {/* Invoice Settings */}
-      <Card className="shadow-card">
-        <CardHeader><CardTitle className="text-sm">Invoice Settings</CardTitle></CardHeader>
-        <CardContent className="space-y-4">
+      <Card className="shadow-card border border-[#E5E7EB] rounded-xl p-6 mb-6">
+        <CardHeader className="p-0 pb-4 border-b border-[#F1F5F9] mb-4">
+          <CardTitle className="text-[15px] font-semibold text-[#1E293B]">Invoice Settings</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4 p-0">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div><Label>Bank Account Name</Label><Input value={form.bank_account_name} onChange={(e) => update("bank_account_name", e.target.value)} /></div>
             <div><Label>Account Number</Label><Input value={form.bank_account_number} onChange={(e) => update("bank_account_number", e.target.value)} /></div>
@@ -169,42 +186,47 @@ export default function SettingsPage() {
       </Card>
 
       {/* WhatsApp Templates */}
-      <Card className="shadow-card">
-        <CardHeader>
-          <CardTitle className="text-sm flex items-center justify-between">
+      <Card className="shadow-card border border-[#E5E7EB] rounded-xl p-6 mb-6">
+        <CardHeader className="p-0 pb-4 border-b border-[#F1F5F9] mb-4">
+          <CardTitle className="text-[15px] font-semibold text-[#1E293B] flex items-center justify-between">
             WhatsApp Templates
             <Button variant="outline" size="sm" onClick={() => openTemplateModal()}>
               <Plus className="h-3 w-3 mr-1" /> Add Template
             </Button>
           </CardTitle>
         </CardHeader>
-        <CardContent className="space-y-3">
+        <CardContent className="space-y-3 p-0">
           {templates.length === 0 && <p className="text-sm text-muted-foreground">No templates yet</p>}
           {templates.map((t) => (
             <div key={t.id} className="flex items-start justify-between p-3 bg-muted rounded-md">
-              <div>
+              <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium">{t.name}</p>
-                <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{t.body}</p>
+                <p className="text-xs text-muted-foreground mt-1 line-clamp-2 break-words">
+                {t.body.split(/(\{\{[^}]+\}\})/g).map((part, i) => (/\{\{[^}]+\}\}/.test(part) ? <span key={i} style={{ color: "#7C3AED" }}>{part}</span> : part))}
+              </p>
               </div>
               <div className="flex gap-1 ml-2 flex-shrink-0">
-                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openTemplateModal(t)}>
+                <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => { navigator.clipboard.writeText(t.body); toast.success("Template copied"); }}>Copy Template</Button>
+                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openTemplateModal(t)} title="Edit template">
                   <Pencil className="h-3.5 w-3.5" />
                 </Button>
-                <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => deleteTemplate.mutate(t.id)}>
+                <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => deleteTemplate.mutate(t.id)} title="Delete template">
                   <Trash2 className="h-3.5 w-3.5" />
                 </Button>
               </div>
             </div>
           ))}
-          <p className="text-xs text-muted-foreground">
-            Available placeholders: {"{{customer_name}}, {{order_no}}, {{product_type}}, {{quantity}}, {{status}}, {{delivery_date}}, {{amount}}, {{balance_due}}, {{qty_ordered}}, {{qty_fulfilled}}, {{qty_pending}}"}
+          <p className="text-xs text-muted-foreground mt-2">
+            Available placeholders: <span className="text-[#7C3AED]">{"{{customer_name}}, {{order_no}}, {{product_type}}, {{quantity}}, {{status}}, {{delivery_date}}, {{amount}}, {{balance_due}}, {{qty_ordered}}, {{qty_fulfilled}}, {{qty_pending}}"}</span>
           </p>
         </CardContent>
       </Card>
 
-      <Button onClick={handleSave} disabled={updateSettings.isPending || !!gstinError} className="px-8">
-        {updateSettings.isPending ? "Saving..." : "Save Settings"}
-      </Button>
+      <div className="sticky bottom-0 left-0 right-0 py-4 bg-background/95 border-t border-border">
+        <Button onClick={handleSave} disabled={updateSettings.isPending || !!gstinError} className="py-3 px-8 rounded-lg font-semibold bg-[#F97316] hover:bg-[#ea580c] text-white" style={{ backgroundColor: "#F97316" }}>
+          {updateSettings.isPending ? "Saving..." : "Save Settings"}
+        </Button>
+      </div>
 
       {/* Template Modal */}
       <Dialog open={showTemplateModal} onOpenChange={setShowTemplateModal}>

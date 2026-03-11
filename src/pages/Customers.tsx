@@ -162,8 +162,13 @@ export default function Customers() {
     return (
       <div className="space-y-4 animate-fade-in">
         <Skeleton className="h-8 w-40" />
-        <Skeleton className="h-12 w-full" />
-        <Skeleton className="h-64 w-full" />
+        <Skeleton className="h-12 w-full max-w-[300px]" />
+        <div className="rounded-2xl border border-border overflow-hidden">
+          <Skeleton className="h-10 w-full" />
+          {[1, 2, 3, 4, 5, 6].map((i) => (
+            <Skeleton key={i} className="h-14 w-full rounded-none border-t border-border" />
+          ))}
+        </div>
       </div>
     );
   }
@@ -173,17 +178,19 @@ export default function Customers() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-foreground tracking-tight">Customers</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">{filtered.length} customer{filtered.length !== 1 ? "s" : ""}</p>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            {filtered.length === 0 && tab === "active" ? "No active customers" : `${filtered.length} customer${filtered.length !== 1 ? "s" : ""}`}
+          </p>
         </div>
-        <Button size="sm" onClick={() => setShowAddModal(true)}>
+        <Button size="sm" onClick={() => setShowAddModal(true)} className="bg-[#F97316] hover:bg-[#ea580c] text-white" style={{ backgroundColor: "#F97316" }}>
           <PlusCircle className="h-4 w-4 mr-1" /> Add Customer
         </Button>
       </div>
 
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList>
-          <TabsTrigger value="active">Active</TabsTrigger>
-          <TabsTrigger value="archived">Archived</TabsTrigger>
+        <TabsList className="bg-white border border-[#E5E7EB] rounded-lg p-1">
+          <TabsTrigger value="active" className="data-[state=active]:bg-[#1E293B] data-[state=active]:text-white rounded-md">Active</TabsTrigger>
+          <TabsTrigger value="archived" className="data-[state=active]:bg-[#1E293B] data-[state=active]:text-white rounded-md">Archived</TabsTrigger>
         </TabsList>
       </Tabs>
 
@@ -191,7 +198,7 @@ export default function Customers() {
         <CardContent className="p-4">
           <div className="relative max-w-sm">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input placeholder="Search name, contact or email..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" autoComplete="off" />
+            <Input placeholder="Search by name, phone, or GSTIN..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" autoComplete="off" />
           </div>
         </CardContent>
       </Card>
@@ -199,14 +206,14 @@ export default function Customers() {
       {filtered.length === 0 ? (
         <Card className="rounded-2xl border border-border/80 shadow-card">
           <CardContent className="flex flex-col items-center justify-center py-16">
-            <Users className="h-16 w-16 text-muted-foreground/30 mb-4" />
+            <Users className="h-20 w-20 text-muted-foreground/40 mb-4" />
             <h3 className="text-lg font-semibold text-foreground mb-1">
               {tab === "active" ? "No customers yet" : "No archived customers"}
             </h3>
-            <p className="text-sm text-muted-foreground mb-4">
-              {tab === "active" ? "Customers are automatically created when you create orders" : "Archived customers will appear here"}
+            <p className="text-sm text-muted-foreground mb-4 text-center">
+              {tab === "active" ? "Customers are automatically created when you create orders, or add one manually." : "Archived customers will appear here"}
             </p>
-            {tab === "active" && <Button onClick={() => setShowAddModal(true)}>Add Customer</Button>}
+            {tab === "active" && <Button onClick={() => setShowAddModal(true)} className="bg-[#F97316] hover:bg-[#ea580c] text-white" style={{ backgroundColor: "#F97316" }}>Add Customer</Button>}
           </CardContent>
         </Card>
       ) : (
@@ -240,7 +247,7 @@ export default function Customers() {
                     const isVirtual = !!(c as any)._virtual;
 
                     return (
-                      <tr key={c.id} className="border-b hover:bg-muted/30">
+                      <tr key={c.id} className="border-b table-row-hover">
                         <td className="p-3 font-medium text-foreground">
                           <button
                             className="hover:text-primary hover:underline text-left flex items-center gap-1"

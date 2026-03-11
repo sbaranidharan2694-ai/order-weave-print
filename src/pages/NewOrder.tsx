@@ -19,6 +19,7 @@ import { UserCheck, Upload, X, FileText } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import ImportPO from "./ImportPO";
+import { Skeleton } from "@/components/ui/skeleton";
 
 const INSTRUCTION_TEMPLATES = [
   "Urgent job - call before print",
@@ -31,8 +32,9 @@ const INSTRUCTION_TEMPLATES = [
 export default function NewOrder() {
   const navigate = useNavigate();
   const createOrder = useCreateOrder();
-  const { data: productTypes = [] } = useProductTypes();
-  const { data: settings } = useSettings();
+  const { data: productTypes = [], isLoading: productTypesLoading } = useProductTypes();
+  const { data: settings, isLoading: settingsLoading } = useSettings();
+  const formLoading = settingsLoading || productTypesLoading;
 
   const [form, setForm] = useState({
     customer_name: "",
@@ -178,14 +180,26 @@ export default function NewOrder() {
     }));
   };
 
+  if (formLoading) {
+    return (
+      <div className="max-w-3xl mx-auto space-y-4 animate-fade-in">
+        <Skeleton className="h-8 w-40" />
+        <Skeleton className="h-10 w-full" />
+        {[1, 2, 3, 4, 5, 6].map((i) => (
+          <Skeleton key={i} className="h-20 w-full rounded-xl" />
+        ))}
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-3xl mx-auto space-y-4 animate-fade-in">
       <h1 className="text-2xl font-bold text-foreground">New Order</h1>
 
       <Tabs defaultValue="manual">
-        <TabsList>
-          <TabsTrigger value="manual">Manual Entry</TabsTrigger>
-          <TabsTrigger value="import">Import from PO</TabsTrigger>
+        <TabsList className="w-full max-w-md">
+          <TabsTrigger value="manual" className="data-[state=active]:border-b-2 data-[state=active]:border-primary data-[state=active]:border-b-[#F97316]">Manual Entry</TabsTrigger>
+          <TabsTrigger value="import" className="data-[state=active]:border-b-2 data-[state=active]:border-dashed data-[state=active]:border-b-[#F97316]">Import from PO</TabsTrigger>
         </TabsList>
 
         <TabsContent value="import">
@@ -195,12 +209,12 @@ export default function NewOrder() {
         <TabsContent value="manual">
           <form onSubmit={handleSubmit} className="space-y-6">
             {/* Customer Info */}
-            <Card className="shadow-card">
+            <Card className="shadow-card border border-[#E5E7EB] rounded-xl mb-5">
               <CardHeader><CardTitle className="text-sm">Customer Information</CardTitle></CardHeader>
-              <CardContent className="space-y-4">
+              <CardContent className="space-y-4 pt-0">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
-                    <Label>Contact No. *</Label>
+                    <Label>Contact No. <span className="text-[#DC2626]">*</span></Label>
                     <Input
                       type="tel"
                       value={form.contact_no}
@@ -216,7 +230,7 @@ export default function NewOrder() {
                     )}
                   </div>
                   <div>
-                    <Label>Customer Name *</Label>
+                    <Label>Customer Name <span className="text-[#DC2626]">*</span></Label>
                     <Input value={form.customer_name} onChange={(e) => update("customer_name", e.target.value)} required />
                     {formErrors.customer_name && <p className="text-xs text-destructive mt-1">{formErrors.customer_name}</p>}
                   </div>
@@ -249,12 +263,12 @@ export default function NewOrder() {
             </Card>
 
             {/* Order Details */}
-            <Card className="shadow-card">
+            <Card className="shadow-card border border-[#E5E7EB] rounded-xl mb-5">
               <CardHeader><CardTitle className="text-sm">Order Details</CardTitle></CardHeader>
-              <CardContent className="space-y-4">
+              <CardContent className="space-y-4 pt-0">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
-                    <Label>Product Type *</Label>
+                    <Label>Product Type <span className="text-[#DC2626]">*</span></Label>
                     <Select value={form.product_type} onValueChange={handleProductTypeChange}>
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
@@ -265,7 +279,7 @@ export default function NewOrder() {
                     <p className="text-xs text-muted-foreground mt-1">Defaults loaded from product type</p>
                   </div>
                   <div>
-                    <Label>Quantity *</Label>
+                    <Label>Quantity <span className="text-[#DC2626]">*</span></Label>
                     <Input
                       type="number"
                       min={1}
@@ -318,7 +332,7 @@ export default function NewOrder() {
             </Card>
 
             {/* Special Instructions & Tags */}
-            <Card className="shadow-card">
+            <Card className="shadow-card border border-[#E5E7EB] rounded-xl p-6 mb-5">
               <CardHeader><CardTitle className="text-sm">Special Instructions & Tags</CardTitle></CardHeader>
               <CardContent className="space-y-4">
                 <div>
@@ -360,14 +374,14 @@ export default function NewOrder() {
             </Card>
 
             {/* Artwork / Files */}
-            <Card className="shadow-card">
+            <Card className="shadow-card border border-[#E5E7EB] rounded-xl mb-5">
               <CardHeader><CardTitle className="text-sm">Artwork / Files</CardTitle></CardHeader>
-              <CardContent className="space-y-3">
+              <CardContent className="space-y-3 pt-0">
                 <div
-                  className="border-2 border-dashed border-border rounded-lg p-6 text-center cursor-pointer hover:border-primary/50 transition-colors"
+                  className="border-2 border-dashed border-[#CBD5E1] rounded-xl min-h-[120px] flex flex-col items-center justify-center text-center cursor-pointer hover:border-primary/50 transition-colors bg-muted/20"
                   onClick={() => document.getElementById("order-files-input")?.click()}
                 >
-                  <Upload className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
+                  <Upload className="h-10 w-10 mx-auto mb-2 text-[#F97316]" />
                   <p className="text-sm text-muted-foreground">Drag files here or click to browse</p>
                   <p className="text-xs text-muted-foreground">.pdf, .ai, .psd, .jpg, .png, .zip — Max 50MB per file</p>
                   <input
@@ -400,16 +414,16 @@ export default function NewOrder() {
             </Card>
 
             {/* Dates & Payment */}
-            <Card className="shadow-card">
+            <Card className="shadow-card border border-[#E5E7EB] rounded-xl mb-5">
               <CardHeader><CardTitle className="text-sm">Dates & Payment</CardTitle></CardHeader>
-              <CardContent className="space-y-4">
+              <CardContent className="space-y-4 pt-0">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <Label>Order Date</Label>
-                    <Input type="date" value={form.order_date} onChange={(e) => update("order_date", e.target.value)} />
+                    <Input type="date" value={form.order_date} onChange={(e) => update("order_date", e.target.value)} className="w-full" />
                   </div>
                   <div>
-                    <Label>Delivery Date *</Label>
+                    <Label>Delivery Date <span className="text-[#DC2626]">*</span></Label>
                     <Input
                       type="date"
                       value={form.delivery_date}
@@ -444,21 +458,19 @@ export default function NewOrder() {
                   </div>
                   <div>
                     <Label>Balance Due (₹)</Label>
-                    <Input
-                      value={hasAmount ? `₹${Math.max(0, balanceDue).toLocaleString("en-IN")}` : "—"}
-                      disabled
-                      className="bg-muted font-semibold"
-                    />
+                    <div className={`py-2 px-3 rounded-md border bg-muted/30 font-bold text-base ${balanceDue < 0 ? "text-destructive" : ""}`} style={balanceDue >= 0 ? { color: "#1E293B" } : undefined}>
+                      {hasAmount ? (balanceDue < 0 ? `Overpaid: ₹${Math.abs(balanceDue).toLocaleString("en-IN")}` : `₹${balanceDue.toLocaleString("en-IN")}`) : "—"}
+                    </div>
                   </div>
                 </div>
               </CardContent>
             </Card>
 
-            <div className="flex gap-3">
-              <Button type="submit" disabled={createOrder.isPending || !canSubmit} className="px-8">
+            <div className="sticky bottom-0 left-0 right-0 py-4 bg-background/95 border-t border-border flex gap-3 justify-end">
+              <Button type="button" variant="outline" className="border-[#D1D5DB]" onClick={() => navigate("/")}>Cancel</Button>
+              <Button type="submit" disabled={createOrder.isPending || !canSubmit} className="px-8 bg-[#F97316] hover:bg-[#ea580c] text-white" style={{ backgroundColor: "#F97316" }}>
                 {createOrder.isPending ? "Creating..." : "Create Order"}
               </Button>
-              <Button type="button" variant="outline" onClick={() => navigate("/")}>Cancel</Button>
             </div>
           </form>
         </TabsContent>

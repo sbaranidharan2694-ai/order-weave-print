@@ -50,6 +50,21 @@ export const STATUS_TEXT_COLORS: Record<string, string> = {
   'Cancelled': 'text-status-cancelled',
 };
 
+/** Badge bg/text for Order History and lists (hex) */
+export const STATUS_BADGE_STYLES: Record<string, { bg: string; text: string }> = {
+  'Order Received': { bg: '#DBEAFE', text: '#1D4ED8' },
+  'Design Review': { bg: '#FEF3C7', text: '#92400E' },
+  'Plate Making': { bg: '#FEF3C7', text: '#92400E' },
+  'Printing': { bg: '#FEF3C7', text: '#92400E' },
+  'Cutting / Binding': { bg: '#FEF3C7', text: '#92400E' },
+  'Quality Check': { bg: '#FEF3C7', text: '#92400E' },
+  'Ready to Dispatch': { bg: '#D1FAE5', text: '#065F46' },
+  'Partially Fulfilled': { bg: '#E0E7FF', text: '#3730A3' },
+  'Delivered': { bg: '#F3F4F6', text: '#374151' },
+  'Payment Pending': { bg: '#FEE2E2', text: '#991B1B' },
+  'Cancelled': { bg: '#F3F4F6', text: '#374151' },
+};
+
 export const SOURCE_COLORS: Record<string, string> = {
   'whatsapp': 'bg-source-whatsapp',
   'email': 'bg-source-email',

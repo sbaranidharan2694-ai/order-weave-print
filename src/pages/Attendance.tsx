@@ -159,8 +159,11 @@ export default function Attendance() {
     return (
       <div className="space-y-6">
         <Skeleton className="h-9 w-48" />
-        <Skeleton className="h-40 w-full rounded-2xl" />
-        <Skeleton className="h-64 w-full rounded-2xl" />
+        <Skeleton className="h-24 w-full rounded-2xl" />
+        <Skeleton className="h-32 w-full rounded-2xl" />
+        {[1, 2, 3, 4, 5, 6].map((i) => (
+          <Skeleton key={i} className="h-14 w-full rounded-2xl" />
+        ))}
       </div>
     );
   }
@@ -176,29 +179,29 @@ export default function Attendance() {
       </div>
 
       <Tabs defaultValue="upload" className="space-y-4">
-        <TabsList className="grid w-full max-w-sm grid-cols-2">
-          <TabsTrigger value="upload" className="gap-1.5">
+        <TabsList className="grid w-full max-w-sm grid-cols-2 bg-white border border-[#E5E7EB] rounded-lg p-1">
+          <TabsTrigger value="upload" className="gap-1.5 data-[state=active]:bg-[#1E293B] data-[state=active]:text-white rounded-md">
             <Upload className="h-4 w-4" />
             Upload & History
           </TabsTrigger>
-          <TabsTrigger value="payroll" className="gap-1.5">
+          <TabsTrigger value="payroll" className="gap-1.5 data-[state=active]:bg-[#1E293B] data-[state=active]:text-white rounded-md">
             <Calculator className="h-4 w-4" />
             Payroll Dashboard
           </TabsTrigger>
         </TabsList>
 
         <TabsContent value="upload" className="space-y-6 mt-0">
-      <Card className="rounded-2xl border-2 border-dashed border-primary/20 bg-muted/30">
-        <CardHeader>
+      <Card className="rounded-xl border-2 border-dashed border-[#CBD5E1] bg-[#F8FAFC] p-8">
+        <CardHeader className="p-0 pb-4">
           <CardTitle className="text-base flex items-center gap-2">
             <Upload className="h-4 w-4 text-primary" />
             Upload monthly attendance PDF
           </CardTitle>
-          <p className="text-sm text-muted-foreground font-normal">
+          <p className="text-sm text-muted-foreground font-normal mt-1">
             Upload <strong>Absent List</strong> (E. Code, Name, No of Absent, dates) or <strong>ESSL Daily Detailed Report</strong>. Month is inferred from the PDF.
           </p>
         </CardHeader>
-        <CardContent className="flex flex-wrap items-end gap-4">
+        <CardContent className="flex flex-wrap items-center justify-center gap-4 p-0">
           <div className="flex items-center gap-2">
             <Input
               type="file"
@@ -211,7 +214,8 @@ export default function Attendance() {
             <Button
               onClick={() => document.getElementById("att-pdf")?.click()}
               disabled={uploading}
-              className="rounded-xl gap-2"
+              className="rounded-xl gap-2 bg-[#F97316] hover:bg-[#ea580c] text-white"
+              style={{ backgroundColor: "#F97316" }}
             >
               {uploading ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -244,24 +248,30 @@ export default function Attendance() {
                 <Collapsible open={expandedId === u.id} onOpenChange={(o) => setExpandedId(o ? u.id : null)}>
                   <CollapsibleTrigger asChild>
                     <button className="w-full flex items-center justify-between p-4 text-left hover:bg-muted/50 transition-colors">
-                      <div className="flex items-center gap-3">
-                        <ChevronRight className={cn("h-4 w-4 text-muted-foreground transition-transform", expandedId === u.id && "rotate-90")} />
-                        <div>
+                      <div className="flex items-center gap-3 min-w-0">
+                        <ChevronRight className={cn("h-4 w-4 text-muted-foreground transition-transform shrink-0", expandedId === u.id && "rotate-90")} />
+                        <div className="min-w-0">
                           <p className="font-semibold text-foreground">
                             {format(parseISO(u.month_year + "-01"), "MMMM yyyy")}
                           </p>
-                          <p className="text-xs text-muted-foreground">{u.file_name}</p>
+                          <p className="text-xs text-[#6B7280] truncate">{u.file_name}</p>
                         </div>
-                        <span className="text-sm text-muted-foreground">
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 shrink-0">
                           {u.parsed_data?.employees?.length ?? 0} employees
-                          {u.parsed_data?.source_type === "absent_list" && " (Absent list)"}
-                          {u.parsed_data?.source_type === "detailed_report" && " (Detailed report)"}
                         </span>
+                        <button
+                          type="button"
+                          className="text-primary hover:underline text-sm shrink-0"
+                          onClick={(e) => { e.stopPropagation(); setExpandedId(expandedId === u.id ? null : u.id); }}
+                        >
+                          View Details ›
+                        </button>
                       </div>
                       <Button
                         variant="ghost"
                         size="icon"
                         className="text-destructive hover:text-destructive shrink-0"
+                        title="Delete upload"
                         onClick={(e) => {
                           e.stopPropagation();
                           setDeleteId(u.id);
