@@ -537,6 +537,42 @@ export type Database = {
         }
         Relationships: []
       }
+      po_parse_patterns: {
+        Row: {
+          confidence_score: number
+          created_at: string
+          customer_name: string | null
+          document_signature: string
+          field_label: string
+          id: string
+          mapped_field: string
+          times_used: number
+          updated_at: string
+        }
+        Insert: {
+          confidence_score?: number
+          created_at?: string
+          customer_name?: string | null
+          document_signature: string
+          field_label: string
+          id?: string
+          mapped_field: string
+          times_used?: number
+          updated_at?: string
+        }
+        Update: {
+          confidence_score?: number
+          created_at?: string
+          customer_name?: string | null
+          document_signature?: string
+          field_label?: string
+          id?: string
+          mapped_field?: string
+          times_used?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
       product_types: {
         Row: {
           created_at: string | null
