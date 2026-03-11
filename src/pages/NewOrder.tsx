@@ -12,6 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { COLOR_MODES, ORDER_SOURCES } from "@/lib/constants";
+import { normalizeNumber } from "@/lib/numberUtils";
 import { AVAILABLE_TAGS, TAG_COLORS } from "@/hooks/useOrderTags";
 import { format, addDays } from "date-fns";
 import { Badge } from "@/components/ui/badge";
@@ -126,7 +127,7 @@ export default function NewOrder() {
     try {
       const order = await createOrder.mutateAsync({
         ...form,
-        quantity: parseInt(form.quantity as string) || 1,
+        quantity: Math.max(1, Math.floor(normalizeNumber(form.quantity))),
         amount: amt,
         advance_paid: adv,
       } as any);
@@ -284,7 +285,10 @@ export default function NewOrder() {
                       type="number"
                       min={1}
                       value={form.quantity}
-                      onChange={(e) => update("quantity", e.target.value)}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        update("quantity", v === "" ? "" : String(Math.max(1, Math.floor(normalizeNumber(v)))));
+                      }}
                       placeholder="e.g. 100"
                     />
                     {formErrors.quantity && <p className="text-xs text-destructive mt-1">{formErrors.quantity}</p>}

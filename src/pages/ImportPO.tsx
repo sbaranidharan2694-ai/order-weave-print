@@ -9,10 +9,11 @@ import { Badge } from "@/components/ui/badge";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { useProductTypes } from "@/hooks/useProductTypes";
 import { useCustomers } from "@/hooks/useCustomers";
-import { createJobForOrder } from "@/hooks/useProductionJobs";
+import { createJobForOrderItem } from "@/hooks/useProductionJobs";
 import { supabase } from "@/integrations/supabase/client";
 import { invokeEdgeFunction } from "@/utils/invokeEdgeFunction";
 import { numberToWords } from "@/lib/numberToWords";
+import { normalizeNumber } from "@/lib/numberUtils";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
@@ -84,7 +85,7 @@ type POHistoryItem = {
 
 /* ─── Helpers ─── */
 function formatINR(n: number): string {
-  return "₹" + n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return "₹" + Number(n).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 function formatDateDisplay(d: string | null): string {
@@ -114,9 +115,12 @@ function isIntrastate(gst: string): boolean {
 }
 
 function calcLineItem(li: LineItem): LineItem {
-  const base = li.quantity * li.unit_price;
-  const gstAmt = Math.round(base * li.gst_rate / 100 * 100) / 100;
-  return { ...li, gst_amount: gstAmt, line_total: Math.round((base + gstAmt) * 100) / 100 };
+  const qty = Math.max(1, normalizeNumber(li.quantity));
+  const price = Math.max(0, normalizeNumber(li.unit_price));
+  const rate = Math.max(0, Math.min(100, normalizeNumber(li.gst_rate)));
+  const base = qty * price;
+  const gstAmt = Math.round(base * rate / 100 * 100) / 100;
+  return { ...li, quantity: qty, unit_price: price, gst_rate: rate, gst_amount: gstAmt, line_total: Math.round((base + gstAmt) * 100) / 100 };
 }
 
 function emptyLine(sno: number): LineItem {
@@ -393,18 +397,18 @@ export default function ImportPO() {
       discount_amount: d.discount_amount || 0,
     });
     const items: LineItem[] = (d.line_items || []).map((li: any, idx: number) => {
-      const qty = Number(li.quantity ?? li.qty ?? 1) || 1;
-      const price = Number(li.unit_price ?? 0) || 0;
-      const gstRate = Number(li.gst_rate ?? 18) || 18;
+      const qty = Math.max(1, normalizeNumber(li.quantity ?? li.qty ?? 1));
+      const price = Math.max(0, normalizeNumber(li.unit_price ?? 0));
+      const gstRate = Math.max(0, Math.min(100, normalizeNumber(li.gst_rate ?? 18)));
       const base = qty * price;
       const gstAmt = Math.round(base * gstRate / 100 * 100) / 100;
       return {
         sno: idx + 1,
-        description: li.description || "",
+        description: String(li.description || "").trim(),
         quantity: qty,
-        unit: li.unit || li.uom || "Nos",
+        unit: String(li.unit || li.uom || "Nos").trim(),
         unit_price: price,
-        hsn_code: li.hsn_code || "",
+        hsn_code: String(li.hsn_code || "").trim(),
         gst_rate: gstRate,
         gst_amount: gstAmt,
         line_total: Math.round((base + gstAmt) * 100) / 100,
@@ -615,10 +619,15 @@ export default function ImportPO() {
   };
 
   /* ─── Line item operations ─── */
-  const updateLine = (idx: number, field: keyof LineItem, value: any) => {
+  const updateLine = (idx: number, field: keyof LineItem, value: unknown) => {
     setLineItems(items => items.map((li, i) => {
       if (i !== idx) return li;
-      const updated = { ...li, [field]: value };
+      let normalized = value;
+      if (field === "quantity") normalized = Math.max(1, Math.floor(normalizeNumber(value)));
+      else if (field === "unit_price") normalized = Math.max(0, normalizeNumber(value));
+      else if (field === "gst_rate") normalized = Math.max(0, Math.min(100, normalizeNumber(value)));
+      else if (field === "sno") normalized = Math.max(1, Math.floor(normalizeNumber(value)));
+      const updated = { ...li, [field]: normalized };
       return calcLineItem(updated);
     }));
   };
@@ -747,21 +756,22 @@ export default function ImportPO() {
           line_item_no: idx + 1,
           description: li.description,
           hsn_code: li.hsn_code || null,
-          qty: li.quantity,
+          qty: Math.max(1, Number(normalizeNumber(li.quantity))),
           uom: li.unit,
-          unit_price: li.unit_price,
-          amount: li.line_total,
-          gst_rate: li.gst_rate,
-          gst_amount: li.gst_amount,
-          line_total: li.line_total,
+          unit_price: Math.max(0, Number(normalizeNumber(li.unit_price))),
+          amount: Number(normalizeNumber(li.line_total)),
+          gst_rate: Number(normalizeNumber(li.gst_rate)),
+          gst_amount: Number(normalizeNumber(li.gst_amount)),
+          line_total: Number(normalizeNumber(li.line_total)),
           sort_order: idx,
           status: "pending",
         })) as any
       );
       if (liErr) throw new Error("Line items creation failed: " + liErr.message);
 
-      // 5. Create one order per PO (not per line item) — single order linked to this PO
-      const validLineCount = lineItems.filter(li => li.quantity > 0 && li.description?.trim()).length;
+      // 5. Create one order per PO with one order_item per line and one production_job per item
+      const validLines = lineItems.filter(li => (li.quantity || 0) > 0 && (li.description || "").trim());
+      const validLineCount = validLines.length;
       let orderId: string | null = null;
       let orderNo: string | null = null;
 
@@ -770,7 +780,7 @@ export default function ImportPO() {
         if (rpcErr || !generatedOrderNo) {
           toast.warning(`PO saved but order number generation failed: ${rpcErr?.message || "unknown"}`);
         } else {
-          const totalQty = lineItems.reduce((s, li) => s + (li.quantity || 0), 0);
+          const totalQty = validLines.reduce((s, li) => s + (li.quantity || 0), 0);
           const orderDeliveryDate = deliveryDate || format(new Date(), "yyyy-MM-dd");
 
           const { data: order, error: oErr } = await supabase.from("orders").insert({
@@ -789,7 +799,7 @@ export default function ImportPO() {
             size: "",
             color_mode: "full_color" as any,
             paper_type: "",
-            special_instructions: `PO #${header.po_number} — ${validLineCount} line item(s). See PO for details.`,
+            special_instructions: `PO #${header.po_number} — ${validLineCount} line item(s).`,
             order_date: safeDate(header.po_date) || format(new Date(), "yyyy-MM-dd"),
             delivery_date: orderDeliveryDate,
             amount: totals.grand,
@@ -798,7 +808,7 @@ export default function ImportPO() {
             po_number: header.po_number,
             po_contact_person: header.customer_contact_person,
             gstin: header.customer_gst,
-            hsn_code: lineItems[0]?.hsn_code ?? "",
+            hsn_code: validLines[0]?.hsn_code ?? "",
             base_amount: totals.subtotal,
             cgst_percent: isIntrastate(header.customer_gst) ? 9 : 0,
             cgst_amount: isIntrastate(header.customer_gst) ? totals.cgst : 0,
@@ -816,15 +826,29 @@ export default function ImportPO() {
             orderNo = order.order_no;
             await logAudit("Order created", "order", order.id);
             await supabase.from("order_tags").insert({ order_id: order.id, tag_name: "From PO" } as any);
-            await createJobForOrder({
-              id: order.id,
-              order_no: order.order_no,
-              product_type: "Purchase Order",
-              quantity: totalQty,
-              delivery_date: orderDeliveryDate,
-              assigned_to: null,
-              special_instructions: `PO #${header.po_number} — ${validLineCount} line item(s)`,
-            });
+
+            const orderItemRows = validLines.map((li, idx) => ({
+              order_id: order.id,
+              item_no: idx + 1,
+              description: (li.description || "").trim(),
+              quantity: Math.max(1, Number(normalizeNumber(li.quantity))),
+              unit_price: Math.max(0, Number(normalizeNumber(li.unit_price))),
+              amount: Number(normalizeNumber(li.line_total)),
+            }));
+            const { data: insertedItems, error: itemsErr } = await supabase
+              .from("order_items")
+              .insert(orderItemRows as any)
+              .select("id, description, quantity");
+            if (itemsErr) {
+              toast.warning(`Order created but line items failed: ${itemsErr.message}`);
+            } else if (insertedItems?.length) {
+              for (const item of insertedItems) {
+                await createJobForOrderItem(
+                  { id: item.id, description: item.description, quantity: item.quantity },
+                  { id: order.id, delivery_date: orderDeliveryDate, assigned_to: null }
+                );
+              }
+            }
           }
         }
       }
@@ -868,7 +892,17 @@ export default function ImportPO() {
     }
     const raw = po.parsed_raw as any;
     if (raw.header) setHeader(raw.header);
-    if (raw.lineItems) setLineItems(raw.lineItems);
+    if (raw.lineItems) {
+      const normalized = (raw.lineItems as LineItem[]).map((li, idx) => {
+        const qty = Math.max(1, normalizeNumber(li.quantity));
+        const price = Math.max(0, normalizeNumber(li.unit_price));
+        const rate = Math.max(0, Math.min(100, normalizeNumber(li.gst_rate)));
+        const base = qty * price;
+        const gstAmt = Math.round(base * rate / 100 * 100) / 100;
+        return { ...li, sno: idx + 1, quantity: qty, unit_price: price, gst_rate: rate, gst_amount: gstAmt, line_total: Math.round((base + gstAmt) * 100) / 100 };
+      });
+      setLineItems(normalized);
+    }
     if (raw.rawText) setRawText(raw.rawText);
     setParseState("parsed");
     setConfidence("medium");
@@ -886,12 +920,12 @@ export default function ImportPO() {
       if (error) { setParseState("parsed"); toast.error(error); return; }
       if (data?.data?.line_items?.length) {
         const items = data.data.line_items.map((li: any, idx: number) => {
-          const qty = Number(li.quantity || li.qty) || 1;
-          const price = Number(li.unit_price) || 0;
-          const gstRate = Number(li.gst_rate) || 18;
+          const qty = Math.max(1, normalizeNumber(li.quantity ?? li.qty ?? 1));
+          const price = Math.max(0, normalizeNumber(li.unit_price ?? 0));
+          const gstRate = Math.max(0, Math.min(100, normalizeNumber(li.gst_rate ?? 18)));
           const base = qty * price;
           const gstAmt = Math.round(base * gstRate / 100 * 100) / 100;
-          return { sno: idx + 1, description: li.description || "", quantity: qty, unit: li.unit || "Nos", unit_price: price, hsn_code: li.hsn_code || "", gst_rate: gstRate, gst_amount: gstAmt, line_total: Math.round((base + gstAmt) * 100) / 100 };
+          return { sno: idx + 1, description: String(li.description || "").trim(), quantity: qty, unit: String(li.unit || "Nos").trim(), unit_price: price, hsn_code: String(li.hsn_code || "").trim(), gst_rate: gstRate, gst_amount: gstAmt, line_total: Math.round((base + gstAmt) * 100) / 100 };
         });
         setLineItems(items);
         setParseTime(Math.round((Date.now() - startTime) / 1000));
@@ -1278,7 +1312,7 @@ export default function ImportPO() {
                             />
                           </td>
                           <td className="p-1">
-                            <Input type="number" min={1} value={li.quantity} onChange={e => updateLine(realIdx, "quantity", Number(e.target.value))}
+                            <Input type="number" min={1} value={normalizeNumber(li.quantity) || 1} onChange={e => updateLine(realIdx, "quantity", e.target.value)}
                               className="h-7 text-xs text-right" />
                           </td>
                           <td className="p-1">
@@ -1288,7 +1322,7 @@ export default function ImportPO() {
                             </Select>
                           </td>
                           <td className="p-1">
-                            <Input type="number" min={0} step={0.01} value={li.unit_price} onChange={e => updateLine(realIdx, "unit_price", Number(e.target.value))}
+                            <Input type="number" min={0} step={0.01} value={normalizeNumber(li.unit_price)} onChange={e => updateLine(realIdx, "unit_price", e.target.value)}
                               className="h-7 text-xs text-right" />
                           </td>
                           <td className="p-1">
@@ -1297,8 +1331,8 @@ export default function ImportPO() {
                               <SelectContent>{GST_RATES.map(r => <SelectItem key={r} value={String(r)}>{r}%</SelectItem>)}</SelectContent>
                             </Select>
                           </td>
-                          <td className="p-2 text-right text-muted-foreground bg-muted/30">{li.gst_amount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
-                          <td className="p-2 text-right font-medium bg-muted/30">{li.line_total.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
+                          <td className="p-2 text-right text-muted-foreground bg-muted/30">{Number(li.gst_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
+                          <td className="p-2 text-right font-medium bg-muted/30">{Number(li.line_total).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
                           <td className="p-1">
                             <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-destructive" onClick={() => removeLine(realIdx)}>
                               <Trash2 className="h-3 w-3" />

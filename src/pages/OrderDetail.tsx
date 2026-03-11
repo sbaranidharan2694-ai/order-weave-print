@@ -2,6 +2,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { useOrder, useStatusLogs, useUpdateOrderStatus, useCreateOrder } from "@/hooks/useOrders";
 import { useFulfillments, useAddFulfillment, useUpdateFulfillment, useDeleteFulfillment, type Fulfillment } from "@/hooks/useFulfillments";
 import { useProductionJobsByOrder, useUpdateJobStatus, useUpdateJob } from "@/hooks/useProductionJobs";
+import { useOrderItems } from "@/hooks/useOrderItems";
 import { useNotificationLogs, useLogNotification } from "@/hooks/useNotificationLogs";
 import { JOB_STATUSES, JOB_STATUS_LABELS } from "@/lib/productionJobConstants";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -53,6 +54,7 @@ export default function OrderDetail() {
   const { data: productionJobs = [] } = useProductionJobsByOrder(id);
   const updateJobStatus = useUpdateJobStatus();
   const updateJob = useUpdateJob();
+  const { data: orderItems = [] } = useOrderItems(id);
 
   const [showStatusModal, setShowStatusModal] = useState(false);
   const [newStatus, setNewStatus] = useState("");
@@ -66,6 +68,7 @@ export default function OrderDetail() {
   const [fulfillmentSortCol, setFulfillmentSortCol] = useState<"fulfillment_date" | "qty_delivered" | "invoice_number" | "invoice_date" | "dc_number">("fulfillment_date");
   const [fulfillmentSortDir, setFulfillmentSortDir] = useState<"asc" | "desc">("asc");
   const [fulfillmentForm, setFulfillmentForm] = useState({
+    order_item_id: "" as string,
     fulfillment_date: format(new Date(), "yyyy-MM-dd"),
     qty_delivered: "",
     invoice_number: "",
@@ -83,6 +86,15 @@ export default function OrderDetail() {
     dc_number: "",
     delivery_note: "",
   });
+
+  const itemDeliveredMap = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const f of fulfillments ?? []) {
+      const key = (f as Fulfillment).order_item_id ?? "__order__";
+      m.set(key, (m.get(key) || 0) + (f.qty_delivered || 0));
+    }
+    return m;
+  }, [fulfillments]);
 
   const sortedFulfillments = useMemo(() => {
     const list = [...(fulfillments ?? [])];
@@ -204,13 +216,31 @@ export default function OrderDetail() {
   };
 
   const today = format(new Date(), "yyyy-MM-dd");
+  const pendingByItem = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const item of orderItems) {
+      const del = itemDeliveredMap.get(item.id) || 0;
+      m.set(item.id, Math.max(0, item.quantity - del));
+    }
+    return m;
+  }, [orderItems, itemDeliveredMap]);
+
   const validateAddFulfillment = (): boolean => {
     const err: Record<string, string> = {};
     const qty = parseInt(fulfillmentForm.qty_delivered, 10);
     if (!fulfillmentForm.fulfillment_date) err.fulfillment_date = "Delivery date is required.";
     else if (fulfillmentForm.fulfillment_date > today) err.fulfillment_date = "Delivery date cannot be in the future.";
-    if (isNaN(qty) || qty <= 0) err.qty_delivered = "Quantity must be greater than 0.";
-    else if (qty > qtyPending) err.qty_delivered = `Quantity must not exceed pending (${qtyPending}).`;
+    if (orderItems.length > 0) {
+      if (!fulfillmentForm.order_item_id) err.order_item_id = "Select an item.";
+      else {
+        const pending = pendingByItem.get(fulfillmentForm.order_item_id) ?? 0;
+        if (isNaN(qty) || qty <= 0) err.qty_delivered = "Quantity must be greater than 0.";
+        else if (qty > pending) err.qty_delivered = `Quantity must not exceed pending (${pending}).`;
+      }
+    } else {
+      if (isNaN(qty) || qty <= 0) err.qty_delivered = "Quantity must be greater than 0.";
+      else if (qty > qtyPending) err.qty_delivered = `Quantity must not exceed pending (${qtyPending}).`;
+    }
     if (!fulfillmentForm.invoice_number?.trim()) err.invoice_number = "Invoice number is required.";
     setFulfillmentErrors(err);
     return Object.keys(err).length === 0;
@@ -230,6 +260,7 @@ export default function OrderDetail() {
     const qty = parseInt(fulfillmentForm.qty_delivered, 10);
     await addFulfillment.mutateAsync({
       order_id: order.id,
+      order_item_id: orderItems.length > 0 && fulfillmentForm.order_item_id ? fulfillmentForm.order_item_id : undefined,
       fulfillment_date: fulfillmentForm.fulfillment_date,
       qty_delivered: qty,
       invoice_number: fulfillmentForm.invoice_number.trim() || null,
@@ -237,15 +268,17 @@ export default function OrderDetail() {
       dc_number: fulfillmentForm.dc_number?.trim() || null,
       delivery_note: fulfillmentForm.delivery_note?.trim() || undefined,
     });
-    const newPending = qtyPending - qty;
-    if (newPending === 0) {
+    const newOrderPending = orderItems.length > 0
+      ? (pendingByItem.get(fulfillmentForm.order_item_id) ?? qtyPending) - qty
+      : qtyPending - qty;
+    if (newOrderPending <= 0 && qtyPending - qty <= 0) {
       toast("All qty fulfilled! Mark as Delivered?", {
         action: { label: "Yes, Deliver", onClick: () => updateStatus.mutate({ id: order.id, oldStatus: order.status, newStatus: "Delivered", notes: "All quantities fulfilled" }) },
       });
     }
     setShowFulfillmentForm(false);
     setFulfillmentErrors({});
-    setFulfillmentForm({ fulfillment_date: format(new Date(), "yyyy-MM-dd"), qty_delivered: "", invoice_number: "", invoice_date: "", dc_number: "", delivery_note: "" });
+    setFulfillmentForm({ order_item_id: "", fulfillment_date: format(new Date(), "yyyy-MM-dd"), qty_delivered: "", invoice_number: "", invoice_date: "", dc_number: "", delivery_note: "" });
   };
 
   const handleUpdateFulfillment = async (editForm: { fulfillment_date: string; qty_delivered: number; invoice_number: string; invoice_date: string; dc_number: string; delivery_note: string }) => {
@@ -476,7 +509,7 @@ export default function OrderDetail() {
             {gstin && <Row label="GSTIN" value={gstin} />}
             <Row label="Source"><SourceBadge source={order.source} /></Row>
             <Row label="Product" value={order.product_type} />
-            <Row label="Quantity" value={String(order.quantity)} />
+            <Row label="Quantity" value={String(Number(order.quantity) || 0)} />
             <Row label="Size" value={order.size || "—"} />
             <Row label="Color Mode" value={order.color_mode.replace("_", " ")} />
             <Row label="Paper" value={order.paper_type || "—"} />
@@ -588,29 +621,108 @@ export default function OrderDetail() {
         </CardContent>
       </Card>
 
-      {/* Fulfillment Tracker */}
+      {/* PO Line Items */}
+      <Card className="shadow-card rounded-2xl border border-[#E5E7EB]">
+        <CardHeader className="border-b border-[#F1F5F9]">
+          <CardTitle className="text-sm font-semibold text-[#1E293B]">PO Line Items</CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          {orderItems.length === 0 ? (
+            <div className="p-4 text-sm text-muted-foreground">
+              Single item: {order.product_type} — Ordered {Number(qtyOrdered).toLocaleString("en-IN")}, Delivered {Number(qtyFulfilled).toLocaleString("en-IN")}, Pending {Number(qtyPending).toLocaleString("en-IN")}
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b bg-muted/50">
+                    <th className="text-left p-3 font-medium text-muted-foreground">Item No</th>
+                    <th className="text-left p-3 font-medium text-muted-foreground">Description</th>
+                    <th className="text-right p-3 font-medium text-muted-foreground">Ordered Qty</th>
+                    <th className="text-right p-3 font-medium text-muted-foreground">Delivered Qty</th>
+                    <th className="text-right p-3 font-medium text-muted-foreground">Pending Qty</th>
+                    <th className="text-right p-3 font-medium text-muted-foreground">Unit Price</th>
+                    <th className="text-right p-3 font-medium text-muted-foreground">Amount</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {orderItems.map((item) => {
+                    const del = itemDeliveredMap.get(item.id) || 0;
+                    const pending = Math.max(0, item.quantity - del);
+                    return (
+                      <tr key={item.id} className="border-b table-row-hover">
+                        <td className="p-3 font-medium">{item.item_no}</td>
+                        <td className="p-3">{item.description}</td>
+                        <td className="p-3 text-right tabular-nums">{Number(item.quantity).toLocaleString("en-IN")}</td>
+                        <td className="p-3 text-right tabular-nums text-green-600">{Number(del).toLocaleString("en-IN")}</td>
+                        <td className="p-3 text-right tabular-nums">{Number(pending).toLocaleString("en-IN")}</td>
+                        <td className="p-3 text-right tabular-nums">₹{Number(item.unit_price || 0).toLocaleString("en-IN")}</td>
+                        <td className="p-3 text-right tabular-nums font-medium">₹{Number(item.amount || 0).toLocaleString("en-IN")}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Fulfillment by item + Record Delivery */}
       <Card className="shadow-card rounded-2xl border border-[#E5E7EB]">
         <CardHeader className="border-b border-[#F1F5F9]">
           <CardTitle className="text-sm font-semibold text-[#1E293B] flex items-center justify-between flex-wrap gap-2">
-            Fulfillment Tracker
-            <Button size="sm" variant="outline" onClick={() => { setFulfillmentErrors({}); setShowFulfillmentForm(true); }}>
+            Fulfillment
+            <Button size="sm" variant="outline" onClick={() => { setFulfillmentErrors({}); setFulfillmentForm(f => ({ ...f, order_item_id: orderItems[0]?.id ?? "" })); setShowFulfillmentForm(true); }}>
               <Plus className="h-3 w-3 mr-1" /> {fulfillments.length === 0 ? "Record First Delivery" : "Record Delivery"}
             </Button>
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
+          {orderItems.length > 0 && (
+            <div className="overflow-x-auto rounded-lg border">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b bg-muted/50">
+                    <th className="text-left p-3 font-medium text-muted-foreground">Item</th>
+                    <th className="text-right p-3 font-medium text-muted-foreground">Ordered</th>
+                    <th className="text-right p-3 font-medium text-muted-foreground">Delivered</th>
+                    <th className="text-right p-3 font-medium text-muted-foreground">Pending</th>
+                    <th className="text-right p-3 font-medium text-muted-foreground">Record Delivery</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {orderItems.map((item) => {
+                    const del = itemDeliveredMap.get(item.id) || 0;
+                    const pending = Math.max(0, item.quantity - del);
+                    return (
+                      <tr key={item.id} className="border-b table-row-hover">
+                        <td className="p-3">{item.description}</td>
+                        <td className="p-3 text-right tabular-nums">{Number(item.quantity).toLocaleString("en-IN")}</td>
+                        <td className="p-3 text-right tabular-nums text-green-600">{Number(del).toLocaleString("en-IN")}</td>
+                        <td className="p-3 text-right tabular-nums">{Number(pending).toLocaleString("en-IN")}</td>
+                        <td className="p-3 text-right">
+                          <Button size="sm" variant="outline" className="h-8 text-xs" disabled={pending <= 0} onClick={() => { setFulfillmentForm(f => ({ ...f, order_item_id: item.id })); setFulfillmentErrors({}); setShowFulfillmentForm(true); }}>Record</Button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
           {/* Delivery summary header */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <div className="p-3 bg-muted rounded-xl">
-              <p className="text-lg font-bold text-foreground">{qtyOrdered.toLocaleString("en-IN")}</p>
+              <p className="text-lg font-bold text-foreground">{Number(qtyOrdered).toLocaleString("en-IN")}</p>
               <p className="text-xs text-muted-foreground">Ordered</p>
             </div>
             <div className="p-3 bg-success/10 rounded-xl">
-              <p className="text-lg font-bold text-success">{qtyFulfilled.toLocaleString("en-IN")}</p>
+              <p className="text-lg font-bold text-success">{Number(qtyFulfilled).toLocaleString("en-IN")}</p>
               <p className="text-xs text-muted-foreground">Delivered</p>
             </div>
             <div className="p-3 bg-warning/10 rounded-xl">
-              <p className="text-lg font-bold text-warning">{Math.max(0, qtyPending).toLocaleString("en-IN")}</p>
+              <p className="text-lg font-bold text-warning">{Number(Math.max(0, qtyPending)).toLocaleString("en-IN")}</p>
               <p className="text-xs text-muted-foreground">Pending</p>
             </div>
             <div className="p-3 bg-muted/50 rounded-xl">
@@ -634,13 +746,13 @@ export default function OrderDetail() {
                     />
                   </div>
                   <p className="text-xs font-medium text-muted-foreground text-center">
-                    {qtyFulfilled.toLocaleString("en-IN")} / {qtyOrdered.toLocaleString("en-IN")} Delivered
+                    {Number(qtyFulfilled).toLocaleString("en-IN")} / {Number(qtyOrdered).toLocaleString("en-IN")} Delivered
                   </p>
                 </div>
               </TooltipTrigger>
               <TooltipContent>
-                <p>Fulfilled: {qtyFulfilled.toLocaleString("en-IN")}</p>
-                <p>Pending: {qtyPending.toLocaleString("en-IN")}</p>
+                <p>Fulfilled: {Number(qtyFulfilled).toLocaleString("en-IN")}</p>
+                <p>Pending: {Number(qtyPending).toLocaleString("en-IN")}</p>
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
@@ -657,6 +769,7 @@ export default function OrderDetail() {
               <table className="w-full text-sm min-w-[600px]">
                 <thead className="sticky top-0 z-10 bg-background border-b">
                   <tr>
+                    {orderItems.length > 0 && <th className="p-2 font-medium text-muted-foreground text-left">Item</th>}
                     {(["fulfillment_date", "qty_delivered", "invoice_number", "invoice_date", "dc_number"] as const).map((col) => (
                       <th
                         key={col}
@@ -680,10 +793,15 @@ export default function OrderDetail() {
                   </tr>
                 </thead>
                 <tbody>
-                  {sortedFulfillments.map((f, idx) => (
+                  {sortedFulfillments.map((f, idx) => {
+                    const itemDesc = orderItems.length > 0 && (f as Fulfillment).order_item_id
+                      ? orderItems.find(i => i.id === (f as Fulfillment).order_item_id)?.description ?? "—"
+                      : null;
+                    return (
                     <tr key={f.id} className={cn("border-b border-border/50 table-row-hover", idx % 2 === 1 && "bg-muted/30")}>
+                      {orderItems.length > 0 && <td className="p-2 text-muted-foreground max-w-[180px] truncate" title={itemDesc ?? undefined}>{itemDesc ?? "Order"}</td>}
                       <td className="p-2 whitespace-nowrap">{format(parseISO(f.fulfillment_date), "dd MMM yyyy")}</td>
-                      <td className="p-2 text-right font-medium tabular-nums">{f.qty_delivered.toLocaleString("en-IN")}</td>
+                      <td className="p-2 text-right font-medium tabular-nums">{Number(f.qty_delivered).toLocaleString("en-IN")}</td>
                       <td className="p-2">{f.invoice_number?.trim() ? <span className="font-medium">{f.invoice_number}</span> : "—"}</td>
                       <td className="p-2 whitespace-nowrap">{f.invoice_date ? format(parseISO(f.invoice_date), "dd MMM yyyy") : "—"}</td>
                       <td className="p-2">{f.dc_number?.trim() || "—"}</td>
@@ -707,7 +825,7 @@ export default function OrderDetail() {
                         </Button>
                       </td>
                     </tr>
-                  ))}
+                  ); })}
                 </tbody>
               </table>
             </div>
@@ -748,7 +866,7 @@ export default function OrderDetail() {
                       <tr key={job.id} className="border-b table-row-hover">
                         <td className="p-3 font-mono font-semibold text-[#1E293B]">{job.job_number}</td>
                         <td className="p-3">{job.description}</td>
-                        <td className="p-3 text-right">{job.quantity.toLocaleString("en-IN")}</td>
+                        <td className="p-3 text-right">{Number(job.quantity).toLocaleString("en-IN")}</td>
                         <td className="p-3">
                           <Select value={job.status} onValueChange={(v) => updateJobStatus.mutate({ id: job.id, status: v })}>
                             <SelectTrigger className="h-8 w-[130px] text-xs border-[#E5E7EB]"><SelectValue /></SelectTrigger>
@@ -795,15 +913,44 @@ export default function OrderDetail() {
         <DialogContent className="max-w-md">
           <DialogHeader><DialogTitle>Record Delivery</DialogTitle></DialogHeader>
           <div className="grid gap-3 py-2">
+            {orderItems.length > 0 && (
+              <div>
+                <Label>Item</Label>
+                <Select value={fulfillmentForm.order_item_id || ""} onValueChange={(v) => setFulfillmentForm(f => ({ ...f, order_item_id: v }))}>
+                  <SelectTrigger className={fulfillmentErrors.order_item_id ? "border-destructive" : ""}>
+                    <SelectValue placeholder="Select item" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {orderItems.map((item) => {
+                      const pending = pendingByItem.get(item.id) ?? 0;
+                      return (
+                        <SelectItem key={item.id} value={item.id} disabled={pending <= 0}>
+                          {item.description} (pending: {Number(pending).toLocaleString("en-IN")})
+                        </SelectItem>
+                      );
+                    })}
+                  </SelectContent>
+                </Select>
+                {fulfillmentErrors.order_item_id && <p className="text-xs text-destructive mt-0.5">{fulfillmentErrors.order_item_id}</p>}
+              </div>
+            )}
             <div>
               <Label htmlFor="fd-date">Delivery Date</Label>
               <Input id="fd-date" type="date" value={fulfillmentForm.fulfillment_date} onChange={(e) => setFulfillmentForm(f => ({ ...f, fulfillment_date: e.target.value }))} className={fulfillmentErrors.fulfillment_date ? "border-destructive" : ""} />
               {fulfillmentErrors.fulfillment_date && <p className="text-xs text-destructive mt-0.5">{fulfillmentErrors.fulfillment_date}</p>}
             </div>
             <div>
-              <Label htmlFor="fd-qty">Quantity</Label>
-              <Input id="fd-qty" type="number" min={1} value={fulfillmentForm.qty_delivered} onChange={(e) => setFulfillmentForm(f => ({ ...f, qty_delivered: e.target.value }))} placeholder={`Max ${qtyPending}`} className={fulfillmentErrors.qty_delivered ? "border-destructive" : ""} />
-              <p className="text-xs text-muted-foreground mt-0.5">Quantity must not exceed pending quantity.</p>
+              <Label htmlFor="fd-qty">Quantity Delivered</Label>
+              <Input
+                id="fd-qty"
+                type="number"
+                min={1}
+                value={fulfillmentForm.qty_delivered}
+                onChange={(e) => setFulfillmentForm(f => ({ ...f, qty_delivered: e.target.value }))}
+                placeholder={orderItems.length > 0 && fulfillmentForm.order_item_id ? `Max ${pendingByItem.get(fulfillmentForm.order_item_id) ?? 0}` : `Max ${qtyPending}`}
+                className={fulfillmentErrors.qty_delivered ? "border-destructive" : ""}
+              />
+              <p className="text-xs text-muted-foreground mt-0.5">Quantity must not exceed pending for selected item.</p>
               {fulfillmentErrors.qty_delivered && <p className="text-xs text-destructive mt-0.5">{fulfillmentErrors.qty_delivered}</p>}
             </div>
             <div>

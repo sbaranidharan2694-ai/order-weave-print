@@ -331,6 +331,7 @@ export type Database = {
           fulfillment_date: string
           id: string
           order_id: string
+          order_item_id: string | null
           qty_delivered: number
           invoice_number: string | null
           invoice_date: string | null
@@ -344,6 +345,7 @@ export type Database = {
           fulfillment_date?: string
           id?: string
           order_id: string
+          order_item_id?: string | null
           qty_delivered: number
           invoice_number?: string | null
           invoice_date?: string | null
@@ -357,6 +359,7 @@ export type Database = {
           fulfillment_date?: string
           id?: string
           order_id?: string
+          order_item_id?: string | null
           qty_delivered?: number
           invoice_number?: string | null
           invoice_date?: string | null
@@ -366,6 +369,54 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "order_fulfillments_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: false
+            referencedRelation: "orders"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "order_fulfillments_order_item_id_fkey"
+            columns: ["order_item_id"]
+            isOneToOne: false
+            referencedRelation: "order_items"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      order_items: {
+        Row: {
+          id: string
+          order_id: string
+          item_no: number
+          description: string
+          quantity: number
+          unit_price: number
+          amount: number
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          order_id: string
+          item_no?: number
+          description: string
+          quantity?: number
+          unit_price?: number
+          amount?: number
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          order_id?: string
+          item_no?: number
+          description?: string
+          quantity?: number
+          unit_price?: number
+          amount?: number
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "order_items_order_id_fkey"
             columns: ["order_id"]
             isOneToOne: false
             referencedRelation: "orders"

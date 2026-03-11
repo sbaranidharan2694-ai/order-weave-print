@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import { toast } from "sonner";
 import type { Tables, TablesInsert } from "@/integrations/supabase/types";
 import { logAudit } from "@/utils/auditLog";
-import { createJobForOrder } from "@/hooks/useProductionJobs";
+import { createJobForOrder, createJobForOrderItem } from "@/hooks/useProductionJobs";
 
 export type Order = Tables<"orders">;
 export type OrderInsert = TablesInsert<"orders">;
@@ -151,19 +151,39 @@ export function useCreateOrder() {
         notes: "Order created",
       });
 
-      // Create production job for this order (one job per order line)
-      await createJobForOrder({
-        id: data.id,
-        order_no: data.order_no,
-        product_type: data.product_type,
-        quantity: data.quantity,
-        delivery_date: data.delivery_date,
-        assigned_to: data.assigned_to,
-        special_instructions: data.special_instructions,
-        size: data.size,
-        paper_type: data.paper_type,
-        color_mode: data.color_mode,
-      });
+      const amt = Number(data.amount) || 0;
+      const qtyNum = Number(data.quantity) || 1;
+      const desc = [data.product_type, data.size, data.paper_type].filter(Boolean).join(" · ") || data.product_type;
+      const { data: orderItems, error: itemErr } = await supabase
+        .from("order_items")
+        .insert({
+          order_id: data.id,
+          item_no: 1,
+          description: desc,
+          quantity: qtyNum,
+          unit_price: qtyNum > 0 ? amt / qtyNum : 0,
+          amount: amt,
+        } as any)
+        .select("id, description, quantity");
+      if (!itemErr && orderItems?.[0]) {
+        await createJobForOrderItem(
+          orderItems[0],
+          { id: data.id, delivery_date: data.delivery_date, assigned_to: data.assigned_to }
+        );
+      } else {
+        await createJobForOrder({
+          id: data.id,
+          order_no: data.order_no,
+          product_type: data.product_type,
+          quantity: data.quantity,
+          delivery_date: data.delivery_date,
+          assigned_to: data.assigned_to,
+          special_instructions: data.special_instructions,
+          size: data.size,
+          paper_type: data.paper_type,
+          color_mode: data.color_mode,
+        });
+      }
 
       return data;
     },

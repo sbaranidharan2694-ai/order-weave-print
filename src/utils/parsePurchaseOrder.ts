@@ -167,10 +167,12 @@ const REGEX_GST = /\b\d{2}[A-Z]{5}\d{4}[A-Z][A-Z0-9]Z[A-Z0-9]\b/i;
 const REGEX_EMAIL = /[^\s@]+@[^\s@]+\.[^\s@]+/;
 const REGEX_PHONE = /(?:\+91[\s\-]?)?[6-9]\d{9}/;
 
+/** Parse numeric value; strip commas and leading zeros so values are stored as proper numbers. */
 function toNum(s: string | undefined | null): number {
   if (!s) return 0;
-  const n = parseFloat(String(s).replace(/,/g, "").replace(/[^0-9.\-]/g, ""));
-  return isNaN(n) ? 0 : n;
+  const cleaned = String(s).replace(/,/g, "").replace(/[^0-9.\-]/g, "").replace(/^0+(?=\d)/, "");
+  const n = parseFloat(cleaned);
+  return Number.isFinite(n) ? n : 0;
 }
 
 function parseDate(s: string | undefined | null): string | null {

@@ -10,6 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { COLOR_MODES, ORDER_SOURCES } from "@/lib/constants";
+import { normalizeNumber } from "@/lib/numberUtils";
 import { useState, useEffect } from "react";
 
 export default function EditOrder() {
@@ -32,7 +33,7 @@ export default function EditOrder() {
         email: order.email || "",
         source: order.source,
         product_type: order.product_type,
-        quantity: order.quantity ? String(order.quantity) : "",
+        quantity: order.quantity ? String(Number(order.quantity)) : "",
         size: order.size || "",
         color_mode: order.color_mode,
         paper_type: order.paper_type || "",
@@ -42,8 +43,8 @@ export default function EditOrder() {
         special_instructions: order.special_instructions || "",
         order_date: order.order_date,
         delivery_date: order.delivery_date,
-        amount: Number(order.amount) ? String(order.amount) : "",
-        advance_paid: Number(order.advance_paid) ? String(order.advance_paid) : "",
+        amount: Number(order.amount) ? String(normalizeNumber(order.amount)) : "",
+        advance_paid: Number(order.advance_paid) ? String(normalizeNumber(order.advance_paid)) : "",
         assigned_to: order.assigned_to || "",
       });
     }
@@ -97,7 +98,7 @@ export default function EditOrder() {
     await updateOrder.mutateAsync({
       id,
       ...form,
-      quantity: parseInt(form.quantity) || 1,
+      quantity: Math.max(1, Math.floor(normalizeNumber(form.quantity))),
       amount: amt,
       advance_paid: adv,
       gstin: form.gstin || null,
@@ -147,7 +148,16 @@ export default function EditOrder() {
               </div>
               <div>
                 <Label>Quantity <span className="text-[#DC2626]">*</span></Label>
-                <Input type="number" value={form.quantity} onChange={e => update("quantity", e.target.value)} placeholder="e.g. 100" />
+                <Input
+                type="number"
+                min={1}
+                value={form.quantity}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  update("quantity", v === "" ? "" : String(Math.max(1, Math.floor(normalizeNumber(v)))));
+                }}
+                placeholder="e.g. 100"
+              />
               </div>
               <div><Label>Size</Label><Input value={form.size} onChange={e => update("size", e.target.value)} /></div>
               <div><Label>Color Mode</Label>

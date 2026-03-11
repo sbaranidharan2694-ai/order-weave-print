@@ -69,7 +69,7 @@ export function useProductionJobsByOrder(orderId: string | undefined) {
     enabled: !!orderId,
   });
 }
-/** Create a production job (used after order create). Returns the created job or null. */
+/** Create a production job for an order (single item). Use createJobForOrderItem when order has order_items. */
 export async function createJobForOrder(
   order: {
     id: string;
@@ -101,6 +101,35 @@ export async function createJobForOrder(
     due_date: order.delivery_date,
   };
   const { data, error } = await supabase.from("production_jobs").insert(insert).select().single();
+  if (error) {
+    console.warn("production_jobs insert failed", error);
+    return null;
+  }
+  return data as ProductionJob;
+}
+
+/** Create one production job per order_item (for PO / multi-line orders). */
+export async function createJobForOrderItem(
+  orderItem: { id: string; description: string; quantity: number },
+  order: { id: string; delivery_date: string; assigned_to?: string | null }
+): Promise<ProductionJob | null> {
+  const { data: jobNumber, error: rpcErr } = await supabase.rpc("generate_job_number");
+  if (rpcErr || !jobNumber) {
+    console.warn("generate_job_number failed", rpcErr);
+    return null;
+  }
+  const insert: ProductionJobInsert & { order_item_id?: string | null } = {
+    order_id: order.id,
+    order_item_id: orderItem.id,
+    job_number: jobNumber,
+    description: orderItem.description,
+    quantity: orderItem.quantity,
+    status: "design_review",
+    assigned_to: order.assigned_to ?? null,
+    priority: "normal",
+    due_date: order.delivery_date,
+  };
+  const { data, error } = await supabase.from("production_jobs").insert(insert as any).select().single();
   if (error) {
     console.warn("production_jobs insert failed", error);
     return null;

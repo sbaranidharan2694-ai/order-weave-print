@@ -5,6 +5,7 @@ import { toast } from "sonner";
 export type Fulfillment = {
   id: string;
   order_id: string;
+  order_item_id: string | null;
   fulfillment_date: string;
   qty_delivered: number;
   delivery_note: string | null;
@@ -38,6 +39,7 @@ export function useAddFulfillment() {
   return useMutation({
     mutationFn: async (input: {
       order_id: string;
+      order_item_id?: string | null;
       fulfillment_date: string;
       qty_delivered: number;
       delivery_note?: string;
@@ -123,31 +125,41 @@ export function useDeleteFulfillment() {
 }
 
 async function recalcFulfillment(orderId: string) {
-  const { data: fulfillments } = await supabase
-    .from("order_fulfillments" as any)
-    .select("qty_delivered")
+  const { data: orderItems } = await supabase
+    .from("order_items")
+    .select("id, quantity")
     .eq("order_id", orderId);
 
-  const totalFulfilled = (fulfillments || []).reduce((s: number, f: any) => s + (Number(f.qty_delivered) || 0), 0);
+  const { data: fulfillments } = await supabase
+    .from("order_fulfillments" as any)
+    .select("qty_delivered, order_item_id")
+    .eq("order_id", orderId);
 
-  // Use `quantity` as the canonical ordered value — never qty_ordered
-  const { data: order } = await supabase
-    .from("orders")
-    .select("quantity")
-    .eq("id", orderId)
-    .single();
+  let qtyOrdered: number;
+  let totalFulfilled: number;
 
-  const qtyOrdered = Number(order?.quantity) || 0;
+  if (orderItems && orderItems.length > 0) {
+    qtyOrdered = orderItems.reduce((s, i) => s + (Number(i.quantity) || 0), 0);
+    const deliveredByItem = new Map<string, number>();
+    for (const f of fulfillments || []) {
+      const key = (f as any).order_item_id ?? "__legacy__";
+      deliveredByItem.set(key, (deliveredByItem.get(key) || 0) + (Number((f as any).qty_delivered) || 0));
+    }
+    totalFulfilled = 0;
+    for (const item of orderItems) {
+      const delivered = Math.min(deliveredByItem.get(item.id) || 0, Number(item.quantity) || 0);
+      totalFulfilled += delivered;
+    }
+    const legacy = deliveredByItem.get("__legacy__") || 0;
+    if (legacy > 0) totalFulfilled = Math.min(totalFulfilled + legacy, qtyOrdered);
+  } else {
+    totalFulfilled = (fulfillments || []).reduce((s: number, f: any) => s + (Number(f.qty_delivered) || 0), 0);
+    const { data: order } = await supabase.from("orders").select("quantity").eq("id", orderId).single();
+    qtyOrdered = Number(order?.quantity) || 0;
+  }
 
-  // Clamp: fulfilled can never exceed ordered, pending can never go negative
   const clampedFulfilled = Math.min(totalFulfilled, qtyOrdered);
   const qtyPending = Math.max(0, qtyOrdered - clampedFulfilled);
-
-  console.log(`[fulfillment] order=${orderId} ordered=${qtyOrdered} fulfilled=${clampedFulfilled} pending=${qtyPending}`);
-
-  if (totalFulfilled > qtyOrdered) {
-    console.warn(`[fulfillment] WARNING: total delivered (${totalFulfilled}) exceeds ordered (${qtyOrdered})`);
-  }
 
   await supabase
     .from("orders")
@@ -158,11 +170,7 @@ async function recalcFulfillment(orderId: string) {
     } as any)
     .eq("id", orderId);
 
-  // Auto-set Partially Fulfilled status
   if (clampedFulfilled > 0 && qtyPending > 0) {
-    await supabase
-      .from("orders")
-      .update({ status: "Partially Fulfilled" as any })
-      .eq("id", orderId);
+    await supabase.from("orders").update({ status: "Partially Fulfilled" as any }).eq("id", orderId);
   }
 }
