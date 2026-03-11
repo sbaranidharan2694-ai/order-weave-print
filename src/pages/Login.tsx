@@ -55,22 +55,25 @@ export default function Login() {
 
   if (auth?.isLoading || auth?.user) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-muted/30">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+      <div className="min-h-screen flex flex-col items-center justify-center bg-[#F8FAFC] gap-4">
+        <div className="h-10 w-10 animate-spin rounded-full border-2 border-[#F97316] border-t-transparent" />
+        <p className="text-sm text-muted-foreground">Loading…</p>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-muted/30 p-4">
-      <Card className="w-full max-w-md shadow-lg">
-        <CardHeader className="space-y-1 text-center">
-          <CardTitle className="text-xl font-bold tracking-tight">SUPER PRINTERS OMS</CardTitle>
+    <div className="min-h-screen flex items-center justify-center bg-[#F8FAFC] p-4">
+      <Card className="w-full max-w-md shadow-lg border border-[#E5E7EB] rounded-xl overflow-hidden">
+        <CardHeader className="space-y-1 text-center pb-2">
+          <CardTitle className="text-xl font-bold tracking-tight">
+            <span className="text-[#F97316]">SUPER</span> <span className="text-[#1E293B]">PRINTERS</span> <span className="text-sm font-medium text-muted-foreground">OMS</span>
+          </CardTitle>
           <p className="text-sm text-muted-foreground">
             Enter your email and password to access the Order Management System.
           </p>
         </CardHeader>
-        <CardContent>
+        <CardContent className="pt-4">
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
@@ -98,7 +101,7 @@ export default function Login() {
                 className="h-10"
               />
             </div>
-            <Button type="submit" className="w-full h-10 gap-2" disabled={loading}>
+            <Button type="submit" className="w-full h-10 gap-2 bg-[#F97316] hover:bg-[#ea580c] text-white" style={{ backgroundColor: "#F97316" }} disabled={loading}>
               {loading ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (

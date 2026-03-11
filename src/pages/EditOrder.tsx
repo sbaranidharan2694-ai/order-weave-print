@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
 import { COLOR_MODES, ORDER_SOURCES } from "@/lib/constants";
 import { useState, useEffect } from "react";
 
@@ -52,13 +53,23 @@ export default function EditOrder() {
   if (isError && !isLoading) {
     return (
       <div className="max-w-4xl mx-auto space-y-6 animate-fade-in text-center py-12">
-        <h2 className="text-xl font-semibold text-foreground">Order not found</h2>
+        <h2 className="text-xl font-semibold text-[#1E293B]">Order not found</h2>
         <p className="text-muted-foreground">The order you are looking for may have been deleted or the link is invalid.</p>
-        <Button variant="default" onClick={() => navigate("/orders")}>Back to Orders</Button>
+        <Button onClick={() => navigate("/orders")} className="bg-[#F97316] hover:bg-[#ea580c] text-white" style={{ backgroundColor: "#F97316" }}>Back to Orders</Button>
       </div>
     );
   }
-  if (isLoading || !form) return <div className="flex items-center justify-center h-64 text-muted-foreground">Loading...</div>;
+  if (isLoading || !form) {
+    return (
+      <div className="max-w-3xl mx-auto space-y-4 animate-fade-in">
+        <Skeleton className="h-8 w-56" />
+        <Skeleton className="h-10 w-full" />
+        {[1, 2, 3, 4, 5, 6].map((i) => (
+          <Skeleton key={i} className="h-24 w-full rounded-xl" />
+        ))}
+      </div>
+    );
+  }
 
   const amt = parseFloat(form.amount) || 0;
   const adv = parseFloat(form.advance_paid) || 0;
@@ -95,15 +106,15 @@ export default function EditOrder() {
   };
 
   return (
-    <div className="max-w-3xl mx-auto space-y-4 animate-fade-in">
+    <div className="max-w-3xl mx-auto space-y-4 animate-fade-in pb-24">
       <h1 className="text-2xl font-bold text-foreground">Edit Order: {order?.order_no}</h1>
       <form onSubmit={handleSubmit} className="space-y-6">
-        <Card className="shadow-card">
-          <CardHeader><CardTitle className="text-sm">Customer Information</CardTitle></CardHeader>
-          <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div><Label>Customer Name *</Label><Input value={form.customer_name} onChange={e => update("customer_name", e.target.value)} required /></div>
+        <Card className="shadow-card rounded-2xl border border-[#E5E7EB]">
+          <CardHeader className="border-b border-[#F1F5F9]"><CardTitle className="text-sm font-semibold text-[#1E293B]">Customer Information</CardTitle></CardHeader>
+          <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4 p-6">
+            <div><Label>Customer Name <span className="text-[#DC2626]">*</span></Label><Input value={form.customer_name} onChange={e => update("customer_name", e.target.value)} required /></div>
             <div>
-              <Label>Contact No. *</Label>
+              <Label>Contact No. <span className="text-[#DC2626]">*</span></Label>
               <Input value={form.contact_no} onChange={e => update("contact_no", e.target.value.replace(/\D/g, "").slice(0, 10))} required />
             </div>
             <div>
@@ -124,18 +135,18 @@ export default function EditOrder() {
             </div>
           </CardContent>
         </Card>
-        <Card className="shadow-card">
-          <CardHeader><CardTitle className="text-sm">Order Details</CardTitle></CardHeader>
-          <CardContent className="space-y-4">
+        <Card className="shadow-card rounded-2xl border border-[#E5E7EB]">
+          <CardHeader className="border-b border-[#F1F5F9]"><CardTitle className="text-sm font-semibold text-[#1E293B]">Order Details</CardTitle></CardHeader>
+          <CardContent className="space-y-4 p-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div><Label>Product Type</Label>
+              <div><Label>Product Type <span className="text-[#DC2626]">*</span></Label>
                 <Select value={form.product_type} onValueChange={handleProductTypeChange}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>{productTypes.map(p => <SelectItem key={p.id} value={p.name}>{p.name}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
               <div>
-                <Label>Quantity *</Label>
+                <Label>Quantity <span className="text-[#DC2626]">*</span></Label>
                 <Input type="number" value={form.quantity} onChange={e => update("quantity", e.target.value)} placeholder="e.g. 100" />
               </div>
               <div><Label>Size</Label><Input value={form.size} onChange={e => update("size", e.target.value)} /></div>
@@ -163,11 +174,11 @@ export default function EditOrder() {
             <div><Label>Special Instructions</Label><Textarea value={form.special_instructions} onChange={e => update("special_instructions", e.target.value)} /></div>
           </CardContent>
         </Card>
-        <Card className="shadow-card">
-          <CardHeader><CardTitle className="text-sm">Dates & Payment</CardTitle></CardHeader>
-          <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <Card className="shadow-card rounded-2xl border border-[#E5E7EB]">
+          <CardHeader className="border-b border-[#F1F5F9]"><CardTitle className="text-sm font-semibold text-[#1E293B]">Dates & Payment</CardTitle></CardHeader>
+          <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4 p-6">
             <div><Label>Order Date</Label><Input type="date" value={form.order_date} onChange={e => update("order_date", e.target.value)} /></div>
-            <div><Label>Delivery Date *</Label><Input type="date" value={form.delivery_date} onChange={e => update("delivery_date", e.target.value)} required /></div>
+            <div><Label>Delivery Date <span className="text-[#DC2626]">*</span></Label><Input type="date" value={form.delivery_date} onChange={e => update("delivery_date", e.target.value)} required /></div>
             <div>
               <Label>Amount (₹)</Label>
               <Input type="number" value={form.amount} onChange={e => update("amount", e.target.value)} placeholder="e.g. 1500" />
@@ -185,13 +196,17 @@ export default function EditOrder() {
             </div>
             <div>
               <Label>Balance Due (₹)</Label>
-              <Input value={hasAmount ? `₹${Math.max(0, balanceDue).toLocaleString("en-IN")}` : "—"} disabled className="bg-muted font-semibold" />
+              <div className={`py-2 px-3 rounded-md border bg-muted/30 font-bold text-base ${balanceDue < 0 ? "text-destructive" : ""}`} style={balanceDue >= 0 ? { color: "#1E293B" } : undefined}>
+                {hasAmount ? (balanceDue < 0 ? `Overpaid: ₹${Math.abs(balanceDue).toLocaleString("en-IN")}` : `₹${balanceDue.toLocaleString("en-IN")}`) : "—"}
+              </div>
             </div>
           </CardContent>
         </Card>
-        <div className="flex gap-3">
-          <Button type="submit" disabled={updateOrder.isPending}>{updateOrder.isPending ? "Saving..." : "Save Changes"}</Button>
-          <Button type="button" variant="outline" onClick={() => navigate(`/orders/${id}`)}>Cancel</Button>
+        <div className="sticky bottom-0 left-0 right-0 py-4 bg-background/95 border-t border-border flex gap-3 justify-end">
+          <Button type="button" variant="outline" className="border-[#D1D5DB]" onClick={() => navigate(`/orders/${id}`)}>Cancel</Button>
+          <Button type="submit" disabled={updateOrder.isPending} className="px-8 bg-[#F97316] hover:bg-[#ea580c] text-white" style={{ backgroundColor: "#F97316" }}>
+            {updateOrder.isPending ? "Saving..." : "Save Changes"}
+          </Button>
         </div>
       </form>
     </div>

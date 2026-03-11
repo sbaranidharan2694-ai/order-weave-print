@@ -42,18 +42,25 @@ export default function CustomerDetail() {
   if (customerError && !loadingCustomer) {
     return (
       <div className="max-w-4xl mx-auto space-y-6 animate-fade-in text-center py-12">
-        <h2 className="text-xl font-semibold text-foreground">Customer not found</h2>
+        <h2 className="text-xl font-semibold text-[#1E293B]">Customer not found</h2>
         <p className="text-muted-foreground">The customer you are looking for may have been deleted or the link is invalid.</p>
-        <Button variant="default" onClick={() => navigate("/customers")}>Back to Customers</Button>
+        <Button onClick={() => navigate("/customers")} className="bg-[#F97316] hover:bg-[#ea580c] text-white" style={{ backgroundColor: "#F97316" }}>Back to Customers</Button>
       </div>
     );
   }
   if (loadingCustomer || !customer) {
     return (
       <div className="max-w-4xl mx-auto space-y-6 animate-fade-in">
-        <Skeleton className="h-8 w-48" />
-        <Skeleton className="h-32 w-full" />
-        <Skeleton className="h-64 w-full" />
+        <div className="flex items-center gap-3">
+          <Skeleton className="h-10 w-10 rounded-md" />
+          <Skeleton className="h-8 w-48" />
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <Skeleton className="h-24 rounded-2xl" />
+          <Skeleton className="h-24 rounded-2xl" />
+          <Skeleton className="h-24 rounded-2xl" />
+        </div>
+        <Skeleton className="h-64 w-full rounded-2xl" />
       </div>
     );
   }
@@ -63,29 +70,29 @@ export default function CustomerDetail() {
   return (
     <div className="max-w-4xl mx-auto space-y-6 animate-fade-in">
       <div className="flex items-center gap-3">
-        <Button variant="ghost" size="icon" onClick={() => navigate("/customers")}><ArrowLeft className="h-4 w-4" /></Button>
+        <Button variant="ghost" size="icon" onClick={() => navigate("/customers")} title="Back to customers"><ArrowLeft className="h-4 w-4" /></Button>
         <h1 className="text-2xl font-bold text-foreground">{customer.name}</h1>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card className="shadow-card">
+        <Card className="shadow-card rounded-2xl border border-[#E5E7EB]">
           <CardContent className="p-4">
             <p className="text-sm text-muted-foreground">Contact</p>
-            <p className="text-lg font-semibold">{customer.contact_no}</p>
+            <a href={`tel:${String(customer.contact_no).replace(/\D/g, "").slice(-10)}`} className="text-lg font-semibold text-[#3B82F6] hover:underline">{customer.contact_no}</a>
           </CardContent>
         </Card>
-        <Card className="shadow-card">
+        <Card className="shadow-card rounded-2xl border border-[#E5E7EB]">
           <CardContent className="p-4 flex items-center gap-3">
-            <Package className="h-5 w-5 text-primary" />
+            <Package className="h-5 w-5 text-[#F97316]" />
             <div>
               <p className="text-sm text-muted-foreground">Total Orders</p>
               <p className="text-lg font-semibold">{orders.length}</p>
             </div>
           </CardContent>
         </Card>
-        <Card className="shadow-card">
+        <Card className="shadow-card rounded-2xl border border-[#E5E7EB]">
           <CardContent className="p-4 flex items-center gap-3">
-            <IndianRupee className="h-5 w-5 text-status-delivered" />
+            <IndianRupee className="h-5 w-5 text-[#16A34A]" />
             <div>
               <p className="text-sm text-muted-foreground">Total Spend</p>
               <p className="text-lg font-semibold">₹{totalSpend.toLocaleString("en-IN")}</p>
@@ -95,7 +102,7 @@ export default function CustomerDetail() {
       </div>
 
       {customer.email && (
-        <Card className="shadow-card">
+        <Card className="shadow-card rounded-2xl border border-[#E5E7EB]">
           <CardContent className="p-4">
             <p className="text-sm text-muted-foreground">Email: <span className="text-foreground">{customer.email}</span></p>
           </CardContent>
@@ -109,8 +116,8 @@ export default function CustomerDetail() {
         </div>
       )}
 
-      <Card className="shadow-card">
-        <CardHeader><CardTitle className="text-sm">Orders</CardTitle></CardHeader>
+      <Card className="shadow-card rounded-2xl border border-[#E5E7EB]">
+        <CardHeader className="border-b border-[#F1F5F9]"><CardTitle className="text-sm font-semibold text-[#1E293B]">Orders</CardTitle></CardHeader>
         <CardContent className="p-0">
           {loadingOrders ? (
             <div className="p-8"><Skeleton className="h-32 w-full" /></div>
@@ -132,7 +139,7 @@ export default function CustomerDetail() {
                   {orders.map((o) => (
                     <tr
                       key={o.id}
-                      className="border-b hover:bg-muted/30 cursor-pointer"
+                      className="border-b table-row-hover cursor-pointer"
                       onClick={() => navigate(`/orders/${o.id}`)}
                     >
                       <td className="p-3 font-mono text-xs font-semibold">{o.order_no}</td>

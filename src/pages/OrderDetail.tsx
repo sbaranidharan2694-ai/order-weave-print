@@ -102,9 +102,9 @@ export default function OrderDetail() {
   if (isError && !isLoading) {
     return (
       <div className="max-w-4xl mx-auto space-y-6 animate-fade-in text-center py-12">
-        <h2 className="text-xl font-semibold text-foreground">Order not found</h2>
+        <h2 className="text-xl font-semibold text-[#1E293B]">Order not found</h2>
         <p className="text-muted-foreground">The order you are looking for may have been deleted or the link is invalid.</p>
-        <Button variant="default" onClick={() => navigate("/orders")}>Back to Orders</Button>
+        <Button onClick={() => navigate("/orders")} className="bg-[#F97316] hover:bg-[#ea580c] text-white" style={{ backgroundColor: "#F97316" }}>Back to Orders</Button>
       </div>
     );
   }
@@ -386,13 +386,13 @@ export default function OrderDetail() {
   return (
     <div className="max-w-4xl mx-auto space-y-6 animate-fade-in">
       <div className="flex items-center gap-3">
-        <Button variant="ghost" size="icon" onClick={() => navigate(-1)}><ArrowLeft className="h-4 w-4" /></Button>
+        <Button variant="ghost" size="icon" onClick={() => navigate(-1)} title="Back"><ArrowLeft className="h-4 w-4" /></Button>
         <h1 className="text-2xl font-bold text-foreground">{order.order_no}</h1>
         <StatusBadge status={order.status} />
       </div>
 
       {/* Status Update Panel - Most Prominent */}
-      <Card className="shadow-card rounded-2xl border-secondary/30 bg-secondary/5">
+      <Card className="shadow-card rounded-2xl border border-[#E5E7EB] border-secondary/30 bg-secondary/5">
         <CardContent className="p-6">
           <div className="flex flex-col sm:flex-row items-center gap-4">
             <div className="text-center sm:text-left flex-1">
@@ -411,8 +411,8 @@ export default function OrderDetail() {
       </Card>
 
       {/* Status Timeline */}
-      <Card className="shadow-card rounded-2xl">
-        <CardHeader><CardTitle className="text-sm">Order Progress</CardTitle></CardHeader>
+      <Card className="shadow-card rounded-2xl border border-[#E5E7EB]">
+        <CardHeader className="border-b border-[#F1F5F9]"><CardTitle className="text-sm font-semibold text-[#1E293B]">Order Progress</CardTitle></CardHeader>
         <CardContent>
           <div className="flex overflow-x-auto gap-1 pb-2">
             {ORDER_STATUSES.filter(s => s !== "Cancelled").map((s, i) => {
@@ -449,12 +449,12 @@ export default function OrderDetail() {
 
       {/* Order Info */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <Card className="shadow-card rounded-2xl">
-          <CardHeader><CardTitle className="text-sm">Order Information</CardTitle></CardHeader>
+        <Card className="shadow-card rounded-2xl border border-[#E5E7EB]">
+          <CardHeader className="border-b border-[#F1F5F9]"><CardTitle className="text-sm font-semibold text-[#1E293B]">Order Information</CardTitle></CardHeader>
           <CardContent className="space-y-3 text-sm">
             <Row label="Customer" value={order.customer_name} />
             <Row label="Contact">
-              <a href={`tel:${order.contact_no}`} className="text-secondary hover:underline">{formatContact(order.contact_no)}</a>
+              <a href={`tel:${order.contact_no.replace(/\D/g, "").slice(-10)}`} className="text-[#3B82F6] hover:underline">{formatContact(order.contact_no)}</a>
             </Row>
             <Row label="WhatsApp">
               <a href={`https://wa.me/91${formatContact(order.contact_no)}`} target="_blank" className="text-source-whatsapp hover:underline flex items-center gap-1">
@@ -481,8 +481,8 @@ export default function OrderDetail() {
             <Row label="Assigned To" value={order.assigned_to || "—"} />
           </CardContent>
         </Card>
-        <Card className="shadow-card rounded-2xl">
-          <CardHeader><CardTitle className="text-sm">Payment & Dates</CardTitle></CardHeader>
+        <Card className="shadow-card rounded-2xl border border-[#E5E7EB]">
+          <CardHeader className="border-b border-[#F1F5F9]"><CardTitle className="text-sm font-semibold text-[#1E293B]">Payment & Dates</CardTitle></CardHeader>
           <CardContent className="space-y-3 text-sm">
             <Row label="Order Date" value={format(parseISO(order.order_date), "dd MMM yyyy")} />
             <Row label="Delivery Date" value={format(parseISO(order.delivery_date), "dd MMM yyyy")} />
@@ -515,9 +515,9 @@ export default function OrderDetail() {
       </div>
 
       {/* Notification Center */}
-      <Card className="shadow-card rounded-2xl">
-        <CardHeader>
-          <CardTitle className="text-sm flex items-center gap-2">
+      <Card className="shadow-card rounded-2xl border border-[#E5E7EB]">
+        <CardHeader className="border-b border-[#F1F5F9]">
+          <CardTitle className="text-sm font-semibold text-[#1E293B] flex items-center gap-2">
             <Bell className="h-4 w-4" /> Customer Communications
           </CardTitle>
         </CardHeader>
@@ -584,9 +584,9 @@ export default function OrderDetail() {
       </Card>
 
       {/* Fulfillment Tracker */}
-      <Card className="shadow-card rounded-2xl">
-        <CardHeader>
-          <CardTitle className="text-sm flex items-center justify-between flex-wrap gap-2">
+      <Card className="shadow-card rounded-2xl border border-[#E5E7EB]">
+        <CardHeader className="border-b border-[#F1F5F9]">
+          <CardTitle className="text-sm font-semibold text-[#1E293B] flex items-center justify-between flex-wrap gap-2">
             Fulfillment Tracker
             <Button size="sm" variant="outline" onClick={() => { setFulfillmentErrors({}); setShowFulfillmentForm(true); }}>
               <Plus className="h-3 w-3 mr-1" /> {fulfillments.length === 0 ? "Record First Delivery" : "Record Delivery"}
@@ -676,7 +676,7 @@ export default function OrderDetail() {
                 </thead>
                 <tbody>
                   {sortedFulfillments.map((f, idx) => (
-                    <tr key={f.id} className={cn("border-b border-border/50", idx % 2 === 1 && "bg-muted/30")}>
+                    <tr key={f.id} className={cn("border-b border-border/50 table-row-hover", idx % 2 === 1 && "bg-muted/30")}>
                       <td className="p-2 whitespace-nowrap">{format(parseISO(f.fulfillment_date), "dd MMM yyyy")}</td>
                       <td className="p-2 text-right font-medium tabular-nums">{f.qty_delivered.toLocaleString("en-IN")}</td>
                       <td className="p-2">{f.invoice_number?.trim() ? <span className="font-medium">{f.invoice_number}</span> : "—"}</td>
