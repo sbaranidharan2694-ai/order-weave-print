@@ -27,6 +27,7 @@ import { format } from "date-fns";
 import { extractTextFromPdf } from "@/utils/extractPdfText";
 import { extractTextFromExcel } from "@/utils/extractExcelText";
 import { parsePOText } from "@/utils/parsePOText";
+import { generateDocSignature, lookupPatterns, applyLearnedMappings, extractWithLearnedMappings, learnFromParse } from "@/utils/poPatternLearning";
 import * as XLSX from "xlsx";
 
 /* ─── Constants ─── */
@@ -487,6 +488,12 @@ export default function ImportPO() {
         setParseTime(Math.round((Date.now() - startTime) / 1000));
         toast.success(`PO parsed: ${d.line_items.length} line item(s) found`);
         console.log("[ImportPO] Populated form, line items:", d.line_items.length, "po_number:", d.po_number || "(missing)");
+        // Auto-learn from successful parse
+        try {
+          await learnFromParse(text, d, d.customer?.name || d.vendor_name || null);
+        } catch (e) {
+          console.warn("[ImportPO] Learning failed (non-critical):", e);
+        }
         return;
       }
 
