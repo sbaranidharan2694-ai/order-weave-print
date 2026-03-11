@@ -21,9 +21,11 @@ ALTER TABLE public.order_fulfillments
 CREATE INDEX IF NOT EXISTS idx_order_fulfillments_order_item_id ON public.order_fulfillments(order_item_id);
 
 -- Backfill: for existing orders without order_items, create one order_item from order
+-- quantity must satisfy CHECK (quantity > 0), so use GREATEST(1, ...)
 INSERT INTO public.order_items (order_id, item_no, description, quantity, unit_price, amount)
-SELECT o.id, 1, COALESCE(o.product_type, 'Order'), COALESCE(o.quantity, 1),
-       CASE WHEN COALESCE(o.quantity, 1) > 0 THEN COALESCE(o.amount, 0) / o.quantity ELSE 0 END,
+SELECT o.id, 1, COALESCE(o.product_type, 'Order'),
+       GREATEST(1, COALESCE(o.quantity, 1)),
+       CASE WHEN COALESCE(o.quantity, 1) > 0 THEN COALESCE(o.amount, 0) / GREATEST(1, o.quantity) ELSE 0 END,
        COALESCE(o.amount, 0)
 FROM public.orders o
 WHERE NOT EXISTS (SELECT 1 FROM public.order_items oi WHERE oi.order_id = o.id);
