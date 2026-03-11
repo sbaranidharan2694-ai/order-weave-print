@@ -182,7 +182,6 @@ export async function learnFromParse(
   const existingMap = new Map<string, { id: string; field_label: string; mapped_field: string; times_used: number; confidence_score: number }>(
     (existing || []).map((e: any) => [`${e.field_label}::${e.mapped_field}`, e])
   );
-  );
 
   const toInsert: typeof newPatterns = [];
   const toUpdate: Array<{ id: string; times_used: number; confidence_score: number }> = [];
