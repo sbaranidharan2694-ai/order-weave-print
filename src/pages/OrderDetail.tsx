@@ -115,6 +115,15 @@ export default function OrderDetail() {
     return list;
   }, [fulfillments, fulfillmentSortCol, fulfillmentSortDir]);
 
+  const pendingByItem = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const item of orderItems) {
+      const del = itemDeliveredMap.get(item.id) || 0;
+      m.set(item.id, Math.max(0, Number(item.quantity) - del));
+    }
+    return m;
+  }, [orderItems, itemDeliveredMap]);
+
   if (!id) return null;
   if (isError && !isLoading) {
     return (
@@ -216,14 +225,6 @@ export default function OrderDetail() {
   };
 
   const today = format(new Date(), "yyyy-MM-dd");
-  const pendingByItem = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const item of orderItems) {
-      const del = itemDeliveredMap.get(item.id) || 0;
-      m.set(item.id, Math.max(0, item.quantity - del));
-    }
-    return m;
-  }, [orderItems, itemDeliveredMap]);
 
   const validateAddFulfillment = (): boolean => {
     const err: Record<string, string> = {};
