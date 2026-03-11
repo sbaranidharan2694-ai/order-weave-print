@@ -41,6 +41,33 @@ export type Database = {
         }
         Relationships: []
       }
+      audit_logs: {
+        Row: {
+          id: string
+          user_id: string | null
+          action: string
+          entity: string
+          entity_id: string | null
+          timestamp: string
+        }
+        Insert: {
+          id?: string
+          user_id?: string | null
+          action: string
+          entity: string
+          entity_id?: string | null
+          timestamp?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string | null
+          action?: string
+          entity?: string
+          entity_id?: string | null
+          timestamp?: string
+        }
+        Relationships: []
+      }
       bank_custom_lookup: {
         Row: {
           id: string
@@ -65,6 +92,7 @@ export type Database = {
           account_number: string | null
           closing_balance: number
           created_at: string
+          created_by: string | null
           file_name: string
           id: string
           last_validated: string | null
@@ -85,6 +113,7 @@ export type Database = {
           account_number?: string | null
           closing_balance?: number
           created_at?: string
+          created_by?: string | null
           file_name?: string
           id: string
           last_validated?: string | null
@@ -105,6 +134,7 @@ export type Database = {
           account_number?: string | null
           closing_balance?: number
           created_at?: string
+          created_by?: string | null
           file_name?: string
           id?: string
           last_validated?: string | null
@@ -369,6 +399,7 @@ export type Database = {
           color_mode: Database["public"]["Enums"]["color_mode"]
           contact_no: string
           created_at: string
+          created_by: string | null
           customer_name: string
           delivery_date: string
           email: string | null
@@ -413,6 +444,7 @@ export type Database = {
           color_mode?: Database["public"]["Enums"]["color_mode"]
           contact_no: string
           created_at?: string
+          created_by?: string | null
           customer_name: string
           delivery_date: string
           email?: string | null
@@ -457,6 +489,7 @@ export type Database = {
           color_mode?: Database["public"]["Enums"]["color_mode"]
           contact_no?: string
           created_at?: string
+          created_by?: string | null
           customer_name?: string
           delivery_date?: string
           email?: string | null
@@ -685,6 +718,7 @@ export type Database = {
           contact_no: string | null
           contact_person: string | null
           created_at: string | null
+          created_by: string | null
           currency: string | null
           customer_email: string | null
           delivery_address: string | null
@@ -716,6 +750,7 @@ export type Database = {
           contact_no?: string | null
           contact_person?: string | null
           created_at?: string | null
+          created_by?: string | null
           currency?: string | null
           customer_email?: string | null
           delivery_address?: string | null
@@ -747,6 +782,7 @@ export type Database = {
           contact_no?: string | null
           contact_person?: string | null
           created_at?: string | null
+          created_by?: string | null
           currency?: string | null
           customer_email?: string | null
           delivery_address?: string | null

@@ -1014,7 +1014,7 @@ function OverviewTab({
 
       {statements.length === 0 ? (
         <Card className="rounded-2xl shadow-sm">
-          <CardContent className="p-12 text-center">
+          <CardContent className="p-12 text-center" role="status" aria-live="polite">
             <FileText className="h-12 w-12 text-muted-foreground mx-auto mb-4 opacity-50" />
             <h3 className="text-lg font-semibold text-foreground mb-1">No Statements Yet</h3>
             <p className="text-muted-foreground text-sm">Upload PDFs above or select an account tab to upload CSB bank statement PDFs</p>
@@ -1992,7 +1992,7 @@ function AccountTab({ account, onRefresh, customLookup, onUpdateLookup }) {
       {/* EMPTY STATE */}
       {hookTransactions.length === 0 && statements.length === 0 && queue.length === 0 && (
         <Card className="rounded-2xl shadow-sm">
-          <CardContent className="p-10 text-center">
+          <CardContent className="p-10 text-center" role="status" aria-live="polite">
             <FileText className="h-10 w-10 text-muted-foreground mx-auto mb-3 opacity-50" />
             <h3 className="text-base font-semibold text-foreground mb-1">No Statements for {account.label}</h3>
             <p className="text-muted-foreground text-xs mb-3">Upload a CSB bank statement PDF to get started</p>
@@ -2298,7 +2298,7 @@ function ReportsTab({ statements, allTransactions }) {
     return (
       <div className="mt-4">
         <Card className="rounded-2xl shadow-sm">
-          <CardContent className="p-10 text-center">
+          <CardContent className="p-10 text-center" role="status" aria-live="polite">
             <BarChart3 className="h-10 w-10 text-muted-foreground mx-auto mb-3 opacity-50" />
             <h3 className="text-base font-semibold text-foreground mb-1">No Data Yet</h3>
             <p className="text-muted-foreground text-xs">Upload statements in account tabs to see reports</p>

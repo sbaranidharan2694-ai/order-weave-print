@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/contexts/AuthContext";
+import { getAuthErrorMessage } from "@/utils/authErrors";
 import { toast } from "sonner";
 import { Loader2, LogIn } from "lucide-react";
 
@@ -39,14 +40,14 @@ export default function Login() {
     try {
       const { error } = await auth.signIn(email.trim(), password);
       if (error) {
-        toast.error(error.message || "Login failed");
+        toast.error(getAuthErrorMessage(error));
         setLoading(false);
         return;
       }
       toast.success("Signed in successfully");
       navigate(from, { replace: true });
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Login failed");
+      toast.error(getAuthErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -64,11 +65,7 @@ export default function Login() {
     <div className="min-h-screen flex items-center justify-center bg-muted/30 p-4">
       <Card className="w-full max-w-md shadow-lg">
         <CardHeader className="space-y-1 text-center">
-          <div className="flex justify-center gap-2 mb-2">
-            <span className="font-bold text-xl text-primary">SUPER</span>
-            <span className="font-bold text-xl text-secondary">PRINTERS</span>
-          </div>
-          <CardTitle className="text-lg">Sign in to OMS</CardTitle>
+          <CardTitle className="text-xl font-bold tracking-tight">SUPER PRINTERS OMS</CardTitle>
           <p className="text-sm text-muted-foreground">
             Enter your email and password to access the Order Management System.
           </p>
@@ -107,7 +104,7 @@ export default function Login() {
               ) : (
                 <LogIn className="h-4 w-4" />
               )}
-              Sign in
+              Login
             </Button>
           </form>
           <p className="text-xs text-muted-foreground text-center mt-4">

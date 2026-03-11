@@ -5,9 +5,22 @@
 
 import * as XLSX from "xlsx";
 
+const DEBUG = typeof import.meta !== "undefined" && import.meta.env?.DEV === true;
+
 export async function extractTextFromExcel(file: File): Promise<{ text: string }> {
-  const arrayBuffer = await file.arrayBuffer();
-  const workbook = XLSX.read(arrayBuffer, { type: "array" });
+  let arrayBuffer: ArrayBuffer;
+  try {
+    arrayBuffer = await file.arrayBuffer();
+  } catch (e) {
+    throw new Error("Failed to read Excel file. The file may be in use or corrupted.");
+  }
+
+  let workbook: XLSX.WorkBook;
+  try {
+    workbook = XLSX.read(arrayBuffer, { type: "array" });
+  } catch (e) {
+    throw new Error("Failed to parse Excel file. The file may be corrupted or not a valid .xlsx.");
+  }
 
   let text = "";
 
@@ -30,7 +43,7 @@ export async function extractTextFromExcel(file: File): Promise<{ text: string }
   });
 
   text = text.replace(/\n{3,}/g, "\n\n").trim();
-  if (typeof console !== "undefined" && console.log) {
+  if (DEBUG && typeof console !== "undefined" && console.log) {
     console.log("[extractExcelText] file:", file.name, "extracted length:", text.length, "first 200:", text.slice(0, 200));
   }
   return { text };

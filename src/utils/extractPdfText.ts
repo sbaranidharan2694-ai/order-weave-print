@@ -9,6 +9,8 @@ export interface ExtractResult {
   pageCount: number;
   isPasswordProtected: boolean;
   usedOcr?: boolean;
+  /** True when OCR was attempted but failed (caller can show "Partial extraction (no OCR)"). */
+  ocrFailed?: boolean;
 }
 
 export async function extractTextFromPdf(
@@ -54,6 +56,7 @@ export async function extractTextFromPdf(
 
   let finalText = pageTexts.join("\n\n").trim();
   let usedOcr = false;
+  let ocrFailed = false;
 
   if (shouldRunOcrFallback(finalText, pdf.numPages)) {
     try {
@@ -65,6 +68,7 @@ export async function extractTextFromPdf(
       }
     } catch (ocrErr) {
       console.warn("OCR fallback failed:", ocrErr);
+      ocrFailed = true;
     }
   }
 
@@ -73,6 +77,7 @@ export async function extractTextFromPdf(
     pageCount: pdf.numPages,
     isPasswordProtected: !!password,
     usedOcr,
+    ocrFailed,
   };
 }
 

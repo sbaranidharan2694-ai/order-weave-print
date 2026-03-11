@@ -15,6 +15,7 @@ import { numberToWords } from "@/lib/numberToWords";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
+import { useAuth } from "@/contexts/AuthContext";
 import {
   Upload, Loader2, FileText, Trash2, CheckCircle2, X, PlusCircle,
   AlertTriangle, ChevronDown, Eye, RotateCcw, FileWarning, RefreshCw
@@ -28,6 +29,7 @@ import { extractTextFromPdf } from "@/utils/extractPdfText";
 import { extractTextFromExcel } from "@/utils/extractExcelText";
 import { parsePOText } from "@/utils/parsePOText";
 import { generateDocSignature, lookupPatterns, applyLearnedMappings, extractWithLearnedMappings, learnFromParse } from "@/utils/poPatternLearning";
+import { logAudit } from "@/utils/auditLog";
 import * as XLSX from "xlsx";
 
 /* ─── Constants ─── */
@@ -67,6 +69,17 @@ type POHeader = {
 };
 
 type ParseState = "empty" | "loading" | "parsed" | "error";
+
+type POHistoryItem = {
+  id: string;
+  po_number?: string;
+  vendor_name?: string;
+  total_amount?: number;
+  status?: string;
+  created_at?: string;
+  linked_order_id?: string;
+  parsed_raw?: unknown;
+};
 
 /* ─── Helpers ─── */
 function formatINR(n: number): string {
@@ -128,9 +141,21 @@ function safeDate(d: string | null | undefined): string | null {
   return trimmed;
 }
 
+/** Always get a readable string from any thrown/Supabase error (avoids [object Object]). */
+function toErrorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (err != null && typeof err === "object") {
+    const o = err as { message?: string; details?: string };
+    if (typeof o.message === "string" && o.message) return o.message;
+    if (typeof o.details === "string" && o.details) return o.details;
+  }
+  return typeof err === "string" ? err : String(err);
+}
+
 /* ─── Component ─── */
 export default function ImportPO() {
   const navigate = useNavigate();
+  const auth = useAuth();
   const qc = useQueryClient();
   const { data: productTypes = [] } = useProductTypes();
   const { data: customers = [] } = useCustomers();
@@ -149,15 +174,39 @@ export default function ImportPO() {
   const [creating, setCreating] = useState(false);
   const [showDiscard, setShowDiscard] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [history, setHistory] = useState<any[]>([]);
+  const [history, setHistory] = useState<POHistoryItem[]>([]);
   const [showParseFailureModal, setShowParseFailureModal] = useState(false);
   const [parseFailureRawText, setParseFailureRawText] = useState("");
   const [parseFailureError, setParseFailureError] = useState("");
   const [parseRetriesExhausted, setParseRetriesExhausted] = useState(false);
+  const [parseOcrFailed, setParseOcrFailed] = useState(false);
+  const [parseStep, setParseStep] = useState<"idle" | "extracting" | "calling_ai">("idle");
   const parseAttemptsRef = useRef(0);
 
   const [header, setHeader] = useState<POHeader>(emptyHeader());
   const [lineItems, setLineItems] = useState<LineItem[]>([]);
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({});
+  const [sortCol, setSortCol] = useState<keyof LineItem | null>(null);
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+
+  const sortedLineItems = useMemo(() => {
+    if (!sortCol) return lineItems;
+    return [...lineItems].sort((a, b) => {
+      const av = a[sortCol];
+      const bv = b[sortCol];
+      if (typeof av === "number" && typeof bv === "number") return sortDir === "asc" ? av - bv : bv - av;
+      return sortDir === "asc" ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av));
+    });
+  }, [lineItems, sortCol, sortDir]);
+
+  const handleSort = useCallback((col: keyof LineItem) => {
+    if (sortCol === col) {
+      setSortDir(d => d === "asc" ? "desc" : "asc");
+    } else {
+      setSortCol(col);
+      setSortDir("asc");
+    }
+  }, [sortCol]);
 
   // Customer matching
   const customerMatch = useMemo(() => {
@@ -389,12 +438,14 @@ export default function ImportPO() {
     if (!file) return;
     setParseState("loading");
     setParseError("");
+    setParseStep("extracting");
     setShowParseFailureModal(false);
     const startTime = Date.now();
 
     try {
       const ext = file.name.toLowerCase().split(".").pop() || "";
       let text = "";
+      setParseOcrFailed(false);
 
       if (["png", "jpg", "jpeg"].includes(ext)) {
         text = "[IMAGE UPLOADED - OCR text not available. Please analyze visible content from the file name: " + file.name + "]";
@@ -404,18 +455,22 @@ export default function ImportPO() {
       } else {
         const result = await extractTextFromPdf(file);
         text = result.text;
+        setParseOcrFailed(!!result.ocrFailed);
       }
 
       if (!text || text.trim().length < 20) {
+        setParseStep("idle");
         setParseState("error");
         setParseError("Could not extract text from this file. It may be a scanned image. Try entering details manually.");
         return;
       }
 
       setRawText(text);
+      setParseStep("calling_ai");
       console.log("[ImportPO] Extracted text length:", text.length, "source:", ext);
 
       if (parseAttemptsRef.current >= 3) {
+        setParseStep("idle");
         setParseRetriesExhausted(true);
         toast.error("Max parse attempts reached. Use Rule Parser or enter manually.");
         setParseState("error");
@@ -440,10 +495,12 @@ export default function ImportPO() {
       if (aiError) {
         const fallback = tryRuleParserFallback(text);
         if (fallback) {
+          setParseStep("idle");
           applyParsedToForm(fallback, "rule-based parser (AI unavailable)");
           setParseTime(Math.round((Date.now() - startTime) / 1000));
           return;
         }
+        setParseStep("idle");
         setParseState("error");
         setParseError(aiError);
         return;
@@ -452,11 +509,13 @@ export default function ImportPO() {
       if (body?.success === false) {
         const fallback = tryRuleParserFallback(text);
         if (fallback) {
+          setParseStep("idle");
           applyParsedToForm(fallback, "rule-based parser");
           setParseTime(Math.round((Date.now() - startTime) / 1000));
           console.log("[ImportPO] Used rule parser fallback after AI failure, line items:", fallback.line_items?.length);
           return;
         }
+        setParseStep("idle");
         const rawPreview = (body.raw_ai_text || body.parse_error || "").slice(0, 1500);
         setParseFailureRawText(rawPreview);
         setParseFailureError(body.error || body.parse_error || "AI could not parse this PO format.");
@@ -471,10 +530,12 @@ export default function ImportPO() {
       if (!d || typeof d !== "object") {
         const fallback = tryRuleParserFallback(text);
         if (fallback) {
+          setParseStep("idle");
           applyParsedToForm(fallback, "rule-based parser");
           setParseTime(Math.round((Date.now() - startTime) / 1000));
           return;
         }
+        setParseStep("idle");
         setParseFailureRawText("");
         setParseFailureError("No parsed data returned.");
         setParseState("error");
@@ -484,6 +545,7 @@ export default function ImportPO() {
 
       const hasLineItems = Array.isArray(d.line_items) && d.line_items.length > 0;
       if (hasLineItems) {
+        setParseStep("idle");
         applyParsedToForm(d);
         setParseTime(Math.round((Date.now() - startTime) / 1000));
         toast.success(`PO parsed: ${d.line_items.length} line item(s) found`);
@@ -499,20 +561,25 @@ export default function ImportPO() {
 
       const fallback = tryRuleParserFallback(text);
       if (fallback && fallback.line_items && fallback.line_items.length > 0) {
+        setParseStep("idle");
         applyParsedToForm(fallback, "rule-based parser");
         setParseTime(Math.round((Date.now() - startTime) / 1000));
         return;
       }
+      setParseStep("idle");
       setParseFailureRawText(JSON.stringify(d).slice(0, 1000));
       setParseFailureError("No line items found. You can retry or use the rule-based parser.");
       setParseState("error");
       setParseRetriesExhausted(parseAttemptsRef.current >= 3);
       setShowParseFailureModal(true);
       console.warn("[ImportPO] No line items in AI or fallback");
-    } catch (err: any) {
+    } catch (err) {
+      setParseStep("idle");
+      const msg = toErrorMessage(err);
+      const isPasswordRequired = msg === "PASSWORD_REQUIRED";
       setParseState("error");
-      setParseError(err.message || "Parsing failed");
-      setParseFailureError(err.message || "Parsing failed");
+      setParseError(isPasswordRequired ? "This PDF is password-protected. Please remove the password or use an unprotected copy." : (msg || "Parsing failed"));
+      setParseFailureError(isPasswordRequired ? "This PDF is password-protected." : (msg || "Parsing failed"));
       setParseFailureRawText("");
       setShowParseFailureModal(true);
     }
@@ -532,7 +599,7 @@ export default function ImportPO() {
       setParseFailureError("");
     } catch (e) {
       console.error("[ImportPO] Rule parser error:", e);
-      toast.error("Rule parser failed. Please enter details manually.");
+      toast.error(toErrorMessage(e) || "Rule parser failed. Please enter details manually.");
     }
   };
 
@@ -560,20 +627,27 @@ export default function ImportPO() {
   };
 
   const addLine = () => {
+    setFormErrors(prev => ({ ...prev, line_items: "" }));
     setLineItems(items => [...items, emptyLine(items.length + 1)]);
   };
 
   /* ─── Create Order (with transaction safety) ─── */
   const handleCreate = async () => {
-    // --- Validations ---
-    if (!header.po_number) { toast.error("PO Number is required"); return; }
-    if (!header.customer_name.trim()) { toast.error("Customer name is required"); return; }
+    const errors: Record<string, string> = {};
+    if (!header.po_number) errors.po_number = "PO Number is required";
+    if (!header.customer_name.trim()) errors.customer_name = "Customer name is required";
     if (lineItems.length === 0 || lineItems.every(li => li.quantity <= 0)) {
-      toast.error("At least one line item with qty > 0 required"); return;
+      errors.line_items = "At least one line item with qty > 0 required";
     }
-    // Block duplicate
     if (dupPO) {
-      toast.error(`PO #${header.po_number} already imported on ${formatDateDisplay(dupPO.date)}. Duplicates not allowed.`);
+      errors.dup = `PO #${header.po_number} already imported on ${formatDateDisplay(dupPO.date)}. Duplicates not allowed.`;
+    }
+    setFormErrors(errors);
+    if (Object.keys(errors).length > 0) {
+      if (errors.po_number) toast.error(errors.po_number);
+      else if (errors.customer_name) toast.error(errors.customer_name);
+      else if (errors.line_items) toast.error(errors.line_items);
+      else if (errors.dup) toast.error(errors.dup);
       return;
     }
 
@@ -615,10 +689,12 @@ export default function ImportPO() {
         }
       }
 
-      // 2. Upload file
+      // 2. Upload file (path: userId/filename for storage RLS)
       let fileUrl: string | null = null;
       if (file) {
-        const path = `po-${header.po_number.replace(/[^a-zA-Z0-9-]/g, "_")}-${Date.now()}.${file.name.split(".").pop()}`;
+        const userId = auth?.user?.id ?? "anon";
+        const ext = file.name.split(".").pop() || "pdf";
+        const path = `${userId}/po-${header.po_number.replace(/[^a-zA-Z0-9-]/g, "_")}-${Date.now()}.${ext}`;
         const { error: upErr } = await supabase.storage.from("po-documents").upload(path, file, { upsert: false });
         if (!upErr) {
           const { data: urlD } = supabase.storage.from("po-documents").getPublicUrl(path);
@@ -628,10 +704,12 @@ export default function ImportPO() {
 
       // 3. Insert PO with status "Imported"
       const deliveryDate = safeDate(header.delivery_date);
+      const createdBy = auth?.user?.id ?? null;
       const { data: poRec, error: poErr } = await supabase.from("purchase_orders").insert({
         po_number: header.po_number,
         po_date: safeDate(header.po_date) || null,
         vendor_name: header.customer_name.trim(),
+        created_by: createdBy,
         contact_no: header.customer_phone || null,
         contact_person: header.customer_contact_person || null,
         customer_email: header.customer_email || null,
@@ -659,6 +737,7 @@ export default function ImportPO() {
 
       if (poErr) throw new Error("PO creation failed: " + poErr.message);
       poId = poRec.id;
+      await logAudit("PO imported", "purchase_order", poId);
 
       // 4. Insert line items
       const { error: liErr } = await supabase.from("purchase_order_line_items").insert(
@@ -695,6 +774,7 @@ export default function ImportPO() {
 
           const { data: order, error: oErr } = await supabase.from("orders").insert({
             order_no: generatedOrderNo,
+            created_by: createdBy,
             customer_name: header.customer_name.trim(),
             contact_no: header.customer_phone || "",
             email: header.customer_email || null,
@@ -733,6 +813,7 @@ export default function ImportPO() {
           } else if (order) {
             orderId = order.id;
             orderNo = order.order_no;
+            await logAudit("Order created", "order", order.id);
             await supabase.from("order_tags").insert({ order_id: order.id, tag_name: "From PO" } as any);
           }
         }
@@ -756,20 +837,21 @@ export default function ImportPO() {
         toast.info("PO saved but no orders created (no valid line items).");
       }
 
+      setFormErrors({});
       navigate("/orders");
-    } catch (err: any) {
+    } catch (err) {
       // Mark PO as Failed if it was created
       if (poId) {
         await supabase.from("purchase_orders").update({ status: "Failed" } as any).eq("id", poId);
       }
-      toast.error("Import failed: " + (err.message || String(err)));
+      toast.error("Import failed: " + toErrorMessage(err));
     } finally {
       setCreating(false);
     }
   };
 
   /* ─── Retry: re-process a previously imported/failed PO ─── */
-  const handleRetry = async (po: any) => {
+  const handleRetry = async (po: POHistoryItem) => {
     if (!po?.id || !po?.parsed_raw) {
       toast.error("No parsed data available for retry");
       return;
@@ -812,7 +894,7 @@ export default function ImportPO() {
   /* ─── Discard ─── */
   const handleDiscard = () => {
     setFile(null); setFilePreviewUrl(null); setParseState("empty"); setParseError("");
-    setLineItems([]); setRawText(""); setWarnings([]);
+    setLineItems([]); setRawText(""); setWarnings([]); setParseOcrFailed(false);
     setHeader(emptyHeader());
     setShowDiscard(false);
   };
@@ -845,15 +927,19 @@ export default function ImportPO() {
           <Card>
             <CardContent className="p-4">
               <div
+                role="button"
+                tabIndex={0}
+                aria-label="Upload purchase order document"
                 onDrop={handleDrop}
                 onDragOver={e => e.preventDefault()}
                 onClick={() => fileInputRef.current?.click()}
+                onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fileInputRef.current?.click(); } }}
                 className="border-2 border-dashed border-border rounded-lg p-8 text-center hover:border-primary/50 transition-colors cursor-pointer"
               >
                 <Upload className="h-10 w-10 mx-auto text-muted-foreground mb-3" />
                 <p className="font-medium text-foreground">Drop your Purchase Order here</p>
                 <p className="text-sm text-muted-foreground mt-1">PDF, PNG, JPG, or XLSX — Max 10MB</p>
-                <input ref={fileInputRef} type="file" accept={ACCEPTED_TYPES.join(",")} className="hidden"
+                <input ref={fileInputRef} type="file" accept={ACCEPTED_TYPES.join(",")} className="hidden" aria-label="Purchase order file"
                   onChange={e => { const f = e.target.files?.[0]; if (f) acceptFile(f); }} />
               </div>
 
@@ -914,6 +1000,9 @@ export default function ImportPO() {
               <div className="text-center text-muted-foreground">
                 <p className="font-medium">Click "Parse with AI" to extract data</p>
                 <p className="text-sm mt-1">AI will analyze and extract all PO fields</p>
+                {["png", "jpg", "jpeg"].includes(file.name.toLowerCase().split(".").pop() || "") && (
+                  <p className="text-xs mt-2 opacity-90">For images, AI will use the preview to extract text where possible.</p>
+                )}
               </div>
             </Card>
           )}
@@ -922,7 +1011,7 @@ export default function ImportPO() {
             <Card className="h-64 flex items-center justify-center">
               <div className="text-center">
                 <Loader2 className="h-10 w-10 mx-auto animate-spin text-primary mb-3" />
-                <p className="font-medium text-foreground">🤖 Parsing Purchase Order with AI...</p>
+                <p className="font-medium text-foreground">{parseStep === "extracting" ? "Extracting text…" : "Calling AI…"}</p>
                 <p className="text-sm text-muted-foreground mt-1">This usually takes 10-20 seconds</p>
               </div>
             </Card>
@@ -1007,6 +1096,11 @@ export default function ImportPO() {
                 )}
               </div>
 
+              {parseOcrFailed && (
+                <div className="p-3 bg-muted/50 border border-border rounded-md">
+                  <p className="text-xs text-muted-foreground">Partial extraction (OCR was attempted but failed). You may need to enter some details manually.</p>
+                </div>
+              )}
               {warnings.length > 0 && (
                 <div className="p-3 bg-warning/10 border border-warning/30 rounded-md">
                   <p className="text-xs font-medium text-warning mb-1">Warnings:</p>
@@ -1020,20 +1114,21 @@ export default function ImportPO() {
                 <CardContent className="px-4 pb-4">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
                     <div>
-                      <Label className="text-xs text-muted-foreground">PO Number *</Label>
-                      <Input value={header.po_number} onChange={e => setHeader(h => ({ ...h, po_number: e.target.value }))} className="h-8 text-sm mt-1" />
+                      <Label htmlFor="import-po-number" className="text-xs text-muted-foreground">PO Number *</Label>
+                      <Input id="import-po-number" value={header.po_number} onChange={e => { setHeader(h => ({ ...h, po_number: e.target.value })); setFormErrors(prev => ({ ...prev, po_number: "" })); }} className="h-8 text-sm mt-1" aria-invalid={!!formErrors.po_number} />
+                      {formErrors.po_number && <p className="text-xs text-destructive mt-1">{formErrors.po_number}</p>}
                     </div>
                     <div>
-                      <Label className="text-xs text-muted-foreground">PO Date</Label>
-                      <Input type="date" value={header.po_date} onChange={e => setHeader(h => ({ ...h, po_date: e.target.value }))} className="h-8 text-sm mt-1" />
+                      <Label htmlFor="import-po-date" className="text-xs text-muted-foreground">PO Date</Label>
+                      <Input id="import-po-date" type="date" value={header.po_date} onChange={e => setHeader(h => ({ ...h, po_date: e.target.value }))} className="h-8 text-sm mt-1" />
                     </div>
                     <div>
-                      <Label className="text-xs text-muted-foreground">Payment Terms</Label>
-                      <Input value={header.payment_terms} onChange={e => setHeader(h => ({ ...h, payment_terms: e.target.value }))} className="h-8 text-sm mt-1" />
+                      <Label htmlFor="import-po-payment-terms" className="text-xs text-muted-foreground">Payment Terms</Label>
+                      <Input id="import-po-payment-terms" value={header.payment_terms} onChange={e => setHeader(h => ({ ...h, payment_terms: e.target.value }))} className="h-8 text-sm mt-1" />
                     </div>
                     <div>
-                      <Label className="text-xs text-muted-foreground">Delivery Date</Label>
-                      <Input type="date" value={header.delivery_date} onChange={e => setHeader(h => ({ ...h, delivery_date: e.target.value }))} className="h-8 text-sm mt-1" />
+                      <Label htmlFor="import-po-delivery-date" className="text-xs text-muted-foreground">Delivery Date</Label>
+                      <Input id="import-po-delivery-date" type="date" value={header.delivery_date} onChange={e => setHeader(h => ({ ...h, delivery_date: e.target.value }))} className="h-8 text-sm mt-1" />
                       {header.delivery_date && isRushOrder(header.delivery_date) && (
                         <Badge className="mt-1 bg-warning/20 text-warning text-xs">⚡ Rush Order</Badge>
                       )}
@@ -1071,170 +1166,200 @@ export default function ImportPO() {
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
                     <div className="sm:col-span-2">
-                      <Label className="text-xs text-muted-foreground">Company/Customer Name *</Label>
-                      <Input value={header.customer_name} onChange={e => setHeader(h => ({ ...h, customer_name: e.target.value }))} className="h-8 text-sm mt-1" />
+                      <Label htmlFor="import-customer-name" className="text-xs text-muted-foreground">Company/Customer Name *</Label>
+                      <Input id="import-customer-name" value={header.customer_name} onChange={e => { setHeader(h => ({ ...h, customer_name: e.target.value })); setFormErrors(prev => ({ ...prev, customer_name: "" })); }} className="h-8 text-sm mt-1" aria-invalid={!!formErrors.customer_name} />
+                      {formErrors.customer_name && <p className="text-xs text-destructive mt-1">{formErrors.customer_name}</p>}
                     </div>
                     <div className="sm:col-span-2">
-                      <Label className="text-xs text-muted-foreground">Address</Label>
-                      <Textarea value={header.customer_address} onChange={e => setHeader(h => ({ ...h, customer_address: e.target.value }))} className="text-sm mt-1 min-h-[60px]" />
+                      <Label htmlFor="import-customer-address" className="text-xs text-muted-foreground">Address</Label>
+                      <Textarea id="import-customer-address" value={header.customer_address} onChange={e => setHeader(h => ({ ...h, customer_address: e.target.value }))} className="text-sm mt-1 min-h-[60px]" />
                     </div>
                     <div>
-                      <Label className="text-xs text-muted-foreground">GST Number</Label>
+                      <Label htmlFor="import-customer-gst" className="text-xs text-muted-foreground">GST Number</Label>
                       <div className="relative">
-                        <Input value={header.customer_gst} onChange={e => setHeader(h => ({ ...h, customer_gst: e.target.value.toUpperCase() }))} className="h-8 text-sm mt-1 font-mono pr-8" maxLength={15} />
+                        <Input id="import-customer-gst" value={header.customer_gst} onChange={e => setHeader(h => ({ ...h, customer_gst: e.target.value.toUpperCase() }))} className="h-8 text-sm mt-1 font-mono pr-8" maxLength={15} aria-invalid={gstValid === false} aria-describedby={gstValid === false ? "import-gst-error" : undefined} />
                         {gstValid !== null && (
-                          <span className={`absolute right-2 top-1/2 -translate-y-1/2 mt-0.5 text-sm ${gstValid ? "text-success" : "text-destructive"}`}>
-                            {gstValid ? "✓" : "✗"}
-                          </span>
+                          <span id="import-gst-error" className={`absolute right-2 top-1/2 -translate-y-1/2 mt-0.5 text-sm ${gstValid ? "text-success" : "text-destructive"}`} aria-label={gstValid ? "Valid GSTIN" : "Invalid GSTIN format"}>{gstValid ? "✓" : "✗"}</span>
                         )}
                       </div>
                     </div>
                     <div>
-                      <Label className="text-xs text-muted-foreground">Contact Person</Label>
-                      <Input value={header.customer_contact_person} onChange={e => setHeader(h => ({ ...h, customer_contact_person: e.target.value }))} className="h-8 text-sm mt-1" />
+                      <Label htmlFor="import-customer-contact-person" className="text-xs text-muted-foreground">Contact Person</Label>
+                      <Input id="import-customer-contact-person" value={header.customer_contact_person} onChange={e => setHeader(h => ({ ...h, customer_contact_person: e.target.value }))} className="h-8 text-sm mt-1" />
                     </div>
                     <div>
-                      <Label className="text-xs text-muted-foreground">Phone</Label>
-                      <Input value={header.customer_phone} onChange={e => setHeader(h => ({ ...h, customer_phone: e.target.value.replace(/\D/g, "").slice(0, 10) }))} className="h-8 text-sm mt-1" />
+                      <Label htmlFor="import-customer-phone" className="text-xs text-muted-foreground">Phone</Label>
+                      <Input id="import-customer-phone" value={header.customer_phone} onChange={e => setHeader(h => ({ ...h, customer_phone: e.target.value.replace(/\D/g, "").slice(0, 10) }))} className="h-8 text-sm mt-1" />
                     </div>
                     <div>
-                      <Label className="text-xs text-muted-foreground">Email</Label>
-                      <Input type="email" value={header.customer_email} onChange={e => setHeader(h => ({ ...h, customer_email: e.target.value }))} className="h-8 text-sm mt-1" />
+                      <Label htmlFor="import-customer-email" className="text-xs text-muted-foreground">Email</Label>
+                      <Input id="import-customer-email" type="email" value={header.customer_email} onChange={e => setHeader(h => ({ ...h, customer_email: e.target.value }))} className="h-8 text-sm mt-1" />
                     </div>
                   </div>
                 </CardContent>
               </Card>
-
-              {/* Line Items */}
-              <Card>
-                <CardHeader className="py-3 px-4">
-                  <CardTitle className="text-sm flex items-center justify-between">
-                    <span>📦 Line Items ({lineItems.length})</span>
-                    <Button variant="outline" size="sm" onClick={addLine} className="h-7 text-xs">
-                      <PlusCircle className="h-3.5 w-3.5 mr-1" />Add Row
-                    </Button>
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="p-0">
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-xs">
-                      <thead>
-                        <tr className="border-b bg-muted/50">
-                          <th className="text-left p-2 font-medium text-muted-foreground w-8">#</th>
-                          <th className="text-left p-2 font-medium text-muted-foreground min-w-[160px]">Description</th>
-                          <th className="text-right p-2 font-medium text-muted-foreground w-14">Qty</th>
-                          <th className="text-left p-2 font-medium text-muted-foreground w-16">Unit</th>
-                          <th className="text-right p-2 font-medium text-muted-foreground w-20">Unit Price ₹</th>
-                          <th className="text-center p-2 font-medium text-muted-foreground w-16">GST %</th>
-                          <th className="text-right p-2 font-medium text-muted-foreground w-20">GST Amt ₹</th>
-                          <th className="text-right p-2 font-medium text-muted-foreground w-24">Line Total ₹</th>
-                          <th className="w-8"></th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {lineItems.map((li, idx) => (
-                          <tr key={idx} className={`border-b ${idx % 2 === 0 ? "" : "bg-muted/20"}`}>
-                            <td className="p-2 text-muted-foreground">{li.sno}</td>
-                            <td className="p-1">
-                              <Input value={li.description} onChange={e => updateLine(idx, "description", e.target.value)}
-                                className="h-7 text-xs" placeholder="Item description" />
-                            </td>
-                            <td className="p-1">
-                              <Input type="number" min={1} value={li.quantity} onChange={e => updateLine(idx, "quantity", Number(e.target.value))}
-                                className="h-7 text-xs text-right" />
-                            </td>
-                            <td className="p-1">
-                              <Select value={li.unit} onValueChange={v => updateLine(idx, "unit", v)}>
-                                <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
-                                <SelectContent>{UNITS.map(u => <SelectItem key={u} value={u}>{u}</SelectItem>)}</SelectContent>
-                              </Select>
-                            </td>
-                            <td className="p-1">
-                              <Input type="number" min={0} step={0.01} value={li.unit_price} onChange={e => updateLine(idx, "unit_price", Number(e.target.value))}
-                                className="h-7 text-xs text-right" />
-                            </td>
-                            <td className="p-1">
-                              <Select value={String(li.gst_rate)} onValueChange={v => updateLine(idx, "gst_rate", Number(v))}>
-                                <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
-                                <SelectContent>{GST_RATES.map(r => <SelectItem key={r} value={String(r)}>{r}%</SelectItem>)}</SelectContent>
-                              </Select>
-                            </td>
-                            <td className="p-2 text-right text-muted-foreground bg-muted/30">{li.gst_amount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
-                            <td className="p-2 text-right font-medium bg-muted/30">{li.line_total.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
-                            <td className="p-1">
-                              <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-destructive" onClick={() => removeLine(idx)}>
-                                <Trash2 className="h-3 w-3" />
-                              </Button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-
-                  {/* Totals */}
-                  <div className="p-4 border-t space-y-1.5 text-sm">
-                    <div className="flex justify-between"><span className="text-muted-foreground">Subtotal</span><span>{formatINR(totals.subtotal)}</span></div>
-                    {isIntrastate(header.customer_gst) ? (
-                      <>
-                        <div className="flex justify-between"><span className="text-muted-foreground">CGST</span><span>{formatINR(totals.cgst)}</span></div>
-                        <div className="flex justify-between"><span className="text-muted-foreground">SGST</span><span>{formatINR(totals.sgst)}</span></div>
-                      </>
-                    ) : (
-                      <div className="flex justify-between"><span className="text-muted-foreground">IGST</span><span>{formatINR(totals.igst)}</span></div>
-                    )}
-                    <div className="flex justify-between items-center">
-                      <span className="text-muted-foreground">Discount</span>
-                      <Input type="number" min={0} value={header.discount_amount}
-                        onChange={e => setHeader(h => ({ ...h, discount_amount: Number(e.target.value) }))}
-                        className="h-7 w-28 text-xs text-right" />
-                    </div>
-                    <div className="flex justify-between font-bold text-base pt-2 border-t">
-                      <span>Grand Total</span><span className="text-primary">{formatINR(totals.grand)}</span>
-                    </div>
-                    {amountInWords && <p className="text-xs text-muted-foreground italic">{amountInWords}</p>}
-                  </div>
-                </CardContent>
-              </Card>
-
-              {/* Additional Info */}
-              <Card>
-                <CardHeader className="py-3 px-4"><CardTitle className="text-sm">📝 Additional Info</CardTitle></CardHeader>
-                <CardContent className="px-4 pb-4 space-y-3">
-                  <div>
-                    <Label className="text-xs text-muted-foreground">Shipping Address</Label>
-                    <Textarea value={header.shipping_address} onChange={e => setHeader(h => ({ ...h, shipping_address: e.target.value }))} className="text-sm mt-1 min-h-[50px]" />
-                  </div>
-                  <div>
-                    <Label className="text-xs text-muted-foreground">Notes</Label>
-                    <Textarea value={header.notes} onChange={e => setHeader(h => ({ ...h, notes: e.target.value }))} className="text-sm mt-1 min-h-[50px]" />
-                  </div>
-                </CardContent>
-              </Card>
-
-              {/* Action Buttons */}
-              <div className="flex flex-wrap gap-2 sticky bottom-0 bg-background py-3 border-t">
-                <Button onClick={handleCreate} disabled={creating || !header.po_number || !header.customer_name.trim() || !!dupPO} className="flex-1 sm:flex-none">
-                  {creating ? <><Loader2 className="h-4 w-4 mr-1 animate-spin" />Creating...</> : "✅ Create Order from PO"}
-                </Button>
-                <Button variant="outline" onClick={handleReparse} disabled={!rawText}>
-                  <RotateCcw className="h-4 w-4 mr-1" />Re-Parse
-                </Button>
-                <Button variant="outline" className="text-destructive border-destructive/30" onClick={() => setShowDiscard(true)}>
-                  <X className="h-4 w-4 mr-1" />Discard
-                </Button>
-              </div>
             </>
           )}
         </div>
       </div>
+
+      {/* Full-width Line Items section (below the two-column grid) */}
+      {parseState === "parsed" && (
+        <div className="mt-4 space-y-4 relative">
+          {creating && (
+            <div className="absolute inset-0 bg-background/70 z-20 flex items-center justify-center rounded-lg" aria-busy="true">
+              <div className="text-center">
+                <Loader2 className="h-10 w-10 mx-auto animate-spin text-primary mb-2" />
+                <p className="text-sm font-medium">Creating order…</p>
+              </div>
+            </div>
+          )}
+          <Card>
+            <CardHeader className="py-3 px-4">
+              <CardTitle className="text-sm flex items-center justify-between">
+                <span>📦 Line Items ({lineItems.length})</span>
+                <Button variant="outline" size="sm" onClick={addLine} className="h-7 text-xs">
+                  <PlusCircle className="h-3.5 w-3.5 mr-1" />Add Row
+                </Button>
+              </CardTitle>
+              {formErrors.line_items && <p className="text-xs text-destructive mt-1">{formErrors.line_items}</p>}
+            </CardHeader>
+            <CardContent className="p-0">
+              <div className="overflow-x-auto w-full">
+                <table className="w-full text-xs border-collapse">
+                  <thead className="sticky top-0 z-10 bg-muted">
+                    <tr className="border-b">
+                      <th scope="col" aria-sort={sortCol === "sno" ? (sortDir === "asc" ? "ascending" : "descending") : "none"} className="text-left p-2 font-medium text-muted-foreground w-10 cursor-pointer select-none" onClick={() => handleSort("sno")} onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handleSort("sno"); } }} tabIndex={0}>
+                        #{sortCol === "sno" ? (sortDir === "asc" ? " ▲" : " ▼") : ""}
+                      </th>
+                      <th scope="col" aria-sort={sortCol === "description" ? (sortDir === "asc" ? "ascending" : "descending") : "none"} className="text-left p-2 font-medium text-muted-foreground min-w-[240px] cursor-pointer select-none" onClick={() => handleSort("description")} onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handleSort("description"); } }} tabIndex={0}>
+                        Description{sortCol === "description" ? (sortDir === "asc" ? " ▲" : " ▼") : ""}
+                      </th>
+                      <th scope="col" aria-sort={sortCol === "quantity" ? (sortDir === "asc" ? "ascending" : "descending") : "none"} className="text-right p-2 font-medium text-muted-foreground w-16 cursor-pointer select-none" onClick={() => handleSort("quantity")} onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handleSort("quantity"); } }} tabIndex={0}>
+                        Qty{sortCol === "quantity" ? (sortDir === "asc" ? " ▲" : " ▼") : ""}
+                      </th>
+                      <th scope="col" className="text-left p-2 font-medium text-muted-foreground w-20">Unit</th>
+                      <th scope="col" aria-sort={sortCol === "unit_price" ? (sortDir === "asc" ? "ascending" : "descending") : "none"} className="text-right p-2 font-medium text-muted-foreground w-24 cursor-pointer select-none" onClick={() => handleSort("unit_price")} onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handleSort("unit_price"); } }} tabIndex={0}>
+                        Unit Price ₹{sortCol === "unit_price" ? (sortDir === "asc" ? " ▲" : " ▼") : ""}
+                      </th>
+                      <th scope="col" className="text-center p-2 font-medium text-muted-foreground w-16">GST %</th>
+                      <th scope="col" className="text-right p-2 font-medium text-muted-foreground w-24">GST Amt ₹</th>
+                      <th scope="col" aria-sort={sortCol === "line_total" ? (sortDir === "asc" ? "ascending" : "descending") : "none"} className="text-right p-2 font-medium text-muted-foreground w-28 cursor-pointer select-none" onClick={() => handleSort("line_total")} onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handleSort("line_total"); } }} tabIndex={0}>
+                        Line Total ₹{sortCol === "line_total" ? (sortDir === "asc" ? " ▲" : " ▼") : ""}
+                      </th>
+                      <th scope="col" className="w-10"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sortedLineItems.map((li, idx) => {
+                      const realIdx = lineItems.indexOf(li);
+                      return (
+                        <tr key={realIdx} className={`border-b ${idx % 2 === 0 ? "" : "bg-muted/20"}`}>
+                          <td className="p-2 text-muted-foreground">{li.sno}</td>
+                          <td className="p-1">
+                            <textarea
+                              value={li.description}
+                              onChange={e => updateLine(realIdx, "description", e.target.value)}
+                              className="w-full min-h-[28px] text-xs rounded-md border border-input bg-background px-2 py-1 resize-y"
+                              placeholder="Item description"
+                              rows={Math.max(1, Math.ceil(li.description.length / 60))}
+                            />
+                          </td>
+                          <td className="p-1">
+                            <Input type="number" min={1} value={li.quantity} onChange={e => updateLine(realIdx, "quantity", Number(e.target.value))}
+                              className="h-7 text-xs text-right" />
+                          </td>
+                          <td className="p-1">
+                            <Select value={li.unit} onValueChange={v => updateLine(realIdx, "unit", v)}>
+                              <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
+                              <SelectContent>{UNITS.map(u => <SelectItem key={u} value={u}>{u}</SelectItem>)}</SelectContent>
+                            </Select>
+                          </td>
+                          <td className="p-1">
+                            <Input type="number" min={0} step={0.01} value={li.unit_price} onChange={e => updateLine(realIdx, "unit_price", Number(e.target.value))}
+                              className="h-7 text-xs text-right" />
+                          </td>
+                          <td className="p-1">
+                            <Select value={String(li.gst_rate)} onValueChange={v => updateLine(realIdx, "gst_rate", Number(v))}>
+                              <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
+                              <SelectContent>{GST_RATES.map(r => <SelectItem key={r} value={String(r)}>{r}%</SelectItem>)}</SelectContent>
+                            </Select>
+                          </td>
+                          <td className="p-2 text-right text-muted-foreground bg-muted/30">{li.gst_amount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
+                          <td className="p-2 text-right font-medium bg-muted/30">{li.line_total.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
+                          <td className="p-1">
+                            <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-destructive" onClick={() => removeLine(realIdx)}>
+                              <Trash2 className="h-3 w-3" />
+                            </Button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Totals */}
+              <div className="p-4 border-t space-y-1.5 text-sm max-w-md ml-auto">
+                <div className="flex justify-between"><span className="text-muted-foreground">Subtotal</span><span>{formatINR(totals.subtotal)}</span></div>
+                {isIntrastate(header.customer_gst) ? (
+                  <>
+                    <div className="flex justify-between"><span className="text-muted-foreground">CGST</span><span>{formatINR(totals.cgst)}</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">SGST</span><span>{formatINR(totals.sgst)}</span></div>
+                  </>
+                ) : (
+                  <div className="flex justify-between"><span className="text-muted-foreground">IGST</span><span>{formatINR(totals.igst)}</span></div>
+                )}
+                <div className="flex justify-between items-center">
+                  <Label htmlFor="import-discount" className="text-muted-foreground">Discount</Label>
+                  <Input id="import-discount" type="number" min={0} value={header.discount_amount}
+                    onChange={e => setHeader(h => ({ ...h, discount_amount: Number(e.target.value) }))}
+                    className="h-7 w-28 text-xs text-right" />
+                </div>
+                <div className="flex justify-between font-bold text-base pt-2 border-t">
+                  <span>Grand Total</span><span className="text-primary">{formatINR(totals.grand)}</span>
+                </div>
+                {amountInWords && <p className="text-xs text-muted-foreground italic">{amountInWords}</p>}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Additional Info */}
+          <Card>
+            <CardHeader className="py-3 px-4"><CardTitle className="text-sm">📝 Additional Info</CardTitle></CardHeader>
+            <CardContent className="px-4 pb-4 space-y-3">
+              <div>
+                <Label htmlFor="import-shipping-address" className="text-xs text-muted-foreground">Shipping Address</Label>
+                <Textarea id="import-shipping-address" value={header.shipping_address} onChange={e => setHeader(h => ({ ...h, shipping_address: e.target.value }))} className="text-sm mt-1 min-h-[50px]" />
+              </div>
+              <div>
+                <Label htmlFor="import-notes" className="text-xs text-muted-foreground">Notes</Label>
+                <Textarea id="import-notes" value={header.notes} onChange={e => setHeader(h => ({ ...h, notes: e.target.value }))} className="text-sm mt-1 min-h-[50px]" />
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Action Buttons */}
+          <div className="flex flex-wrap gap-2 sticky bottom-0 bg-background py-3 border-t">
+            <Button onClick={handleCreate} disabled={creating || !header.po_number || !header.customer_name.trim() || !!dupPO} className="flex-1 sm:flex-none">
+              {creating ? <><Loader2 className="h-4 w-4 mr-1 animate-spin" />Creating...</> : "✅ Create Order from PO"}
+            </Button>
+            <Button variant="outline" onClick={handleReparse} disabled={!rawText}>
+              <RotateCcw className="h-4 w-4 mr-1" />Re-Parse
+            </Button>
+            <Button variant="outline" className="text-destructive border-destructive/30" onClick={() => setShowDiscard(true)}>
+              <X className="h-4 w-4 mr-1" />Discard
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* PO Import History */}
       <div className="mt-8">
         <Collapsible open={historyOpen} onOpenChange={setHistoryOpen}>
           <CollapsibleTrigger asChild>
             <Button variant="ghost" className="w-full justify-between">
-              <span className="text-sm font-medium">Previously Imported POs</span>
+              <span className="text-sm font-medium">Previously Imported POs{history.length === 0 ? " (none yet)" : ""}</span>
               <ChevronDown className={`h-4 w-4 transition-transform ${historyOpen ? "rotate-180" : ""}`} />
             </Button>
           </CollapsibleTrigger>

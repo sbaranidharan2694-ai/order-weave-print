@@ -7,6 +7,7 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-route
 import { AppLayout } from "@/components/layout/AppLayout";
 import { ThemeProvider } from "next-themes";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
+import { isSupabaseConfigured } from "@/integrations/supabase/client";
 
 const Dashboard = lazy(() => import("@/pages/Dashboard"));
 const OrderHistory = lazy(() => import("@/pages/OrderHistory"));
@@ -22,8 +23,6 @@ const Attendance = lazy(() => import("@/pages/Attendance"));
 const Login = lazy(() => import("@/pages/Login"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
 
-const REQUIRE_AUTH = import.meta.env.VITE_REQUIRE_AUTH === "true";
-
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const auth = useAuth();
   const location = useLocation();
@@ -34,7 +33,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
       </div>
     );
   }
-  if (REQUIRE_AUTH && !auth?.user) {
+  if (isSupabaseConfigured && !auth?.user) {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
   return <>{children}</>;

@@ -327,7 +327,7 @@ export default function OrderHistory() {
         <CardContent className="p-4 flex flex-wrap gap-3 items-center">
           <div className="relative flex-1 min-w-[200px]">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input placeholder="Search order, customer, contact, PO…" value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9 rounded-xl" />
+            <Input aria-label="Search orders by order number, customer, contact, or PO" placeholder="Search order, customer, contact, PO…" value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9 rounded-xl" />
           </div>
           <Select value={statusFilter} onValueChange={setStatusFilter}>
             <SelectTrigger className="w-[160px]"><SelectValue placeholder="Status" /></SelectTrigger>
@@ -371,38 +371,49 @@ export default function OrderHistory() {
               <table className="w-full text-sm" style={{ minWidth: "800px" }}>
                 <thead>
                   <tr className="border-b bg-muted/50">
-                    {visibleCols.map((col) => (
-                      <th
-                        key={col.key}
-                        className={`text-left p-3 font-medium text-muted-foreground cursor-pointer hover:text-foreground whitespace-nowrap select-none ${col.key === "po_number" ? "min-w-[90px]" : ""}`}
-                        onClick={() => col.key !== "actions" && toggleSort(col.key)}
-                      >
-                        {col.label}
-                        {(() => {
-                          const sortMap: Record<string, string> = {
-                            order_no: "order_no", created: "created_at", product: "product_type",
-                            customer: "customer_name", contact: "contact_no", amount: "amount",
-                            status: "status", delivery: "delivery_date", po_number: "po_number", source: "source",
-                          };
-                          const dbCol = sortMap[col.key] || col.key;
-                          return sortCol === dbCol ? (sortDir === "asc" ? " ↑" : " ↓") : "";
-                        })()}
-                      </th>
-                    ))}
+                    {visibleCols.map((col) => {
+                      const sortMap: Record<string, string> = {
+                        order_no: "order_no", created: "created_at", product: "product_type",
+                        customer: "customer_name", contact: "contact_no", amount: "amount",
+                        status: "status", delivery: "delivery_date", po_number: "po_number", source: "source",
+                      };
+                      const dbCol = sortMap[col.key] || col.key;
+                      const isSorted = col.key !== "actions" && sortCol === dbCol;
+                      return (
+                        <th
+                          key={col.key}
+                          scope="col"
+                          aria-sort={isSorted ? (sortDir === "asc" ? "ascending" : "descending") : undefined}
+                          className={`text-left p-3 font-medium text-muted-foreground cursor-pointer hover:text-foreground whitespace-nowrap select-none ${col.key === "po_number" ? "min-w-[90px]" : ""}`}
+                          onClick={() => col.key !== "actions" && toggleSort(col.key)}
+                        >
+                          {col.label}
+                          {isSorted ? (sortDir === "asc" ? " ↑" : " ↓") : ""}
+                        </th>
+                      );
+                    })}
                   </tr>
                 </thead>
                 <tbody>
-                  {paginated.map((o) => (
-                    <tr
-                      key={o.id}
-                      className="border-b hover:bg-muted/30 cursor-pointer"
-                      onClick={() => navigate(`/orders/${o.id}`)}
-                    >
-                      {visibleCols.map((col) => (
-                        <td key={col.key} className="p-3">{renderCell(o, col.key)}</td>
-                      ))}
+                  {filtered.length === 0 && orders.length > 0 ? (
+                    <tr>
+                      <td colSpan={visibleCols.length} className="p-8 text-center text-muted-foreground" role="status">
+                        No orders match your filters. Try changing search or filter criteria.
+                      </td>
                     </tr>
-                  ))}
+                  ) : (
+                    paginated.map((o) => (
+                      <tr
+                        key={o.id}
+                        className="border-b hover:bg-muted/30 cursor-pointer"
+                        onClick={() => navigate(`/orders/${o.id}`)}
+                      >
+                        {visibleCols.map((col) => (
+                          <td key={col.key} className="p-3">{renderCell(o, col.key)}</td>
+                        ))}
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>

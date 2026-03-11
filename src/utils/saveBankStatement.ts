@@ -1,5 +1,6 @@
 import { supabase } from "@/integrations/supabase/client";
 import { extractCounterparty } from "@/utils/extractCounterparty";
+import { logAudit } from "@/utils/auditLog";
 
 function n(val: unknown): number {
   if (!val && val !== 0) return 0;
@@ -53,8 +54,10 @@ export async function saveBankStatementToDb(
     .replace(/[^a-zA-Z0-9]/g, "")
     .substring(0, 40);
 
+  const { data: { user } } = await supabase.auth.getUser();
   const { error: stmtErr } = await supabase.from("bank_statements").insert({
     id: statementId,
+    created_by: user?.id ?? null,
     account_key: ACCOUNT_KEY[accountNumber] ?? "unknown",
     file_name: s(fileName) || "statement.pdf",
     period: `${periodStart} – ${periodEnd}`,
@@ -74,6 +77,7 @@ export async function saveBankStatementToDb(
   if (stmtErr) {
     throw new Error(`Statement insert failed: ${stmtErr.message}`);
   }
+  await logAudit("Bank statement parsed", "bank_statement", statementId);
 
   const txns = parsed.transactions ?? [];
   console.log(`[save] Statement ${statementId} | ${txns.length} transactions to save`);

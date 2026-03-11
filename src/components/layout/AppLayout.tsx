@@ -2,7 +2,7 @@ import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "./AppSidebar";
 import { MobileBottomNav } from "./MobileBottomNav";
 import { QuickStatusModal } from "@/components/QuickStatusModal";
-import { Bell, Zap } from "lucide-react";
+import { Bell, LogOut, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useOrders } from "@/hooks/useOrders";
 import { useMemo, useState } from "react";
@@ -13,6 +13,14 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { useAuth } from "@/contexts/AuthContext";
+import { toast } from "sonner";
 
 interface AppLayoutProps {
   children: React.ReactNode;
@@ -21,6 +29,14 @@ interface AppLayoutProps {
 export function AppLayout({ children }: AppLayoutProps) {
   const { data: orders = [] } = useOrders();
   const [showQuickStatus, setShowQuickStatus] = useState(false);
+  const auth = useAuth();
+  const navigate = useNavigate();
+
+  const handleLogout = async () => {
+    if (auth?.signOut) await auth.signOut();
+    toast.success("Signed out");
+    navigate("/login", { replace: true });
+  };
 
   const notifications = useMemo(() => {
     const now = new Date();
@@ -96,9 +112,28 @@ export function AppLayout({ children }: AppLayoutProps) {
                 </PopoverContent>
               </Popover>
               
-              <div className="h-8 w-8 rounded-full bg-primary flex items-center justify-center">
-                <span className="text-xs font-semibold text-primary-foreground">SP</span>
-              </div>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon" className="rounded-full h-8 w-8">
+                    <div className="h-8 w-8 rounded-full bg-primary flex items-center justify-center" aria-hidden>
+                      <span className="text-xs font-semibold text-primary-foreground">
+                        {auth?.user?.email?.slice(0, 2).toUpperCase() ?? "SP"}
+                      </span>
+                    </div>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-56">
+                  {auth?.user?.email && (
+                    <div className="px-2 py-1.5 text-sm text-muted-foreground truncate">
+                      {auth.user.email}
+                    </div>
+                  )}
+                  <DropdownMenuItem onClick={handleLogout} className="gap-2 cursor-pointer">
+                    <LogOut className="h-4 w-4" />
+                    Logout
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           </header>
           <main className="flex-1 overflow-auto p-4 md:p-6 bg-muted/20">

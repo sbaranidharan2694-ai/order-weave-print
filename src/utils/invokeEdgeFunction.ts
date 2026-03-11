@@ -3,6 +3,7 @@ const SUPABASE_URL =
   env.VITE_SUPABASE_URL ?? env.SUPABASE_URL ?? "";
 const SUPABASE_KEY =
   env.VITE_SUPABASE_PUBLISHABLE_KEY ?? env.VITE_SUPABASE_ANON_KEY ?? env.SUPABASE_ANON_KEY ?? "";
+const DEBUG = (import.meta as { env?: { DEV?: boolean } }).env?.DEV === true;
 
 /**
  * Invoke a Supabase Edge Function and return the parsed result.
@@ -29,6 +30,10 @@ export async function invokeEdgeFunction<T = unknown>(
   const isJson = contentType.includes("application/json");
 
   if (!response.ok) {
+    if (DEBUG) {
+      const bodyPreview = await response.clone().text().then(t => t.slice(0, 500));
+      console.warn("[invokeEdgeFunction] non-2xx:", response.status, name, bodyPreview);
+    }
     let message = `Request failed (${response.status})`;
     try {
       if (isJson) {

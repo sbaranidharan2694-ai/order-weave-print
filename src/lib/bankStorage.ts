@@ -5,6 +5,7 @@
 
 import { supabase, isSupabaseConfigured } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
+import { logAudit } from "@/utils/auditLog";
 
 const BANK_PDF_BUCKET = "bank-pdfs";
 
@@ -266,9 +267,11 @@ export async function loadTransactions(statementId: string): Promise<BankTransac
 /** Save statement to Supabase only. Throws if not configured or table missing. */
 export async function saveStatement(stmt: BankStatement): Promise<void> {
   if (!isSupabaseConfigured) throw new Error("Supabase not configured. Connect Supabase in Lovable or add .env.");
-  const row = statementToRow(stmt);
+  const { data: { user } } = await supabase.auth.getUser();
+  const row = { ...statementToRow(stmt), created_by: user?.id ?? null };
   const { error } = await supabase.from("bank_statements").insert(row);
   if (error) throw new Error(getErrorMessage(error));
+  await logAudit("Bank statement parsed", "bank_statement", stmt.id);
 }
 
 /** Update statement PDF flags (after storing PDF in bucket). */

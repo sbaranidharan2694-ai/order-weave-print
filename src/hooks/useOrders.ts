@@ -3,6 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useEffect } from "react";
 import { toast } from "sonner";
 import type { Tables, TablesInsert } from "@/integrations/supabase/types";
+import { logAudit } from "@/utils/auditLog";
 
 export type Order = Tables<"orders">;
 export type OrderInsert = TablesInsert<"orders">;
@@ -77,6 +78,7 @@ export function useCreateOrder() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (order: Omit<OrderInsert, "order_no">) => {
+      const { data: { user } } = await supabase.auth.getUser();
       const { data: orderNo, error: noErr } = await supabase.rpc("generate_order_no");
       if (noErr) throw noErr;
 
@@ -87,6 +89,7 @@ export function useCreateOrder() {
         qty_ordered: qty,
         qty_fulfilled: 0,
         qty_pending: qty,
+        created_by: user?.id ?? null,
       });
 
       const { data, error } = await supabase
@@ -95,6 +98,7 @@ export function useCreateOrder() {
         .select()
         .single();
       if (error) throw error;
+      await logAudit("Order created", "order", data.id);
 
       // Upsert customer
       const { data: existing } = await supabase
@@ -197,6 +201,7 @@ export function useUpdateOrder() {
         .update(cleaned as any)
         .eq("id", id);
       if (error) throw error;
+      await logAudit("Order updated", "order", id);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["orders"] });
