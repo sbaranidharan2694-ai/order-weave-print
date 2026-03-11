@@ -179,8 +179,9 @@ export async function learnFromParse(
     .select("id, field_label, mapped_field, times_used, confidence_score")
     .eq("document_signature", signature);
 
-  const existingMap = new Map(
+  const existingMap = new Map<string, { id: string; field_label: string; mapped_field: string; times_used: number; confidence_score: number }>(
     (existing || []).map((e: any) => [`${e.field_label}::${e.mapped_field}`, e])
+  );
   );
 
   const toInsert: typeof newPatterns = [];
