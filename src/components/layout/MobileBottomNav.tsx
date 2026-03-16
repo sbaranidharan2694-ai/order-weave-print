@@ -1,5 +1,5 @@
 import { useLocation, useNavigate } from "react-router-dom";
-import { LayoutDashboard, ClipboardList, PlusCircle, UserCheck, Users } from "lucide-react";
+import { LayoutDashboard, ClipboardList, PlusCircle, IndianRupee, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const tabs = [
