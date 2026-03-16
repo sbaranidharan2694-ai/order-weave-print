@@ -862,7 +862,7 @@ export default function OrderDetail() {
                 </thead>
                 <tbody>
                   {productionJobs.map((job) => {
-                    const currentIdx = JOB_STATUSES.indexOf(job.status);
+                    const currentIdx = JOB_STATUSES.indexOf(job.status as any);
                     return (
                       <tr key={job.id} className="border-b table-row-hover">
                         <td className="p-3 font-mono font-semibold text-[#1E293B]">{job.job_number}</td>

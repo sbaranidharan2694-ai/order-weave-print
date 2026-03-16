@@ -16,7 +16,7 @@ import { normalizeNumber } from "@/lib/numberUtils";
 import { AVAILABLE_TAGS, TAG_COLORS } from "@/hooks/useOrderTags";
 import { format, addDays } from "date-fns";
 import { Badge } from "@/components/ui/badge";
-import { UserCheck, Upload, X, FileText } from "lucide-react";
+import { UserCheck, Upload, X, FileText, PlusCircle, Trash2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import ImportPO from "./ImportPO";
@@ -29,6 +29,27 @@ const INSTRUCTION_TEMPLATES = [
   "VIP customer - priority",
   "Rush delivery",
 ];
+
+const GST_RATES = [0, 5, 12, 18, 28];
+
+interface LineItem {
+  description: string;
+  quantity: string;
+  unit_price: string;
+  gst_rate: number;
+}
+
+function calcLineTotal(item: LineItem) {
+  const qty = normalizeNumber(item.quantity);
+  const price = normalizeNumber(item.unit_price);
+  return qty * price;
+}
+
+function calcLineTax(item: LineItem) {
+  return calcLineTotal(item) * (item.gst_rate / 100);
+}
+
+const emptyLine = (): LineItem => ({ description: "", quantity: "", unit_price: "", gst_rate: 18 });
 
 export default function NewOrder() {
   const navigate = useNavigate();
@@ -44,7 +65,6 @@ export default function NewOrder() {
     gstin: "",
     source: "manual" as string,
     product_type: "Visiting Cards",
-    quantity: "",
     size: "",
     color_mode: "full_color" as string,
     paper_type: "",
@@ -53,11 +73,11 @@ export default function NewOrder() {
     special_instructions: "",
     order_date: format(new Date(), "yyyy-MM-dd"),
     delivery_date: format(addDays(new Date(), 3), "yyyy-MM-dd"),
-    amount: "",
     advance_paid: "",
     assigned_to: "",
   });
 
+  const [lineItems, setLineItems] = useState<LineItem[]>([emptyLine()]);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [files, setFiles] = useState<File[]>([]);
   const [emailTouched, setEmailTouched] = useState(false);
@@ -95,21 +115,38 @@ export default function NewOrder() {
     }));
   };
 
-  const amt = parseFloat(form.amount as string) || 0;
+  // Line item calculations
+  const subtotal = lineItems.reduce((sum, li) => sum + calcLineTotal(li), 0);
+  const totalTax = lineItems.reduce((sum, li) => sum + calcLineTax(li), 0);
+  const grandTotal = subtotal + totalTax;
+  const totalQty = lineItems.reduce((sum, li) => sum + normalizeNumber(li.quantity), 0);
+
   const adv = parseFloat(form.advance_paid as string) || 0;
-  const hasAmount = form.amount !== "" && !isNaN(parseFloat(form.amount));
-  const balanceDue = amt - adv;
-  const advanceError = hasAmount && adv > amt;
+  const balanceDue = grandTotal - adv;
+  const advanceError = grandTotal > 0 && adv > grandTotal;
   const emailInvalid = emailTouched && form.email.length > 0 && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email);
+
+  const hasValidItems = lineItems.some(li => li.description.trim() && normalizeNumber(li.quantity) > 0);
 
   const canSubmit =
     form.contact_no.length >= 10 &&
     form.customer_name &&
     form.product_type &&
-    (parseInt(form.quantity as string) || 0) > 0 &&
+    hasValidItems &&
     form.delivery_date &&
     !advanceError &&
     !emailInvalid;
+
+  const updateLineItem = (idx: number, field: keyof LineItem, value: any) => {
+    setLineItems(prev => prev.map((li, i) => i === idx ? { ...li, [field]: value } : li));
+  };
+
+  const addLineItem = () => setLineItems(prev => [...prev, emptyLine()]);
+
+  const removeLineItem = (idx: number) => {
+    if (lineItems.length <= 1) return;
+    setLineItems(prev => prev.filter((_, i) => i !== idx));
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -118,18 +155,33 @@ export default function NewOrder() {
     if (!form.contact_no?.trim()) errors.contact_no = "Contact number is required";
     if (!form.product_type?.trim()) errors.product_type = "Product type is required";
     if (!form.delivery_date) errors.delivery_date = "Delivery date is required";
-    if (!form.quantity || Number(form.quantity) < 1) errors.quantity = "Quantity must be at least 1";
+    if (!hasValidItems) errors.lineItems = "At least one item with description and quantity is required";
     if (Object.keys(errors).length > 0) {
       setFormErrors(errors);
       return;
     }
     setFormErrors({});
+
+    // Filter valid line items
+    const validItems = lineItems
+      .filter(li => li.description.trim() && normalizeNumber(li.quantity) > 0)
+      .map((li, idx) => ({
+        item_no: idx + 1,
+        description: li.description.trim(),
+        quantity: Math.max(1, Math.floor(normalizeNumber(li.quantity))),
+        unit_price: normalizeNumber(li.unit_price),
+        amount: calcLineTotal(li) + calcLineTax(li),
+      }));
+
     try {
       const order = await createOrder.mutateAsync({
         ...form,
-        quantity: Math.max(1, Math.floor(normalizeNumber(form.quantity))),
-        amount: amt,
+        quantity: totalQty || 1,
+        amount: grandTotal,
         advance_paid: adv,
+        base_amount: subtotal,
+        total_tax_amount: totalTax,
+        lineItems: validItems,
       } as any);
 
       if (selectedTags.length > 0) {
@@ -141,7 +193,6 @@ export default function NewOrder() {
       for (const file of files) {
         const filePath = `${order.id}/${Date.now()}-${file.name}`;
         await supabase.storage.from("order-files").upload(filePath, file);
-        // Store only the storage path, not the public URL
         await supabase.from("order_files").insert({
           order_id: order.id,
           filename: file.name,
@@ -215,7 +266,7 @@ export default function NewOrder() {
               <CardContent className="space-y-4 pt-0">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
-                    <Label>Contact No. <span className="text-[#DC2626]">*</span></Label>
+                    <Label>Contact No. <span className="text-destructive">*</span></Label>
                     <Input
                       type="tel"
                       value={form.contact_no}
@@ -231,7 +282,7 @@ export default function NewOrder() {
                     )}
                   </div>
                   <div>
-                    <Label>Customer Name <span className="text-[#DC2626]">*</span></Label>
+                    <Label>Customer Name <span className="text-destructive">*</span></Label>
                     <Input value={form.customer_name} onChange={(e) => update("customer_name", e.target.value)} required />
                     {formErrors.customer_name && <p className="text-xs text-destructive mt-1">{formErrors.customer_name}</p>}
                   </div>
@@ -263,13 +314,13 @@ export default function NewOrder() {
               </CardContent>
             </Card>
 
-            {/* Order Details */}
+            {/* Order Details - Product Type + Settings */}
             <Card className="shadow-card border border-[#E5E7EB] rounded-xl mb-5">
               <CardHeader><CardTitle className="text-sm">Order Details</CardTitle></CardHeader>
               <CardContent className="space-y-4 pt-0">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
-                    <Label>Product Type <span className="text-[#DC2626]">*</span></Label>
+                    <Label>Product Type <span className="text-destructive">*</span></Label>
                     <Select value={form.product_type} onValueChange={handleProductTypeChange}>
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
@@ -277,21 +328,6 @@ export default function NewOrder() {
                       </SelectContent>
                     </Select>
                     {formErrors.product_type && <p className="text-xs text-destructive mt-1">{formErrors.product_type}</p>}
-                    <p className="text-xs text-muted-foreground mt-1">Defaults loaded from product type</p>
-                  </div>
-                  <div>
-                    <Label>Quantity <span className="text-[#DC2626]">*</span></Label>
-                    <Input
-                      type="number"
-                      min={1}
-                      value={form.quantity}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        update("quantity", v === "" ? "" : String(Math.max(1, Math.floor(normalizeNumber(v)))));
-                      }}
-                      placeholder="e.g. 100"
-                    />
-                    {formErrors.quantity && <p className="text-xs text-destructive mt-1">{formErrors.quantity}</p>}
                   </div>
                   <div>
                     <Label>Size</Label>
@@ -330,6 +366,111 @@ export default function NewOrder() {
                     ) : (
                       <p className="text-xs text-muted-foreground mt-1 p-2 bg-muted rounded">No operators added — go to Settings</p>
                     )}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Line Items */}
+            <Card className="shadow-card border border-[#E5E7EB] rounded-xl mb-5">
+              <CardHeader className="flex flex-row items-center justify-between">
+                <CardTitle className="text-sm">Line Items</CardTitle>
+                <Button type="button" variant="outline" size="sm" onClick={addLineItem} className="gap-1 text-xs">
+                  <PlusCircle className="h-3.5 w-3.5" /> Add Item
+                </Button>
+              </CardHeader>
+              <CardContent className="space-y-3 pt-0">
+                {/* Header row - desktop */}
+                <div className="hidden md:grid grid-cols-[1fr_80px_100px_90px_100px_36px] gap-2 text-xs font-medium text-muted-foreground px-1">
+                  <span>Description</span>
+                  <span>Qty</span>
+                  <span>Unit Price ₹</span>
+                  <span>Tax %</span>
+                  <span className="text-right">Total ₹</span>
+                  <span />
+                </div>
+
+                {lineItems.map((li, idx) => {
+                  const lineTotal = calcLineTotal(li) + calcLineTax(li);
+                  return (
+                    <div key={idx} className="grid grid-cols-1 md:grid-cols-[1fr_80px_100px_90px_100px_36px] gap-2 items-start p-2 bg-muted/30 rounded-lg border border-border/50">
+                      <div>
+                        <Label className="md:hidden text-xs text-muted-foreground">Description</Label>
+                        <Input
+                          value={li.description}
+                          onChange={(e) => updateLineItem(idx, "description", e.target.value)}
+                          placeholder="Item description"
+                          className="h-9 text-sm"
+                        />
+                      </div>
+                      <div>
+                        <Label className="md:hidden text-xs text-muted-foreground">Qty</Label>
+                        <Input
+                          type="number"
+                          min={1}
+                          value={li.quantity}
+                          onChange={(e) => updateLineItem(idx, "quantity", e.target.value)}
+                          placeholder="0"
+                          className="h-9 text-sm"
+                        />
+                      </div>
+                      <div>
+                        <Label className="md:hidden text-xs text-muted-foreground">Unit Price ₹</Label>
+                        <Input
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          value={li.unit_price}
+                          onChange={(e) => updateLineItem(idx, "unit_price", e.target.value)}
+                          placeholder="0.00"
+                          className="h-9 text-sm"
+                        />
+                      </div>
+                      <div>
+                        <Label className="md:hidden text-xs text-muted-foreground">Tax %</Label>
+                        <Select value={String(li.gst_rate)} onValueChange={(v) => updateLineItem(idx, "gst_rate", Number(v))}>
+                          <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            {GST_RATES.map((r) => <SelectItem key={r} value={String(r)}>{r}%</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="flex items-center justify-end">
+                        <span className="text-sm font-semibold text-foreground tabular-nums">
+                          ₹{lineTotal.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-center">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                          onClick={() => removeLineItem(idx)}
+                          disabled={lineItems.length <= 1}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {formErrors.lineItems && <p className="text-xs text-destructive">{formErrors.lineItems}</p>}
+
+                {/* Totals */}
+                <div className="border-t border-border pt-3 space-y-1">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Subtotal ({totalQty} items)</span>
+                    <span className="font-medium tabular-nums">₹{subtotal.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Tax</span>
+                    <span className="font-medium tabular-nums">₹{totalTax.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
+                  </div>
+                  <div className="flex justify-between text-base font-bold">
+                    <span>Grand Total</span>
+                    <span className="tabular-nums">₹{grandTotal.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
                   </div>
                 </div>
               </CardContent>
@@ -382,10 +523,10 @@ export default function NewOrder() {
               <CardHeader><CardTitle className="text-sm">Artwork / Files</CardTitle></CardHeader>
               <CardContent className="space-y-3 pt-0">
                 <div
-                  className="border-2 border-dashed border-[#CBD5E1] rounded-xl min-h-[120px] flex flex-col items-center justify-center text-center cursor-pointer hover:border-primary/50 transition-colors bg-muted/20"
+                  className="border-2 border-dashed border-muted-foreground/30 rounded-xl min-h-[120px] flex flex-col items-center justify-center text-center cursor-pointer hover:border-primary/50 transition-colors bg-muted/20"
                   onClick={() => document.getElementById("order-files-input")?.click()}
                 >
-                  <Upload className="h-10 w-10 mx-auto mb-2 text-[#F97316]" />
+                  <Upload className="h-10 w-10 mx-auto mb-2 text-primary" />
                   <p className="text-sm text-muted-foreground">Drag files here or click to browse</p>
                   <p className="text-xs text-muted-foreground">.pdf, .ai, .psd, .jpg, .png, .zip — Max 50MB per file</p>
                   <input
@@ -427,7 +568,7 @@ export default function NewOrder() {
                     <Input type="date" value={form.order_date} onChange={(e) => update("order_date", e.target.value)} className="w-full" />
                   </div>
                   <div>
-                    <Label>Delivery Date <span className="text-[#DC2626]">*</span></Label>
+                    <Label>Delivery Date <span className="text-destructive">*</span></Label>
                     <Input
                       type="date"
                       value={form.delivery_date}
@@ -437,16 +578,6 @@ export default function NewOrder() {
                     />
                     {formErrors.delivery_date && <p className="text-xs text-destructive mt-1">{formErrors.delivery_date}</p>}
                     <p className="text-xs text-muted-foreground mt-1">Must be same or after order date</p>
-                  </div>
-                  <div>
-                    <Label>Amount (₹)</Label>
-                    <Input
-                      type="number"
-                      min={0}
-                      value={form.amount}
-                      onChange={(e) => update("amount", e.target.value)}
-                      placeholder="e.g. 1500"
-                    />
                   </div>
                   <div>
                     <Label>Advance Paid (₹)</Label>
@@ -462,8 +593,8 @@ export default function NewOrder() {
                   </div>
                   <div>
                     <Label>Balance Due (₹)</Label>
-                    <div className={`py-2 px-3 rounded-md border bg-muted/30 font-bold text-base ${balanceDue < 0 ? "text-destructive" : ""}`} style={balanceDue >= 0 ? { color: "#1E293B" } : undefined}>
-                      {hasAmount ? (balanceDue < 0 ? `Overpaid: ₹${Math.abs(balanceDue).toLocaleString("en-IN")}` : `₹${balanceDue.toLocaleString("en-IN")}`) : "—"}
+                    <div className={`py-2 px-3 rounded-md border bg-muted/30 font-bold text-base ${balanceDue < 0 ? "text-destructive" : "text-foreground"}`}>
+                      {grandTotal > 0 ? (balanceDue < 0 ? `Overpaid: ₹${Math.abs(balanceDue).toLocaleString("en-IN")}` : `₹${balanceDue.toLocaleString("en-IN")}`) : "—"}
                     </div>
                   </div>
                 </div>
@@ -471,8 +602,8 @@ export default function NewOrder() {
             </Card>
 
             <div className="sticky bottom-0 left-0 right-0 py-4 bg-background/95 border-t border-border flex gap-3 justify-end">
-              <Button type="button" variant="outline" className="border-[#D1D5DB]" onClick={() => navigate("/")}>Cancel</Button>
-              <Button type="submit" disabled={createOrder.isPending || !canSubmit} className="px-8 bg-[#F97316] hover:bg-[#ea580c] text-white" style={{ backgroundColor: "#F97316" }}>
+              <Button type="button" variant="outline" onClick={() => navigate("/")}>Cancel</Button>
+              <Button type="submit" disabled={createOrder.isPending || !canSubmit} className="px-8 bg-primary hover:bg-primary/90 text-primary-foreground">
                 {createOrder.isPending ? "Creating..." : "Create Order"}
               </Button>
             </div>
