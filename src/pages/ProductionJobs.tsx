@@ -197,7 +197,7 @@ export default function ProductionJobs() {
                     const order = Array.isArray(job.orders) ? job.orders[0] : job.orders;
                     const orderNo = order?.order_no ?? "—";
                     const customerName = order?.customer_name ?? "—";
-                    const currentIdx = JOB_STATUSES.indexOf(job.status);
+                    const currentIdx = JOB_STATUSES.indexOf(job.status as any);
                     return (
                       <tr
                         key={job.id}
