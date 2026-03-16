@@ -78,15 +78,24 @@ function stripBalanceDue(obj: Record<string, any>) {
 export function useCreateOrder() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (order: Omit<OrderInsert, "order_no">) => {
+    mutationFn: async (order: Omit<OrderInsert, "order_no"> & { lineItems?: { item_no: number; description: string; quantity: number; unit_price: number; amount: number }[] }) => {
       const { data: { user } } = await supabase.auth.getUser();
       const { data: orderNo, error: noErr } = await supabase.rpc("generate_order_no");
       if (noErr) throw noErr;
 
-      const qty = (order as any).quantity || 1;
+      const { lineItems, ...orderFields } = order as any;
+      const qty = lineItems
+        ? lineItems.reduce((s: number, li: any) => s + (li.quantity || 0), 0)
+        : (orderFields.quantity || 1);
+      const amt = lineItems
+        ? lineItems.reduce((s: number, li: any) => s + (li.amount || 0), 0)
+        : (orderFields.amount || 0);
+
       const insertData = stripBalanceDue({
-        ...order,
+        ...orderFields,
         order_no: orderNo,
+        quantity: qty,
+        amount: amt,
         qty_ordered: qty,
         qty_fulfilled: 0,
         qty_pending: qty,
@@ -113,11 +122,10 @@ export function useCreateOrder() {
           .from("customers")
           .update({
             total_orders: (existing.total_orders || 0) + 1,
-            total_spend: (existing.total_spend || 0) + (order.amount || 0),
+            total_spend: (existing.total_spend || 0) + amt,
           })
           .eq("id", existing.id);
       } else if (order.contact_no) {
-        // Also check by name (case-insensitive)
         const { data: byName } = await supabase
           .from("customers")
           .select("*")
@@ -129,7 +137,7 @@ export function useCreateOrder() {
             .from("customers")
             .update({
               total_orders: (byName.total_orders || 0) + 1,
-              total_spend: (byName.total_spend || 0) + (order.amount || 0),
+              total_spend: (byName.total_spend || 0) + amt,
             })
             .eq("id", byName.id);
         } else {
@@ -138,7 +146,7 @@ export function useCreateOrder() {
             contact_no: order.contact_no,
             email: order.email || null,
             total_orders: 1,
-            total_spend: order.amount || 0,
+            total_spend: amt,
           });
         }
       }
@@ -151,38 +159,61 @@ export function useCreateOrder() {
         notes: "Order created",
       });
 
-      const amt = Number(data.amount) || 0;
-      const qtyNum = Number(data.quantity) || 1;
-      const desc = [data.product_type, data.size, data.paper_type].filter(Boolean).join(" · ") || data.product_type;
-      const { data: orderItems, error: itemErr } = await supabase
-        .from("order_items")
-        .insert({
+      // Insert line items and create production jobs
+      if (lineItems && lineItems.length > 0) {
+        const rows = lineItems.map((li: any) => ({
           order_id: data.id,
-          item_no: 1,
-          description: desc,
-          quantity: qtyNum,
-          unit_price: qtyNum > 0 ? amt / qtyNum : 0,
-          amount: amt,
-        } as any)
-        .select("id, description, quantity");
-      if (!itemErr && orderItems?.[0]) {
-        await createJobForOrderItem(
-          orderItems[0],
-          { id: data.id, delivery_date: data.delivery_date, assigned_to: data.assigned_to }
-        );
+          item_no: li.item_no,
+          description: li.description,
+          quantity: li.quantity,
+          unit_price: li.unit_price,
+          amount: li.amount,
+        }));
+        const { data: insertedItems, error: itemErr } = await supabase
+          .from("order_items")
+          .insert(rows as any)
+          .select("id, description, quantity");
+        if (!itemErr && insertedItems) {
+          for (const item of insertedItems as any[]) {
+            await createJobForOrderItem(
+              item,
+              { id: data.id, delivery_date: data.delivery_date, assigned_to: data.assigned_to }
+            );
+          }
+        }
       } else {
-        await createJobForOrder({
-          id: data.id,
-          order_no: data.order_no,
-          product_type: data.product_type,
-          quantity: data.quantity,
-          delivery_date: data.delivery_date,
-          assigned_to: data.assigned_to,
-          special_instructions: data.special_instructions,
-          size: data.size,
-          paper_type: data.paper_type,
-          color_mode: data.color_mode,
-        });
+        // Legacy single-item fallback
+        const desc = [data.product_type, data.size, data.paper_type].filter(Boolean).join(" · ") || data.product_type;
+        const { data: orderItems, error: itemErr } = await supabase
+          .from("order_items")
+          .insert({
+            order_id: data.id,
+            item_no: 1,
+            description: desc,
+            quantity: qty,
+            unit_price: qty > 0 ? amt / qty : 0,
+            amount: amt,
+          } as any)
+          .select("id, description, quantity");
+        if (!itemErr && orderItems?.[0]) {
+          await createJobForOrderItem(
+            (orderItems as any)[0],
+            { id: data.id, delivery_date: data.delivery_date, assigned_to: data.assigned_to }
+          );
+        } else {
+          await createJobForOrder({
+            id: data.id,
+            order_no: data.order_no,
+            product_type: data.product_type,
+            quantity: data.quantity,
+            delivery_date: data.delivery_date,
+            assigned_to: data.assigned_to,
+            special_instructions: data.special_instructions,
+            size: data.size,
+            paper_type: data.paper_type,
+            color_mode: data.color_mode,
+          });
+        }
       }
 
       return data;

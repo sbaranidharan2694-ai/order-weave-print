@@ -17,7 +17,10 @@ const group2 = [
   { title: "Production Jobs", url: "/production-jobs", icon: Briefcase },
 ];
 const group3Label = "FINANCE";
-const group3 = [{ title: "Bank Analyser", url: "/bank-analyser", icon: Building2 }];
+const group3 = [
+  { title: "Expenses", url: "/expenses", icon: IndianRupee },
+  { title: "Bank Analyser", url: "/bank-analyser", icon: Building2 },
+];
 const group4Label = "OPERATIONS";
 const group4 = [
   { title: "Attendance", url: "/attendance", icon: UserCheck },
