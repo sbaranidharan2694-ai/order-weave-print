@@ -364,6 +364,47 @@ export type Database = {
           },
         ]
       }
+      order_items: {
+        Row: {
+          amount: number
+          created_at: string
+          description: string | null
+          id: string
+          item_no: number
+          order_id: string
+          quantity: number
+          unit_price: number
+        }
+        Insert: {
+          amount?: number
+          created_at?: string
+          description?: string | null
+          id?: string
+          item_no?: number
+          order_id: string
+          quantity?: number
+          unit_price?: number
+        }
+        Update: {
+          amount?: number
+          created_at?: string
+          description?: string | null
+          id?: string
+          item_no?: number
+          order_id?: string
+          quantity?: number
+          unit_price?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "order_items_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: false
+            referencedRelation: "orders"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       order_tags: {
         Row: {
           id: string
@@ -638,6 +679,69 @@ export type Database = {
           whatsapp_template_body?: string | null
         }
         Relationships: []
+      }
+      production_jobs: {
+        Row: {
+          assigned_to: string | null
+          created_at: string
+          description: string | null
+          due_date: string | null
+          id: string
+          job_number: string
+          notes: string | null
+          order_id: string
+          order_item_id: string | null
+          priority: string
+          quantity: number
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          assigned_to?: string | null
+          created_at?: string
+          description?: string | null
+          due_date?: string | null
+          id?: string
+          job_number: string
+          notes?: string | null
+          order_id: string
+          order_item_id?: string | null
+          priority?: string
+          quantity?: number
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          assigned_to?: string | null
+          created_at?: string
+          description?: string | null
+          due_date?: string | null
+          id?: string
+          job_number?: string
+          notes?: string | null
+          order_id?: string
+          order_item_id?: string | null
+          priority?: string
+          quantity?: number
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "production_jobs_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: false
+            referencedRelation: "orders"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "production_jobs_order_item_id_fkey"
+            columns: ["order_item_id"]
+            isOneToOne: false
+            referencedRelation: "order_items"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       purchase_order_line_items: {
         Row: {
