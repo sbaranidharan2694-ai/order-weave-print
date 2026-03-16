@@ -20,6 +20,7 @@ const SettingsPage = lazy(() => import("@/pages/SettingsPage"));
 const ImportPO = lazy(() => import("@/pages/ImportPO"));
 const ProductionJobs = lazy(() => import("@/pages/ProductionJobs"));
 const BankAnalyser = lazy(() => import("@/pages/BankAnalyser"));
+const Expenses = lazy(() => import("@/pages/Expenses"));
 const Attendance = lazy(() => import("@/pages/Attendance"));
 const Login = lazy(() => import("@/pages/Login"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
