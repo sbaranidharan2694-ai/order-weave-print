@@ -1,5 +1,5 @@
 import {
-  LayoutDashboard, ClipboardList, PlusCircle, Users, Settings, FileUp, Building2, UserCheck, Briefcase,
+  LayoutDashboard, ClipboardList, PlusCircle, Users, Settings, FileUp, Building2, UserCheck, Briefcase, IndianRupee,
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import {
