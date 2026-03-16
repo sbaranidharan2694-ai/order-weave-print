@@ -41,33 +41,6 @@ export type Database = {
         }
         Relationships: []
       }
-      audit_logs: {
-        Row: {
-          id: string
-          user_id: string | null
-          action: string
-          entity: string
-          entity_id: string | null
-          timestamp: string
-        }
-        Insert: {
-          id?: string
-          user_id?: string | null
-          action: string
-          entity: string
-          entity_id?: string | null
-          timestamp?: string
-        }
-        Update: {
-          id?: string
-          user_id?: string | null
-          action?: string
-          entity?: string
-          entity_id?: string | null
-          timestamp?: string
-        }
-        Relationships: []
-      }
       bank_custom_lookup: {
         Row: {
           id: string
@@ -92,7 +65,6 @@ export type Database = {
           account_number: string | null
           closing_balance: number
           created_at: string
-          created_by: string | null
           file_name: string
           id: string
           last_validated: string | null
@@ -113,7 +85,6 @@ export type Database = {
           account_number?: string | null
           closing_balance?: number
           created_at?: string
-          created_by?: string | null
           file_name?: string
           id: string
           last_validated?: string | null
@@ -134,7 +105,6 @@ export type Database = {
           account_number?: string | null
           closing_balance?: number
           created_at?: string
-          created_by?: string | null
           file_name?: string
           id?: string
           last_validated?: string | null
@@ -331,12 +301,7 @@ export type Database = {
           fulfillment_date: string
           id: string
           order_id: string
-          order_item_id: string | null
           qty_delivered: number
-          invoice_number: string | null
-          invoice_date: string | null
-          dc_number: string | null
-          updated_at: string | null
         }
         Insert: {
           created_at?: string
@@ -345,12 +310,7 @@ export type Database = {
           fulfillment_date?: string
           id?: string
           order_id: string
-          order_item_id?: string | null
           qty_delivered: number
-          invoice_number?: string | null
-          invoice_date?: string | null
-          dc_number?: string | null
-          updated_at?: string | null
         }
         Update: {
           created_at?: string
@@ -359,64 +319,11 @@ export type Database = {
           fulfillment_date?: string
           id?: string
           order_id?: string
-          order_item_id?: string | null
           qty_delivered?: number
-          invoice_number?: string | null
-          invoice_date?: string | null
-          dc_number?: string | null
-          updated_at?: string | null
         }
         Relationships: [
           {
             foreignKeyName: "order_fulfillments_order_id_fkey"
-            columns: ["order_id"]
-            isOneToOne: false
-            referencedRelation: "orders"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "order_fulfillments_order_item_id_fkey"
-            columns: ["order_item_id"]
-            isOneToOne: false
-            referencedRelation: "order_items"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      order_items: {
-        Row: {
-          id: string
-          order_id: string
-          item_no: number
-          description: string
-          quantity: number
-          unit_price: number
-          amount: number
-          created_at: string
-        }
-        Insert: {
-          id?: string
-          order_id: string
-          item_no?: number
-          description: string
-          quantity?: number
-          unit_price?: number
-          amount?: number
-          created_at?: string
-        }
-        Update: {
-          id?: string
-          order_id?: string
-          item_no?: number
-          description?: string
-          quantity?: number
-          unit_price?: number
-          amount?: number
-          created_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "order_items_order_id_fkey"
             columns: ["order_id"]
             isOneToOne: false
             referencedRelation: "orders"
@@ -462,7 +369,6 @@ export type Database = {
           color_mode: Database["public"]["Enums"]["color_mode"]
           contact_no: string
           created_at: string
-          created_by: string | null
           customer_name: string
           delivery_date: string
           email: string | null
@@ -507,7 +413,6 @@ export type Database = {
           color_mode?: Database["public"]["Enums"]["color_mode"]
           contact_no: string
           created_at?: string
-          created_by?: string | null
           customer_name: string
           delivery_date: string
           email?: string | null
@@ -552,7 +457,6 @@ export type Database = {
           color_mode?: Database["public"]["Enums"]["color_mode"]
           contact_no?: string
           created_at?: string
-          created_by?: string | null
           customer_name?: string
           delivery_date?: string
           email?: string | null
@@ -599,59 +503,6 @@ export type Database = {
             columns: ["po_line_item_id"]
             isOneToOne: false
             referencedRelation: "purchase_order_line_items"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      production_jobs: {
-        Row: {
-          id: string
-          order_id: string
-          order_item_id: string | null
-          job_number: string
-          description: string
-          quantity: number
-          status: string
-          assigned_to: string | null
-          priority: string | null
-          due_date: string | null
-          created_at: string
-          updated_at: string
-        }
-        Insert: {
-          id?: string
-          order_id: string
-          order_item_id?: string | null
-          job_number: string
-          description: string
-          quantity?: number
-          status?: string
-          assigned_to?: string | null
-          priority?: string | null
-          due_date?: string | null
-          created_at?: string
-          updated_at?: string
-        }
-        Update: {
-          id?: string
-          order_id?: string
-          order_item_id?: string | null
-          job_number?: string
-          description?: string
-          quantity?: number
-          status?: string
-          assigned_to?: string | null
-          priority?: string | null
-          due_date?: string | null
-          created_at?: string
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "production_jobs_order_id_fkey"
-            columns: ["order_id"]
-            isOneToOne: false
-            referencedRelation: "orders"
             referencedColumns: ["id"]
           },
         ]
@@ -834,7 +685,6 @@ export type Database = {
           contact_no: string | null
           contact_person: string | null
           created_at: string | null
-          created_by: string | null
           currency: string | null
           customer_email: string | null
           delivery_address: string | null
@@ -866,7 +716,6 @@ export type Database = {
           contact_no?: string | null
           contact_person?: string | null
           created_at?: string | null
-          created_by?: string | null
           currency?: string | null
           customer_email?: string | null
           delivery_address?: string | null
@@ -898,7 +747,6 @@ export type Database = {
           contact_no?: string | null
           contact_person?: string | null
           created_at?: string | null
-          created_by?: string | null
           currency?: string | null
           customer_email?: string | null
           delivery_address?: string | null
