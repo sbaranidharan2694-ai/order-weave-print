@@ -35,7 +35,13 @@ export type DetailedReportEmployee = {
   present: number;
   absent: number;
   weeklyOff: number;
-  days?: { date: string; status: string }[];
+  days?: {
+    date: string;
+    status: string;
+    workMinutes: number;
+    lateByMinutes: number;
+    earlyGoingMinutes: number;
+  }[];
 };
 export type DetailedReportParsedData = {
   month_year: string;
