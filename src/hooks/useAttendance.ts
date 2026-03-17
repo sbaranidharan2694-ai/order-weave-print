@@ -142,6 +142,34 @@ function parseDetailedReportFromText(text: string, monthYear: string): DetailedR
     else if (/\bAbsent\s*\(No\s+OutPunch\)/i.test(fullLine)) status = "Absent (No OutPunch)";
     else if (/\bAbsent\b/i.test(fullLine)) status = "Absent";
     else if (/\bWeeklyOff\b/i.test(fullLine)) status = "WeeklyOff";
+    // --- Parse Work Duration, Late By, Early Going from the raw ESSL line ---
+    const fullLineForParsing = lines[i] + " " + (lines[i + 1] ?? "");
+    const fullRe = /(\d{2}:\d{2}:\d{2})\s+(\d{2}:\d{2}:\d{2})\s+(\d+:\d{2})\s+(\d+:\d{2})\s+(\d+:\d{2})\s+(\d+:\d{2})\s+(\d+:\d{2})/;
+    const noOutRe = /(\d{2}:\d{2}:\d{2})\s+(\d+:\d{2})\s+(\d+:\d{2})\s+(\d+:\d{2})\s+(\d+:\d{2})\s+(\d+:\d{2})/;
+    function parseHHMM(s: string): number {
+      const [h, m] = s.split(":").map(Number);
+      return (h || 0) * 60 + (m || 0);
+    }
+    let workMinutes = 0;
+    let lateByMinutes = 0;
+    let earlyGoingMinutes = 0;
+    if (!(status === "Absent" || status === "WeeklyOff")) {
+      const mFull = fullLineForParsing.match(fullRe);
+      if (mFull) {
+        workMinutes = parseHHMM(mFull[3]);
+        lateByMinutes = parseHHMM(mFull[6]);
+        earlyGoingMinutes = parseHHMM(mFull[7]);
+      } else {
+        const mNoOut = fullLineForParsing.match(noOutRe);
+        if (mNoOut) {
+          workMinutes = parseHHMM(mNoOut[2]);
+          lateByMinutes = parseHHMM(mNoOut[5]);
+          earlyGoingMinutes = parseHHMM(mNoOut[6]);
+        }
+      }
+    }
+    // --- End parse ---
+
     const key = `${code}-${name}`;
     if (!empByKey.has(key)) {
       empByKey.set(key, { code, name, department: currentDept, present: 0, absent: 0, weeklyOff: 0, days: [] });
@@ -149,7 +177,7 @@ function parseDetailedReportFromText(text: string, monthYear: string): DetailedR
     const emp = empByKey.get(key)!;
     if (currentDate) {
       emp.days = emp.days ?? [];
-      emp.days.push({ date: currentDate, status });
+      emp.days.push({ date: currentDate, status, workMinutes, lateByMinutes, earlyGoingMinutes });
     }
     if (status === "Present" || status.startsWith("Present")) emp.present++;
     else if (status === "Absent" || status.startsWith("Absent")) emp.absent++;
