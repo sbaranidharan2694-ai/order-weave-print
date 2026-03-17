@@ -70,6 +70,8 @@ import { extractTextFromPdf } from "@/lib/pdfText";
 import { toast } from "sonner";
 import { cn, friendlyDbError } from "@/lib/utils";
 import { format, parseISO } from "date-fns";
+import { useWeeklyHours, fmtHHMM, TARGET_WEEKLY_MINUTES, TIER_STYLES, TIER_BADGE } from "@/hooks/useWeeklyHours";
+import { WeeklyHoursReport } from "@/components/WeeklyHoursReport";
 
 
 export default function Attendance() {
