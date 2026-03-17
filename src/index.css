@@ -189,6 +189,11 @@ a[href*="lovable"][target="_blank"]:has(svg) {
 
 /* Print styles for bank analyser */
 @media print {
-  nav, header, .print\\:hidden { display: none !important; }
-  .print\\:space-y-4 > * + * { margin-top: 1rem; }
+  nav, header, .print\:hidden { display: none !important; }
+  .print\:space-y-4 > * + * { margin-top: 1rem; }
+  /* Weekly hours report print */
+  body > *:not(:has(#weekly-hours-report)) { display: none !important; }
+  #weekly-hours-report { display: block !important; }
+  #weekly-hours-report * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .no-print { display: none !important; }
 }

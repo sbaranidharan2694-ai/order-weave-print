@@ -12,6 +12,8 @@ import {
   UserPlus,
   Edit2,
   FileUp,
+  Clock,
+  Printer,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -68,6 +70,8 @@ import { extractTextFromPdf } from "@/lib/pdfText";
 import { toast } from "sonner";
 import { cn, friendlyDbError } from "@/lib/utils";
 import { format, parseISO } from "date-fns";
+import { useWeeklyHours, fmtHHMM, TARGET_WEEKLY_MINUTES, TIER_STYLES, TIER_BADGE } from "@/hooks/useWeeklyHours";
+import { WeeklyHoursReport } from "@/components/WeeklyHoursReport";
 
 
 export default function Attendance() {
@@ -100,6 +104,11 @@ export default function Attendance() {
   const availableWeeks = useMemo(() => Array.from(byWeek.keys()).sort().reverse(), [byWeek]);
   const selectedMonth = payrollMonth || availableMonths[0] || "";
   const selectedWeek = payrollWeek || availableWeeks[0] || "";
+
+  // Weekly hours tracker state
+  const [hoursMonth, setHoursMonth] = useState("");
+  const selectedHoursMonth = hoursMonth || availableMonths[0] || "";
+  const weeklySummaries = useWeeklyHours(uploads, selectedHoursMonth);
 
   const payrollRows = useMemo(
     () => getPayrollRowsForMonth(byMonth, payrollEmployees, selectedMonth),
@@ -179,14 +188,18 @@ export default function Attendance() {
       </div>
 
       <Tabs defaultValue="upload" className="space-y-4">
-        <TabsList className="grid w-full max-w-sm grid-cols-2 bg-white border border-[#E5E7EB] rounded-lg p-1">
-          <TabsTrigger value="upload" className="gap-1.5 data-[state=active]:bg-[#1E293B] data-[state=active]:text-white rounded-md">
+        <TabsList className="grid w-full max-w-lg grid-cols-3 bg-white border border-[#E5E7EB] rounded-lg p-1">
+          <TabsTrigger value="upload" className="gap-1.5 data-[state=active]:bg-[#1E293B] data-[state=active]:text-white rounded-md text-xs sm:text-sm">
             <Upload className="h-4 w-4" />
             Upload & History
           </TabsTrigger>
-          <TabsTrigger value="payroll" className="gap-1.5 data-[state=active]:bg-[#1E293B] data-[state=active]:text-white rounded-md">
+          <TabsTrigger value="payroll" className="gap-1.5 data-[state=active]:bg-[#1E293B] data-[state=active]:text-white rounded-md text-xs sm:text-sm">
             <Calculator className="h-4 w-4" />
-            Payroll Dashboard
+            Payroll
+          </TabsTrigger>
+          <TabsTrigger value="hours" className="gap-1.5 data-[state=active]:bg-[#1E293B] data-[state=active]:text-white rounded-md text-xs sm:text-sm">
+            <Clock className="h-4 w-4" />
+            Weekly Hours
           </TabsTrigger>
         </TabsList>
 
@@ -702,6 +715,60 @@ export default function Attendance() {
               )}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="hours" className="space-y-6 mt-0">
+          {/* Controls row */}
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="space-y-1.5">
+              <Label>Month</Label>
+              <Select value={selectedHoursMonth} onValueChange={setHoursMonth}>
+                <SelectTrigger className="w-[180px] rounded-xl">
+                  <SelectValue placeholder="Select month" />
+                </SelectTrigger>
+                <SelectContent>
+                  {availableMonths.map(m => (
+                    <SelectItem key={m} value={m}>
+                      {format(parseISO(m + "-01"), "MMMM yyyy")}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            {weeklySummaries.length > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="rounded-xl gap-1.5 no-print"
+                onClick={() => window.print()}
+              >
+                <Printer className="h-4 w-4" />
+                Print / Export
+              </Button>
+            )}
+          </div>
+
+          {/* No detailed data state */}
+          {uploads.filter(u => u.parsed_data?.source_type === "detailed_report").length === 0 ? (
+            <Card className="rounded-2xl">
+              <CardContent className="py-12 text-center">
+                <Clock className="h-12 w-12 text-muted-foreground mx-auto mb-3 opacity-50" />
+                <p className="text-foreground font-medium">Upload an ESSL Daily Detailed Report PDF first.</p>
+                <p className="text-sm text-muted-foreground mt-1">Go to Upload & History tab → Choose PDF</p>
+              </CardContent>
+            </Card>
+          ) : weeklySummaries.length === 0 || weeklySummaries.every(w => w.rows.every(r => r.workedMinutes === 0)) ? (
+            <Card className="rounded-2xl">
+              <CardContent className="py-12 text-center space-y-2">
+                <p className="text-foreground font-medium">Work duration data not found in this upload.</p>
+                <p className="text-sm text-muted-foreground">
+                  Please delete the existing upload and re-upload the same PDF — the parser now captures work hours.
+                </p>
+              </CardContent>
+            </Card>
+          ) : (
+            <WeeklyHoursReport summaries={weeklySummaries} monthYear={selectedHoursMonth} />
+          )}
         </TabsContent>
       </Tabs>
 
