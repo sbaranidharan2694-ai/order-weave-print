@@ -128,7 +128,7 @@ function parseDetailedReportFromText(text: string, monthYear: string): DetailedR
       currentDept = deptM[1];
       continue;
     }
-    const codeMatch = lines[i].match(/^\d+\s+((?:SP|SS|ADMIN)\d{2,4})\s+(.+)/i);
+    const codeMatch = lines[i].match(/^\d+\s+((?:SP|SS|ADMIN)\d{0,4})\s+(.+)/i);
     if (!codeMatch) continue;
     const code = codeMatch[1];
     const rest = codeMatch[2];
