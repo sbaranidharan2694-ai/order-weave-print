@@ -109,7 +109,6 @@ export default function Attendance() {
   const [hoursMonth, setHoursMonth] = useState("");
   const selectedHoursMonth = hoursMonth || availableMonths[0] || "";
   const weeklySummaries = useWeeklyHours(uploads, selectedHoursMonth);
-  const selectedWeek = payrollWeek || availableWeeks[0] || "";
 
   const payrollRows = useMemo(
     () => getPayrollRowsForMonth(byMonth, payrollEmployees, selectedMonth),
