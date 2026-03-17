@@ -188,14 +188,18 @@ export default function Attendance() {
       </div>
 
       <Tabs defaultValue="upload" className="space-y-4">
-        <TabsList className="grid w-full max-w-sm grid-cols-2 bg-white border border-[#E5E7EB] rounded-lg p-1">
-          <TabsTrigger value="upload" className="gap-1.5 data-[state=active]:bg-[#1E293B] data-[state=active]:text-white rounded-md">
+        <TabsList className="grid w-full max-w-lg grid-cols-3 bg-white border border-[#E5E7EB] rounded-lg p-1">
+          <TabsTrigger value="upload" className="gap-1.5 data-[state=active]:bg-[#1E293B] data-[state=active]:text-white rounded-md text-xs sm:text-sm">
             <Upload className="h-4 w-4" />
             Upload & History
           </TabsTrigger>
-          <TabsTrigger value="payroll" className="gap-1.5 data-[state=active]:bg-[#1E293B] data-[state=active]:text-white rounded-md">
+          <TabsTrigger value="payroll" className="gap-1.5 data-[state=active]:bg-[#1E293B] data-[state=active]:text-white rounded-md text-xs sm:text-sm">
             <Calculator className="h-4 w-4" />
-            Payroll Dashboard
+            Payroll
+          </TabsTrigger>
+          <TabsTrigger value="hours" className="gap-1.5 data-[state=active]:bg-[#1E293B] data-[state=active]:text-white rounded-md text-xs sm:text-sm">
+            <Clock className="h-4 w-4" />
+            Weekly Hours
           </TabsTrigger>
         </TabsList>
 
