@@ -716,6 +716,60 @@ export default function Attendance() {
             </CardContent>
           </Card>
         </TabsContent>
+
+        <TabsContent value="hours" className="space-y-6 mt-0">
+          {/* Controls row */}
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="space-y-1.5">
+              <Label>Month</Label>
+              <Select value={selectedHoursMonth} onValueChange={setHoursMonth}>
+                <SelectTrigger className="w-[180px] rounded-xl">
+                  <SelectValue placeholder="Select month" />
+                </SelectTrigger>
+                <SelectContent>
+                  {availableMonths.map(m => (
+                    <SelectItem key={m} value={m}>
+                      {format(parseISO(m + "-01"), "MMMM yyyy")}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            {weeklySummaries.length > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="rounded-xl gap-1.5 no-print"
+                onClick={() => window.print()}
+              >
+                <Printer className="h-4 w-4" />
+                Print / Export
+              </Button>
+            )}
+          </div>
+
+          {/* No detailed data state */}
+          {uploads.filter(u => u.parsed_data?.source_type === "detailed_report").length === 0 ? (
+            <Card className="rounded-2xl">
+              <CardContent className="py-12 text-center">
+                <Clock className="h-12 w-12 text-muted-foreground mx-auto mb-3 opacity-50" />
+                <p className="text-foreground font-medium">Upload an ESSL Daily Detailed Report PDF first.</p>
+                <p className="text-sm text-muted-foreground mt-1">Go to Upload & History tab → Choose PDF</p>
+              </CardContent>
+            </Card>
+          ) : weeklySummaries.length === 0 || weeklySummaries.every(w => w.rows.every(r => r.workedMinutes === 0)) ? (
+            <Card className="rounded-2xl">
+              <CardContent className="py-12 text-center space-y-2">
+                <p className="text-foreground font-medium">Work duration data not found in this upload.</p>
+                <p className="text-sm text-muted-foreground">
+                  Please delete the existing upload and re-upload the same PDF — the parser now captures work hours.
+                </p>
+              </CardContent>
+            </Card>
+          ) : (
+            <WeeklyHoursReport summaries={weeklySummaries} monthYear={selectedHoursMonth} />
+          )}
+        </TabsContent>
       </Tabs>
 
       <Dialog
