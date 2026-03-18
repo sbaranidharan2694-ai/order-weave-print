@@ -1,8 +1,16 @@
 const env = import.meta.env as Record<string, string | undefined>;
+
+/** Same fallbacks as `src/integrations/supabase/client.ts` so edge functions work when .env is missing (e.g. Lovable preview). */
 const SUPABASE_URL =
-  env.VITE_SUPABASE_URL ?? env.SUPABASE_URL ?? "";
+  env.VITE_SUPABASE_URL ??
+  env.SUPABASE_URL ??
+  "https://hlpmmdmgdgyzsxnnrdjl.supabase.co";
+
 const SUPABASE_KEY =
-  env.VITE_SUPABASE_PUBLISHABLE_KEY ?? env.VITE_SUPABASE_ANON_KEY ?? env.SUPABASE_ANON_KEY ?? "";
+  env.VITE_SUPABASE_PUBLISHABLE_KEY ??
+  env.VITE_SUPABASE_ANON_KEY ??
+  env.SUPABASE_ANON_KEY ??
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhscG1tZG1nZGd5enN4bm5yZGpsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI4NzM2NTEsImV4cCI6MjA4ODQ0OTY1MX0.F7cOqdgjk0FIXWjH8QovNGNe-w5hisVAHfiUuJGs5sg";
 const DEBUG = (import.meta as { env?: { DEV?: boolean } }).env?.DEV === true;
 
 /**
@@ -16,7 +24,11 @@ export async function invokeEdgeFunction<T = unknown>(
 ): Promise<{ data: T | null; error: string | null }> {
   const base = SUPABASE_URL.replace(/\/$/, "").trim();
   if (!base || base.includes("placeholder")) {
-    return { data: null, error: "Supabase is not configured. Add VITE_SUPABASE_URL in .env." };
+    return {
+      data: null,
+      error:
+        "Supabase URL is missing or invalid. Copy .env.example to .env and set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY (Project Settings → API).",
+    };
   }
   const url = `${base}/functions/v1/${name}`;
   const authHeader = SUPABASE_KEY && SUPABASE_KEY !== "placeholder" ? { Authorization: `Bearer ${SUPABASE_KEY}` } : {};
