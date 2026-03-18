@@ -41,9 +41,9 @@ const DayCell = memo(function DayCell({ day }: { day: WeeklyHourRow["days"][0] }
       )}
     </td>
   );
-}
+});
 
-function RowBadge({ tier }: { tier: WeeklyHourRow["tier"] }) {
+const RowBadge = memo(function RowBadge({ tier }: { tier: WeeklyHourRow["tier"] }) {
   return (
     <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${TIER_BADGE[tier]}`}>
       {TIER_LABEL[tier]}
