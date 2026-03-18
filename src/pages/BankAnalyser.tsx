@@ -34,6 +34,7 @@ import {
   saveTransaction,
   saveTransactionsBatch,
   deleteStatement as deleteStatementStorage,
+  findStatementByAccountAndPeriod,
   deleteTransactionsByStatement,
   loadCustomLookup,
   saveCustomLookup,
@@ -101,14 +102,33 @@ function buildTxnId(
   return `${statementId}_${index}_${safeDate}_${safeRef}_${amountPaise}_${safeDetails || "TXN"}`;
 }
 
-/** Map BankStatementData (PDF.js parser) to our statement + transactions. */
+/** Dedupe key for identical parser rows (include details prefix so real same-day dup amounts stay). */
+function txnDedupeKey(t: { date?: string; refNo?: string; debit?: number; credit?: number; details?: string }): string {
+  const d = (t.date ?? "").trim().slice(0, 10);
+  const r = (t.refNo ?? "").trim().slice(0, 64);
+  const debit = Number(t.debit) || 0;
+  const credit = Number(t.credit) || 0;
+  const det = (t.details ?? "").replace(/\s+/g, " ").trim().slice(0, 100);
+  return `${d}\t${r}\t${debit}\t${credit}\t${det}`;
+}
+
+/** Map BankStatementData (PDF.js parser) to our statement + transactions. Dedupes by (date, refNo, debit, credit) so no duplicate rows. */
 function mapBankStatementDataToStatementAndTransactions(
   data: BankStatementData,
   statementId: string,
   accountKey: string,
   fileName: string
 ): { statement: BankStatement; transactions: BankTransaction[] } {
-  const txns = (data.transactions ?? []).map((t, i) => {
+  const raw = data.transactions ?? [];
+  const seen = new Set<string>();
+  const deduped: typeof raw = [];
+  for (const t of raw) {
+    const key = txnDedupeKey({ date: t.date, refNo: t.refNo, debit: t.debit, credit: t.credit, details: t.details });
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(t);
+  }
+  const txns = deduped.map((t, i) => {
     const refNo = t.refNo ?? "";
     const date = t.date ?? "";
     const debit = Number(t.debit) || 0;
@@ -601,10 +621,21 @@ export default function BankAnalyser() {
     }
   }, [refreshData]);
 
-  const accountTxns = useCallback((key: string) => allTransactions.filter(t => {
-    const stmt = statements.find(s => s.id === t.statementId);
-    return stmt?.accountKey === key;
-  }), [allTransactions, statements]);
+  const transactionsByAccountKey = useMemo(() => {
+    const stmtToAccount = new Map(statements.map((s) => [s.id, s.accountKey]));
+    const byAcc = new Map<string, BankTransaction[]>();
+    for (const a of ACCOUNTS) byAcc.set(a.key, []);
+    for (const t of allTransactions) {
+      const ak = stmtToAccount.get(t.statementId);
+      if (ak && byAcc.has(ak)) byAcc.get(ak)!.push(t);
+    }
+    return byAcc;
+  }, [allTransactions, statements]);
+
+  const accountTxns = useCallback(
+    (key: string) => transactionsByAccountKey.get(key) ?? [],
+    [transactionsByAccountKey],
+  );
 
   const doSaveStatement = useCallback(async (accountKey: string, data: BankStatementData, file: File) => {
     const finalStmtId = btoa(accountKey + file.name + file.size).replace(/[^a-zA-Z0-9]/g, "").substring(0, 40);
@@ -615,12 +646,12 @@ export default function BankAnalyser() {
     newStmt.transactionCount = txns.length;
     newStmt.accountNumber = data.accountNumber ?? (ACCOUNTS.find(a => a.key === accountKey) as { accountNumber?: string } | undefined)?.accountNumber ?? "";
     await saveStatement(newStmt);
+    let inserted = 0;
     try {
-      await saveTransactionsBatch(txns);
-      const savedTxns = await loadTransactions(finalStmtId);
-      if (savedTxns.length !== txns.length) {
-        console.warn("[BankAnalyser] Transaction count mismatch: saved " + savedTxns.length + ", expected " + txns.length);
-        toast.warning("Saved " + savedTxns.length + " of " + txns.length + " transactions. Check Supabase bank_transactions.");
+      inserted = await saveTransactionsBatch(txns);
+      await updateStatementTransactionCount(finalStmtId, inserted);
+      if (inserted < txns.length) {
+        toast.info(`Skipped ${txns.length - inserted} duplicate transaction row(s) (identical date, ref, amount, details).`);
       }
     } catch (err) {
       toast.error(toErrorMessage(err));
@@ -630,7 +661,7 @@ export default function BankAnalyser() {
     if (saved) await updateStatementPdf(finalStmtId, true, file.size);
     setActiveTab(accountKey);
     await refreshData({ silent: true });
-    toast.success(`Saved to ${ACCOUNTS.find(a => a.key === accountKey)?.label ?? accountKey} — ${txns.length} transactions`);
+    toast.success(`Saved to ${ACCOUNTS.find(a => a.key === accountKey)?.label ?? accountKey} — ${inserted} transactions`);
   }, []);
 
   const handleOverviewSave = useCallback(async (accountKey: string, data: BankStatementData, file: File) => {
@@ -640,13 +671,12 @@ export default function BankAnalyser() {
       toast.warning("Already imported — this statement was uploaded earlier. Skipped.");
       return;
     }
-    const { statement: newStmt, transactions: txns } = mapBankStatementDataToStatementAndTransactions(data, finalStmtId, accountKey, file.name);
-    const allStmts = await loadStatements();
-    const periodDup = allStmts.find(s => s.accountKey === accountKey && s.periodStart === newStmt.periodStart && s.periodEnd === newStmt.periodEnd && newStmt.periodStart && newStmt.periodEnd);
-    if (periodDup) {
+    const { statement: newStmt } = mapBankStatementDataToStatementAndTransactions(data, finalStmtId, accountKey, file.name);
+    const periodDup = await findStatementByAccountAndPeriod(accountKey, newStmt.periodStart, newStmt.periodEnd);
+    if (periodDup && periodDup.id !== finalStmtId) {
       setDuplicateDialog({
         existingId: periodDup.id,
-        periodLabel: `${newStmt.periodStart || ""} to ${newStmt.periodEnd || ""}`,
+        periodLabel: `${newStmt.periodStart || ""} to ${newStmt.periodEnd || ""} (overlaps existing ${periodDup.fileName})`,
         accountKey,
         data,
         file,
@@ -757,7 +787,7 @@ export default function BankAnalyser() {
         <DialogContent>
           <DialogHeader><DialogTitle>Statement already exists</DialogTitle></DialogHeader>
           <DialogDescription>
-            A statement for this period ({duplicateDialog?.periodLabel ?? ""}) already exists. Upload anyway and replace?
+            This account already has a statement whose period overlaps ({duplicateDialog?.periodLabel ?? ""}). Replacing will delete the old statement and its transactions, then import this file. Continue?
           </DialogDescription>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setDuplicateDialog(null)}>Cancel</Button>
@@ -1175,10 +1205,10 @@ function AccountTab({ account, onRefresh, customLookup, onUpdateLookup }) {
 
         // Statement already exists; only refill transactions.
         await deleteTransactionsByStatement(statementId);
-        await saveTransactionsBatch(txns);
-        await updateStatementTransactionCount(statementId, txns.length);
+        const inserted = await saveTransactionsBatch(txns);
+        await updateStatementTransactionCount(statementId, inserted);
 
-        toast.success(`Recovered ${txns.length} transactions for ${target.fileName}`, { id: `repair-${statementId}` });
+        toast.success(`Recovered ${inserted} transaction(s) for ${target.fileName}`, { id: `repair-${statementId}` });
         await refetch();
         await onRefresh();
       } catch (err) {
@@ -1228,6 +1258,7 @@ function AccountTab({ account, onRefresh, customLookup, onUpdateLookup }) {
 
   const filtered = useMemo(() => {
     const now = new Date();
+    const sq = searchQuery.trim().toLowerCase();
     return transactions.filter(t => {
       if (typeFilter === "Credits" && t.credit === 0) return false;
       if (typeFilter === "Debits" && t.debit === 0) return false;
@@ -1239,8 +1270,7 @@ function AccountTab({ account, onRefresh, customLookup, onUpdateLookup }) {
       if (typeFilter === "Cheque Out" && !["CHQ_OUTWARD", "CHQ_WITHDRAWAL"].includes(t.type)) return false;
       if (typeFilter === "ATM" && t.type !== "ATM") return false;
       if (typeFilter === "Charges" && t.type !== "CHARGES") return false;
-      if (searchQuery && !t.counterparty.toLowerCase().includes(searchQuery.toLowerCase()) &&
-          !t.details.toLowerCase().includes(searchQuery.toLowerCase())) return false;
+      if (sq && !t.counterparty.toLowerCase().includes(sq) && !t.details.toLowerCase().includes(sq)) return false;
       // Date filter
       if (dateFilter !== "all") {
         const parts = t.date.split("-");
@@ -1255,11 +1285,29 @@ function AccountTab({ account, onRefresh, customLookup, onUpdateLookup }) {
     });
   }, [transactions, typeFilter, searchQuery, dateFilter]);
 
-  const summaryTotalCredits = transactions.reduce((s, t) => s + (Number(t.credit) || 0), 0);
-  const summaryTotalDebits = transactions.reduce((s, t) => s + (Number(t.debit) || 0), 0);
+  const summaryTotals = useMemo(() => {
+    let c = 0;
+    let d = 0;
+    for (const t of transactions) {
+      c += Number(t.credit) || 0;
+      d += Number(t.debit) || 0;
+    }
+    return { credits: c, debits: d };
+  }, [transactions]);
+  const summaryTotalCredits = summaryTotals.credits;
+  const summaryTotalDebits = summaryTotals.debits;
   const summaryNetFlow = summaryTotalCredits - summaryTotalDebits;
-  const totalCredits = filtered.reduce((s, t) => s + t.credit, 0);
-  const totalDebits = filtered.reduce((s, t) => s + t.debit, 0);
+  const filterTotals = useMemo(() => {
+    let c = 0;
+    let d = 0;
+    for (const t of filtered) {
+      c += t.credit;
+      d += t.debit;
+    }
+    return { credits: c, debits: d };
+  }, [filtered]);
+  const totalCredits = filterTotals.credits;
+  const totalDebits = filterTotals.debits;
   const netFlow = totalCredits - totalDebits;
 
   // Group by party
@@ -1290,8 +1338,11 @@ function AccountTab({ account, onRefresh, customLookup, onUpdateLookup }) {
     return { sortedParties: [...regular, ...pinned2], pinnedParties: pinned2 };
   }, [filtered, sortBy]);
 
-  const largeTxns = filtered.filter(t => t.debit > 10000 || t.credit > 10000);
-  const unparsedTxns = filtered.filter(t => t.type === "OTHER");
+  const largeTxns = useMemo(
+    () => filtered.filter((t) => t.debit > 10000 || t.credit > 10000),
+    [filtered],
+  );
+  const unparsedTxns = useMemo(() => filtered.filter((t) => t.type === "OTHER"), [filtered]);
   const hasData = filtered.length > 0;
 
   const borderColor = { credit: "border-l-4 border-l-success", debit: "border-l-4 border-l-destructive", mixed: "border-l-4 border-l-warning" };
@@ -1361,12 +1412,9 @@ function AccountTab({ account, onRefresh, customLookup, onUpdateLookup }) {
           continue;
         }
 
-        const allStmts = await loadStatements();
-        const periodDup = allStmts.find(s =>
-          s.accountKey === finalAccount && s.periodStart === newStmt.periodStart && s.periodEnd === newStmt.periodEnd && newStmt.periodStart && newStmt.periodEnd
-        );
-        if (periodDup) {
-          setQueue(prev => prev.map((p, i) => i === qi ? { ...p, status: "blocked", error: `Already imported: ${periodDup.periodStart || ""} – ${periodDup.periodEnd || ""}. Skipped.` } : p));
+        const periodOverlap = await findStatementByAccountAndPeriod(finalAccount, newStmt.periodStart, newStmt.periodEnd);
+        if (periodOverlap && periodOverlap.id !== finalStmtId) {
+          setQueue(prev => prev.map((p, i) => i === qi ? { ...p, status: "blocked", error: `Overlapping period (${newStmt.periodStart || ""} – ${newStmt.periodEnd || ""}) already exists as “${periodOverlap.fileName}”. Remove the old statement or use Overview upload to replace.` } : p));
           continue;
         }
 
@@ -1376,15 +1424,19 @@ function AccountTab({ account, onRefresh, customLookup, onUpdateLookup }) {
         await saveStatement(newStmt);
 
         setQueue(prev => prev.map((p, i) => i === qi ? { ...p, progress: `Saving ${txns.length} transactions…` } : p));
+        let saved = 0;
         try {
-          await saveTransactionsBatch(txns);
+          saved = await saveTransactionsBatch(txns);
+          await updateStatementTransactionCount(finalStmtId, saved);
+          if (saved < txns.length) {
+            toast.info(`Batch: skipped ${txns.length - saved} duplicate row(s) in ${item.file.name}`);
+          }
         } catch (err) {
           const msg = toErrorMessage(err);
           toast.error(msg);
           setQueue(prev => prev.map((p, i) => i === qi ? { ...p, status: "error", error: msg } : p));
           continue;
         }
-        const saved = txns.length;
         const skipped = 0;
 
         if (item.file.size <= 50 * 1024 * 1024) {

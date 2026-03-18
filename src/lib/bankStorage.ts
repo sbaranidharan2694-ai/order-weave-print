@@ -189,6 +189,72 @@ export async function getStatement(id: string): Promise<BankStatement | null> {
   }
 }
 
+/** Normalize date string to YYYYMMDD for period overlap comparison. Returns "" if unparseable. */
+function periodDateToYyyyMmDd(s: string | null | undefined): string {
+  if (!s || typeof s !== "string") return "";
+  const t = s.trim().replace(/\s+/g, "-");
+  const ddmmyy = t.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})$/);
+  if (ddmmyy) {
+    const [, d, m, y] = ddmmyy;
+    const yy = y.length === 2 ? (parseInt(y, 10) < 50 ? "20" + y : "19" + y) : y;
+    return `${yy}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`.replace(/-/g, "");
+  }
+  const yyyymmdd = t.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+  if (yyyymmdd) {
+    const [, y, m, d] = yyyymmdd;
+    return `${y}${m.padStart(2, "0")}${d.padStart(2, "0")}`;
+  }
+  const ddmonyy = t.match(/^(\d{1,2})[-/]?(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[-/]?(\d{2,4})$/i);
+  if (ddmonyy) {
+    const months: Record<string, string> = { jan: "01", feb: "02", mar: "03", apr: "04", may: "05", jun: "06", jul: "07", aug: "08", sep: "09", oct: "10", nov: "11", dec: "12" };
+    const [, d, mon, y] = ddmonyy;
+    const m = months[mon.slice(0, 3).toLowerCase()] ?? "01";
+    const yy = y.length === 2 ? (parseInt(y, 10) < 50 ? "20" + y : "19" + y) : y;
+    return `${yy}${m}${d.padStart(2, "0")}`;
+  }
+  const yyyymondd = t.match(/^(\d{4})[-/](Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[-/]?(\d{1,2})$/i);
+  if (yyyymondd) {
+    const months: Record<string, string> = { jan: "01", feb: "02", mar: "03", apr: "04", may: "05", jun: "06", jul: "07", aug: "08", sep: "09", oct: "10", nov: "11", dec: "12" };
+    const [, y, mon, d] = yyyymondd;
+    const m = months[mon.slice(0, 3).toLowerCase()] ?? "01";
+    return `${y}${m}${d.padStart(2, "0")}`;
+  }
+  return "";
+}
+
+/**
+ * Find an existing statement for the same account with overlapping period (same or overlapping date range).
+ * Used to prevent duplicate statements from multiple files for the same period.
+ */
+export async function findStatementByAccountAndPeriod(
+  accountKey: string,
+  periodStart: string,
+  periodEnd: string
+): Promise<BankStatement | null> {
+  if (!isSupabaseConfigured) return null;
+  const newStart = periodDateToYyyyMmDd(periodStart);
+  const newEnd = periodDateToYyyyMmDd(periodEnd);
+  if (!newStart || !newEnd) return null;
+  try {
+    const { data: rows, error } = await supabase
+      .from("bank_statements")
+      .select("*")
+      .eq("account_key", accountKey);
+    if (error || !rows?.length) return null;
+    for (const row of rows) {
+      const stmt = rowToStatement(row);
+      const s = periodDateToYyyyMmDd(stmt.periodStart);
+      const e = periodDateToYyyyMmDd(stmt.periodEnd);
+      if (!s || !e) continue;
+      const overlaps = newStart <= e && newEnd >= s;
+      if (overlaps) return stmt;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 /** Check if a transaction exists. Returns false if not configured or table missing. */
 export async function hasTransaction(statementId: string, txnId: string): Promise<boolean> {
   if (!isSupabaseConfigured) return false;
@@ -312,17 +378,48 @@ export async function saveTransaction(txn: BankTransaction): Promise<void> {
   if (error) throw new Error(getErrorMessage(error));
 }
 
-/** Insert all transactions in one batch. Throws if not configured or any insert fails. */
-export async function saveTransactionsBatch(txns: BankTransaction[]): Promise<void> {
+/** Unique key for duplicate row detection: same stmt + date + ref + amounts + details prefix (parser often repeats full identical row). */
+function txnContentKey(row: {
+  statement_id: string;
+  date: string | null;
+  ref_no: string | null;
+  debit: number;
+  credit: number;
+  details: string | null;
+}): string {
+  const d = (row.date ?? "").trim().slice(0, 10);
+  const r = (row.ref_no ?? "").trim().slice(0, 64);
+  const debit = Number(row.debit) || 0;
+  const credit = Number(row.credit) || 0;
+  const det = (row.details ?? "").replace(/\s+/g, " ").trim().slice(0, 100);
+  return `${row.statement_id}\t${d}\t${r}\t${debit}\t${credit}\t${det}`;
+}
+
+/** Insert all transactions in one batch. Dedupes by (statement_id, date, ref_no, debit, credit) so no duplicate rows are inserted. Returns count actually written. */
+export async function saveTransactionsBatch(txns: BankTransaction[]): Promise<number> {
   if (!isSupabaseConfigured) throw new Error("Supabase not configured. Connect Supabase in Lovable or add .env.");
-  if (txns.length === 0) return;
+  if (txns.length === 0) return 0;
 
   const rows = txns.map(transactionToRow);
-  const dedupedRows = Array.from(new Map(rows.map((row) => [row.id, row])).values()); // keep LAST duplicate id
+  const byContentKey = new Map<string, typeof rows[0]>();
+  for (const row of rows) {
+    const key = txnContentKey({
+      statement_id: row.statement_id,
+      date: row.date,
+      ref_no: row.ref_no,
+      debit: Number(row.debit) || 0,
+      credit: Number(row.credit) || 0,
+      details: row.details,
+    });
+    if (!byContentKey.has(key)) byContentKey.set(key, row);
+  }
+  const dedupedRows = Array.from(byContentKey.values());
 
-  console.log(
-    `[bankStorage] saveTransactionsBatch: inserting ${dedupedRows.length}/${rows.length} deduped transactions for statement ${dedupedRows[0]?.statement_id}`,
-  );
+  if (dedupedRows.length < rows.length) {
+    console.log(
+      `[bankStorage] saveTransactionsBatch: deduped ${rows.length} → ${dedupedRows.length} by (statement_id, date, ref_no, debit, credit)`,
+    );
+  }
 
   const { error } = await supabase.from("bank_transactions").upsert(dedupedRows, { onConflict: "id" });
   if (error) {
@@ -331,6 +428,7 @@ export async function saveTransactionsBatch(txns: BankTransaction[]): Promise<vo
   }
 
   console.log(`[bankStorage] saveTransactionsBatch: SUCCESS — ${dedupedRows.length} rows inserted/upserted`);
+  return dedupedRows.length;
 }
 
 /** Delete statement and its transactions. No-op if not configured. */

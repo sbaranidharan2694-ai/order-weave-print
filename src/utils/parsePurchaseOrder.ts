@@ -113,6 +113,14 @@ function isTableHeaderLine(line: string): boolean {
   for (const kw of TABLE_HEADER_KEYWORDS) {
     if (lower.includes(kw)) matchCount++;
   }
+  if (line.includes("\t")) {
+    const cells = line.split("\t").map((c) => c.trim().toLowerCase());
+    const headerish = cells.some((c) =>
+      /^(desc|item|particular|s\.?no|sr|qty|quantity|rate|price|amount|hsn|uom|unit)$/i.test(c) ||
+      TABLE_HEADER_KEYWORDS.some((kw) => c.includes(kw))
+    );
+    if (headerish && cells.length >= 2) return true;
+  }
   return matchCount >= 2;
 }
 
@@ -137,11 +145,24 @@ function detectDocumentSections(lines: string[]): DocumentSections {
   }
 
   if (tableStart < 0) {
+    const tabLines = lines.filter((l) => l.includes("\t") && l.split("\t").filter(Boolean).length >= 3);
+    if (tabLines.length >= 1 && tabLines.length >= Math.ceil(lines.length * 0.25)) {
+      headerEnd = 0;
+      tableStart = 0;
+      tableEnd = lines.length;
+      footerStart = lines.length;
+      if (DEBUG) console.log(`${LOG_PREFIX} Tabular sheet detected; parsing all ${lines.length} lines as items`);
+      return { headerEnd, tableStart, tableEnd, footerStart };
+    }
     headerEnd = Math.min(lines.length, 15);
-    tableStart = headerEnd;
+    tableStart = Math.min(headerEnd, Math.max(0, lines.length - 1));
     tableEnd = lines.length;
     footerStart = lines.length;
-    if (DEBUG) console.log(`${LOG_PREFIX} No explicit table header found; treating lines ${headerEnd}+ as table region`);
+    if (tableStart >= tableEnd && lines.length > 0) {
+      tableStart = 0;
+      headerEnd = 0;
+    }
+    if (DEBUG) console.log(`${LOG_PREFIX} No explicit table header; table region lines ${tableStart}–${tableEnd}`);
     return { headerEnd, tableStart, tableEnd, footerStart };
   }
 
@@ -278,9 +299,56 @@ function extractTableRows(lines: string[], tableStart: number, tableEnd: number)
   const rows: RawRow[] = [];
   let rejected = 0;
 
-  for (let i = tableStart + 1; i < tableEnd; i++) {
+  for (let i = tableStart === 0 ? 0 : tableStart + 1; i < tableEnd; i++) {
     const line = lines[i].trim();
     if (!line || line.length < 3) continue;
+
+    if (i === 0 && line.includes("\t")) {
+      const cells = line.split("\t").map((c) => c.trim());
+      const numsAfterFirst = cells.slice(1).map((c) => toNum(c)).filter((n) => n > 0);
+      if (cells.length >= 3 && numsAfterFirst.length === 0) continue;
+    }
+
+    /* Tab-separated row (Excel export): Description | Qty | Rate | Amount */
+    if (line.includes("\t")) {
+      const cells = line.split("\t").map((c) => c.trim()).filter(Boolean);
+      if (cells.length >= 4) {
+        const c0 = cells[0].toLowerCase();
+        if (/^(desc|item|s\.?no|sr|qty|rate|amount|particular)/i.test(c0) && cells.length <= 10) {
+          continue;
+        }
+        const q = toNum(cells[1]);
+        const p = toNum(cells[2]);
+        const a = toNum(cells[3]);
+        if (q > 0 && (p > 0 || a > 0)) {
+          const up = p > 0 ? p : a / q;
+          const amt = a > 0 ? a : q * up;
+          rows.push({
+            lineText: line,
+            description: cells[0].slice(0, 400) || "Item",
+            quantity: q,
+            unit_price: Math.round(up * 100) / 100,
+            amount: Math.round(amt * 100) / 100,
+            hasNumeric: true,
+          });
+          continue;
+        }
+      } else if (cells.length === 3) {
+        const q = toNum(cells[1]);
+        const p = toNum(cells[2]);
+        if (q > 0 && p > 0 && /[a-zA-Z]/.test(cells[0])) {
+          rows.push({
+            lineText: line,
+            description: cells[0].slice(0, 400),
+            quantity: q,
+            unit_price: p,
+            amount: Math.round(q * p * 100) / 100,
+            hasNumeric: true,
+          });
+          continue;
+        }
+      }
+    }
 
     const hasText = /[a-zA-Z]/.test(line);
     const amountMatches = line.match(AMOUNT_RE) || [];

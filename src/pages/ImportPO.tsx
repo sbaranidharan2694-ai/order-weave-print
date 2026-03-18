@@ -43,6 +43,8 @@ const GST_REGEX = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][A-Z0-9]Z[A-Z0-9]$/;
 
 /* ─── Types ─── */
 type LineItem = {
+  /** Stable id so sorted-table edits update the correct row (indexOf breaks on duplicate rows). */
+  id: string;
   sno: number;
   description: string;
   quantity: number;
@@ -53,6 +55,21 @@ type LineItem = {
   gst_amount: number;
   line_total: number;
 };
+
+function newLineId(): string {
+  try {
+    return crypto.randomUUID();
+  } catch {
+    return `row-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+  }
+}
+
+/** Snap AI/parser GST to a valid slab so Select always shows a value. */
+function snapGstRate(r: number): number {
+  const n = Math.max(0, Math.min(100, normalizeNumber(r)));
+  if (GST_RATES.includes(n)) return n;
+  return GST_RATES.reduce((best, x) => (Math.abs(x - n) < Math.abs(best - n) ? x : best));
+}
 
 type POHeader = {
   po_number: string;
@@ -124,7 +141,27 @@ function calcLineItem(li: LineItem): LineItem {
 }
 
 function emptyLine(sno: number): LineItem {
-  return { sno, description: "", quantity: 1, unit: "Nos", unit_price: 0, hsn_code: "", gst_rate: 18, gst_amount: 0, line_total: 0 };
+  return { id: newLineId(), sno, description: "", quantity: 1, unit: "Nos", unit_price: 0, hsn_code: "", gst_rate: 18, gst_amount: 0, line_total: 0 };
+}
+
+function lineItemFromParsed(li: any, idx: number): LineItem {
+  const qty = Math.max(1, normalizeNumber(li.quantity ?? li.qty ?? 1));
+  const price = Math.max(0, normalizeNumber(li.unit_price ?? 0));
+  const gstRate = snapGstRate(normalizeNumber(li.gst_rate ?? 18));
+  const base = qty * price;
+  const gstAmt = Math.round(base * gstRate / 100 * 100) / 100;
+  return {
+    id: newLineId(),
+    sno: idx + 1,
+    description: String(li.description || "").trim(),
+    quantity: qty,
+    unit: String(li.unit || li.uom || "Nos").trim(),
+    unit_price: price,
+    hsn_code: String(li.hsn_code || "").trim(),
+    gst_rate: gstRate,
+    gst_amount: gstAmt,
+    line_total: Math.round((base + gstAmt) * 100) / 100,
+  };
 }
 
 function emptyHeader(): POHeader {
@@ -134,6 +171,22 @@ function emptyHeader(): POHeader {
     customer_phone: "", customer_email: "", customer_contact_person: "",
     payment_terms: "", delivery_date: "", shipping_address: "", notes: "", discount_amount: 0,
   };
+}
+
+/** Convert common PO date strings to YYYY-MM-DD for HTML date inputs */
+function normalizeDateForInput(v: unknown): string {
+  if (v == null || v === "") return "";
+  const s = String(v).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const iso = s.match(/^(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})/);
+  if (iso) return `${iso[1]}-${iso[2].padStart(2, "0")}-${iso[3].padStart(2, "0")}`;
+  const dmy = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/);
+  if (dmy) {
+    let y = dmy[3];
+    if (y.length === 2) y = parseInt(y, 10) < 50 ? `20${y}` : `19${y}`;
+    return `${y}-${dmy[2].padStart(2, "0")}-${dmy[1].padStart(2, "0")}`;
+  }
+  return "";
 }
 
 /** Validate a date string is a real YYYY-MM-DD; return null if invalid */
@@ -195,7 +248,7 @@ export default function ImportPO() {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
   const sortedLineItems = useMemo(() => {
-    if (!sortCol) return lineItems;
+    if (!sortCol || sortCol === "id") return lineItems;
     return [...lineItems].sort((a, b) => {
       const av = a[sortCol];
       const bv = b[sortCol];
@@ -383,7 +436,7 @@ export default function ImportPO() {
     const cust = d.customer || {};
     setHeader({
       po_number: d.po_number || "",
-      po_date: d.po_date || format(new Date(), "yyyy-MM-dd"),
+      po_date: normalizeDateForInput(d.po_date) || format(new Date(), "yyyy-MM-dd"),
       customer_name: cust.name || d.vendor_name || "",
       customer_address: cust.address || d.delivery_address || "",
       customer_gst: cust.gst_number || d.gstin || "",
@@ -391,29 +444,12 @@ export default function ImportPO() {
       customer_email: cust.email || d.contact_email || "",
       customer_contact_person: cust.contact_person || d.contact_person || "",
       payment_terms: d.payment_terms || "",
-      delivery_date: d.delivery_date || "",
+      delivery_date: normalizeDateForInput(d.delivery_date),
       shipping_address: d.shipping_address || "",
       notes: d.notes || d.remarks || "",
       discount_amount: d.discount_amount || 0,
     });
-    const items: LineItem[] = (d.line_items || []).map((li: any, idx: number) => {
-      const qty = Math.max(1, normalizeNumber(li.quantity ?? li.qty ?? 1));
-      const price = Math.max(0, normalizeNumber(li.unit_price ?? 0));
-      const gstRate = Math.max(0, Math.min(100, normalizeNumber(li.gst_rate ?? 18)));
-      const base = qty * price;
-      const gstAmt = Math.round(base * gstRate / 100 * 100) / 100;
-      return {
-        sno: idx + 1,
-        description: String(li.description || "").trim(),
-        quantity: qty,
-        unit: String(li.unit || li.uom || "Nos").trim(),
-        unit_price: price,
-        hsn_code: String(li.hsn_code || "").trim(),
-        gst_rate: gstRate,
-        gst_amount: gstAmt,
-        line_total: Math.round((base + gstAmt) * 100) / 100,
-      };
-    });
+    const items: LineItem[] = (d.line_items || []).map((li: any, idx: number) => lineItemFromParsed(li, idx));
     if (items.length === 0) items.push(emptyLine(1));
     setLineItems(items);
     setConfidence(d.confidence || "medium");
@@ -446,6 +482,7 @@ export default function ImportPO() {
     setParseStep("extracting");
     setShowParseFailureModal(false);
     const startTime = Date.now();
+    let lastExtractedText = "";
 
     try {
       const ext = file.name.toLowerCase().split(".").pop() || "";
@@ -463,16 +500,26 @@ export default function ImportPO() {
         setParseOcrFailed(!!result.ocrFailed);
       }
 
-      if (!text || text.trim().length < 20) {
+      const minTextLen = ext === "xlsx" ? 4 : 20;
+      if (!text || text.trim().length < minTextLen) {
         setParseStep("idle");
         setParseState("error");
         setParseError("Could not extract text from this file. It may be a scanned image. Try entering details manually.");
         return;
       }
 
+      lastExtractedText = text;
       setRawText(text);
+      let ruleBackup: ReturnType<typeof parsePOText> | null = null;
+      try {
+        ruleBackup = parsePOText(text);
+      } catch (e) {
+        console.warn("[ImportPO] Rule parser during extract:", e);
+      }
+      const ruleHasLines = !!(ruleBackup?.line_items?.length);
+
       setParseStep("calling_ai");
-      console.log("[ImportPO] Extracted text length:", text.length, "source:", ext);
+      console.log("[ImportPO] Extracted text length:", text.length, "source:", ext, "rule line items:", ruleBackup?.line_items?.length ?? 0);
 
       if (parseAttemptsRef.current >= 3) {
         setParseStep("idle");
@@ -498,7 +545,7 @@ export default function ImportPO() {
       console.log("[ImportPO] AI response success:", body?.success, "hasData:", !!body?.data, "error:", aiError || body?.error);
 
       if (aiError) {
-        const fallback = tryRuleParserFallback(text);
+        const fallback = ruleHasLines && ruleBackup ? ruleBackup : tryRuleParserFallback(text);
         if (fallback) {
           setParseStep("idle");
           applyParsedToForm(fallback, "rule-based parser (AI unavailable)");
@@ -512,7 +559,7 @@ export default function ImportPO() {
       }
 
       if (body?.success === false) {
-        const fallback = tryRuleParserFallback(text);
+        const fallback = ruleHasLines && ruleBackup ? ruleBackup : tryRuleParserFallback(text);
         if (fallback) {
           setParseStep("idle");
           applyParsedToForm(fallback, "rule-based parser");
@@ -533,7 +580,7 @@ export default function ImportPO() {
 
       const d = body?.data ?? body;
       if (!d || typeof d !== "object") {
-        const fallback = tryRuleParserFallback(text);
+        const fallback = ruleHasLines && ruleBackup ? ruleBackup : tryRuleParserFallback(text);
         if (fallback) {
           setParseStep("idle");
           applyParsedToForm(fallback, "rule-based parser");
@@ -555,7 +602,6 @@ export default function ImportPO() {
         setParseTime(Math.round((Date.now() - startTime) / 1000));
         toast.success(`PO parsed: ${d.line_items.length} line item(s) found`);
         console.log("[ImportPO] Populated form, line items:", d.line_items.length, "po_number:", d.po_number || "(missing)");
-        // Auto-learn from successful parse
         try {
           await learnFromParse(text, d, d.customer?.name || d.vendor_name || null);
         } catch (e) {
@@ -564,7 +610,47 @@ export default function ImportPO() {
         return;
       }
 
-      const fallback = tryRuleParserFallback(text);
+      /* AI returned header but no lines — merge rule-based line items */
+      if (ruleHasLines && ruleBackup) {
+        const r = ruleBackup;
+        const dc = d.customer || {};
+        const merged = {
+          po_number: d.po_number || r.po_number || "",
+          po_date: d.po_date || r.po_date || "",
+          customer: {
+            name: dc.name || d.vendor_name || r.customer?.name || "",
+            address: dc.address || r.customer?.address || d.delivery_address || "",
+            gst_number: dc.gst_number || d.gstin || r.customer?.gst_number || "",
+            contact_person: dc.contact_person || r.customer?.contact_person || d.contact_person || "",
+            phone: dc.phone || d.contact_no || r.customer?.phone || "",
+            email: dc.email || d.contact_email || r.customer?.email || "",
+          },
+          vendor_name: d.vendor_name || r.vendor_name,
+          delivery_address: d.delivery_address || r.delivery_address,
+          gstin: d.gstin || r.gstin,
+          contact_no: d.contact_no || r.contact_no,
+          payment_terms: d.payment_terms || r.payment_terms || "",
+          delivery_date: d.delivery_date || r.delivery_date || "",
+          line_items: r.line_items,
+          subtotal: r.subtotal,
+          cgst: d.cgst ?? r.cgst,
+          sgst: d.sgst ?? r.sgst,
+          igst: d.igst ?? r.igst,
+          total_amount: d.total_amount || r.total_amount,
+          discount_amount: normalizeNumber(d.discount_amount),
+          shipping_address: d.shipping_address || "",
+          notes: d.notes || d.remarks || "",
+          confidence: "medium",
+          warnings: [...(Array.isArray(d.warnings) ? d.warnings : []), "Line items from rule-based parser; AI did not return rows."],
+        };
+        setParseStep("idle");
+        applyParsedToForm(merged, "AI header + rule-based line items");
+        setParseTime(Math.round((Date.now() - startTime) / 1000));
+        toast.success(`Imported ${r.line_items.length} line item(s) via rule parser (AI had no rows)`);
+        return;
+      }
+
+      const fallback = ruleHasLines && ruleBackup ? ruleBackup : tryRuleParserFallback(text);
       if (fallback && fallback.line_items && fallback.line_items.length > 0) {
         setParseStep("idle");
         applyParsedToForm(fallback, "rule-based parser");
@@ -582,6 +668,17 @@ export default function ImportPO() {
       setParseStep("idle");
       const msg = toErrorMessage(err);
       const isPasswordRequired = msg === "PASSWORD_REQUIRED";
+      try {
+        if (lastExtractedText.trim().length >= 4) {
+          const fb = parsePOText(lastExtractedText);
+          if (fb.line_items?.length) {
+            applyParsedToForm(fb, "rule-based parser (after error)");
+            setParseTime(0);
+            toast.info("Used rule-based parser — please verify.");
+            return;
+          }
+        }
+      } catch { /* ignore */ }
       setParseState("error");
       setParseError(isPasswordRequired ? "This PDF is password-protected. Please remove the password or use an unprotected copy." : (msg || "Parsing failed"));
       setParseFailureError(isPasswordRequired ? "This PDF is password-protected." : (msg || "Parsing failed"));
@@ -619,21 +716,22 @@ export default function ImportPO() {
   };
 
   /* ─── Line item operations ─── */
-  const updateLine = (idx: number, field: keyof LineItem, value: unknown) => {
-    setLineItems(items => items.map((li, i) => {
-      if (i !== idx) return li;
+  const updateLine = (rowId: string, field: keyof LineItem, value: unknown) => {
+    if (field === "id") return;
+    setLineItems(items => items.map((li) => {
+      if (li.id !== rowId) return li;
       let normalized = value;
       if (field === "quantity") normalized = Math.max(1, Math.floor(normalizeNumber(value)));
       else if (field === "unit_price") normalized = Math.max(0, normalizeNumber(value));
-      else if (field === "gst_rate") normalized = Math.max(0, Math.min(100, normalizeNumber(value)));
+      else if (field === "gst_rate") normalized = snapGstRate(normalizeNumber(value));
       else if (field === "sno") normalized = Math.max(1, Math.floor(normalizeNumber(value)));
-      const updated = { ...li, [field]: normalized };
+      const updated = { ...li, [field]: normalized } as LineItem;
       return calcLineItem(updated);
     }));
   };
 
-  const removeLine = (idx: number) => {
-    setLineItems(items => items.filter((_, i) => i !== idx).map((li, i) => ({ ...li, sno: i + 1 })));
+  const removeLine = (rowId: string) => {
+    setLineItems(items => items.filter(li => li.id !== rowId).map((li, i) => ({ ...li, sno: i + 1 })));
   };
 
   const addLine = () => {
@@ -894,12 +992,13 @@ export default function ImportPO() {
     if (raw.header) setHeader(raw.header);
     if (raw.lineItems) {
       const normalized = (raw.lineItems as LineItem[]).map((li, idx) => {
-        const qty = Math.max(1, normalizeNumber(li.quantity));
-        const price = Math.max(0, normalizeNumber(li.unit_price));
-        const rate = Math.max(0, Math.min(100, normalizeNumber(li.gst_rate)));
-        const base = qty * price;
-        const gstAmt = Math.round(base * rate / 100 * 100) / 100;
-        return { ...li, sno: idx + 1, quantity: qty, unit_price: price, gst_rate: rate, gst_amount: gstAmt, line_total: Math.round((base + gstAmt) * 100) / 100 };
+        const row = { ...li, id: li.id || newLineId(), sno: idx + 1 };
+        return calcLineItem({
+          ...row,
+          quantity: Math.max(1, normalizeNumber(row.quantity)),
+          unit_price: Math.max(0, normalizeNumber(row.unit_price)),
+          gst_rate: snapGstRate(row.gst_rate),
+        });
       });
       setLineItems(normalized);
     }
@@ -916,23 +1015,50 @@ export default function ImportPO() {
     const startTime = Date.now();
     try {
       const hint = `Previous parse had issues. User corrections: customer=${header.customer_name}, po_number=${header.po_number}. Re-parse carefully:\n\n${rawText}`;
-      const { data, error } = await invokeEdgeFunction<{ data?: any }>("parse-po", { pdfText: hint });
-      if (error) { setParseState("parsed"); toast.error(error); return; }
-      if (data?.data?.line_items?.length) {
-        const items = data.data.line_items.map((li: any, idx: number) => {
-          const qty = Math.max(1, normalizeNumber(li.quantity ?? li.qty ?? 1));
-          const price = Math.max(0, normalizeNumber(li.unit_price ?? 0));
-          const gstRate = Math.max(0, Math.min(100, normalizeNumber(li.gst_rate ?? 18)));
-          const base = qty * price;
-          const gstAmt = Math.round(base * gstRate / 100 * 100) / 100;
-          return { sno: idx + 1, description: String(li.description || "").trim(), quantity: qty, unit: String(li.unit || "Nos").trim(), unit_price: price, hsn_code: String(li.hsn_code || "").trim(), gst_rate: gstRate, gst_amount: gstAmt, line_total: Math.round((base + gstAmt) * 100) / 100 };
-        });
+      const { data, error } = await invokeEdgeFunction<{ success?: boolean; data?: any; line_items?: any[] }>("parse-po", { pdfText: hint });
+      if (error) {
+        try {
+          const rule = parsePOText(rawText);
+          if (rule.line_items?.length) {
+            applyParsedToForm(rule, "rule-based parser (AI unavailable)");
+            setParseTime(Math.round((Date.now() - startTime) / 1000));
+            toast.success(`Used rule parser: ${rule.line_items.length} line item(s)`);
+          } else {
+            toast.error(error);
+          }
+        } catch {
+          toast.error(error);
+        }
+        setParseState("parsed");
+        return;
+      }
+      const body = data as Record<string, unknown> | null;
+      const d = (body?.data ?? body) as { line_items?: any[] } | null;
+      const lines = Array.isArray(d?.line_items) ? d!.line_items! : [];
+      if (lines.length > 0) {
+        const items = lines.map((li: any, idx: number) => lineItemFromParsed(li, idx));
         setLineItems(items);
         setParseTime(Math.round((Date.now() - startTime) / 1000));
-        toast.success(`Re-parsed: ${items.length} items found`);
+        toast.success(`Re-parsed: ${items.length} item(s) found`);
+      } else {
+        try {
+          const rule = parsePOText(rawText);
+          if (rule.line_items?.length) {
+            applyParsedToForm(rule, "rule-based parser");
+            setParseTime(Math.round((Date.now() - startTime) / 1000));
+            toast.success(`AI returned no rows; used rule parser: ${rule.line_items.length} item(s)`);
+          } else {
+            toast.warning("Re-parse found no line items. Edit manually or upload a clearer PDF.");
+          }
+        } catch {
+          toast.warning("Re-parse found no line items.");
+        }
       }
       setParseState("parsed");
-    } catch { setParseState("parsed"); }
+    } catch (e) {
+      toast.error(toErrorMessage(e));
+      setParseState("parsed");
+    }
   };
 
   /* ─── Discard ─── */
@@ -1156,25 +1282,25 @@ export default function ImportPO() {
 
               {/* PO Header */}
               <Card>
-                <CardHeader className="py-3 px-4"><CardTitle className="text-sm">📋 PO Header</CardTitle></CardHeader>
-                <CardContent className="px-4 pb-4">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-                    <div>
-                      <Label htmlFor="import-po-number" className="text-xs text-muted-foreground">PO Number *</Label>
-                      <Input id="import-po-number" value={header.po_number} onChange={e => { setHeader(h => ({ ...h, po_number: e.target.value })); setFormErrors(prev => ({ ...prev, po_number: "" })); }} className="h-8 text-sm mt-1" aria-invalid={!!formErrors.po_number} />
-                      {formErrors.po_number && <p className="text-xs text-destructive mt-1">{formErrors.po_number}</p>}
+                <CardHeader className="py-4 px-5"><CardTitle className="text-lg font-semibold">📋 PO Header</CardTitle></CardHeader>
+                <CardContent className="px-5 pb-5">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-base">
+                    <div className="min-w-0">
+                      <Label htmlFor="import-po-number" className="text-sm font-medium text-foreground">PO Number *</Label>
+                      <Input id="import-po-number" value={header.po_number} onChange={e => { setHeader(h => ({ ...h, po_number: e.target.value })); setFormErrors(prev => ({ ...prev, po_number: "" })); }} className="h-11 text-base mt-1.5 min-h-[44px]" aria-invalid={!!formErrors.po_number} />
+                      {formErrors.po_number && <p className="text-sm text-destructive mt-1">{formErrors.po_number}</p>}
                     </div>
-                    <div>
-                      <Label htmlFor="import-po-date" className="text-xs text-muted-foreground">PO Date</Label>
-                      <Input id="import-po-date" type="date" value={header.po_date} onChange={e => setHeader(h => ({ ...h, po_date: e.target.value }))} className="h-8 text-sm mt-1" />
+                    <div className="min-w-0">
+                      <Label htmlFor="import-po-date" className="text-sm font-medium text-foreground">PO Date</Label>
+                      <Input id="import-po-date" type="date" value={header.po_date} onChange={e => setHeader(h => ({ ...h, po_date: e.target.value }))} className="h-11 text-base mt-1.5 min-h-[44px]" />
                     </div>
-                    <div>
-                      <Label htmlFor="import-po-payment-terms" className="text-xs text-muted-foreground">Payment Terms</Label>
-                      <Input id="import-po-payment-terms" value={header.payment_terms} onChange={e => setHeader(h => ({ ...h, payment_terms: e.target.value }))} className="h-8 text-sm mt-1" />
+                    <div className="min-w-0 md:col-span-2">
+                      <Label htmlFor="import-po-payment-terms" className="text-sm font-medium text-foreground">Payment Terms</Label>
+                      <Input id="import-po-payment-terms" value={header.payment_terms} onChange={e => setHeader(h => ({ ...h, payment_terms: e.target.value }))} className="h-11 text-base mt-1.5 min-h-[44px]" placeholder="e.g. 30 days" />
                     </div>
-                    <div>
-                      <Label htmlFor="import-po-delivery-date" className="text-xs text-muted-foreground">Delivery Date</Label>
-                      <Input id="import-po-delivery-date" type="date" value={header.delivery_date} onChange={e => setHeader(h => ({ ...h, delivery_date: e.target.value }))} className="h-8 text-sm mt-1" />
+                    <div className="min-w-0">
+                      <Label htmlFor="import-po-delivery-date" className="text-sm font-medium text-foreground">Delivery Date</Label>
+                      <Input id="import-po-delivery-date" type="date" value={header.delivery_date} onChange={e => setHeader(h => ({ ...h, delivery_date: e.target.value }))} className="h-11 text-base mt-1.5 min-h-[44px]" />
                       {header.delivery_date && isRushOrder(header.delivery_date) && (
                         <Badge className="mt-1 bg-warning/20 text-warning text-xs">⚡ Rush Order</Badge>
                       )}
@@ -1188,8 +1314,8 @@ export default function ImportPO() {
 
               {/* Customer */}
               <Card>
-                <CardHeader className="py-3 px-4"><CardTitle className="text-sm">👤 Customer</CardTitle></CardHeader>
-                <CardContent className="px-4 pb-4">
+                <CardHeader className="py-4 px-5"><CardTitle className="text-lg font-semibold">👤 Customer</CardTitle></CardHeader>
+                <CardContent className="px-5 pb-5">
                   {customerMatch?.type === "exact" && (
                     <div className="mb-3 p-2 bg-success/10 border border-success/30 rounded-md flex items-center justify-between">
                       <span className="text-xs text-success font-medium">✅ Existing Customer: {customerMatch.customer.name}</span>
@@ -1210,36 +1336,36 @@ export default function ImportPO() {
                     </div>
                   )}
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-                    <div className="sm:col-span-2">
-                      <Label htmlFor="import-customer-name" className="text-xs text-muted-foreground">Company/Customer Name *</Label>
-                      <Input id="import-customer-name" value={header.customer_name} onChange={e => { setHeader(h => ({ ...h, customer_name: e.target.value })); setFormErrors(prev => ({ ...prev, customer_name: "" })); }} className="h-8 text-sm mt-1" aria-invalid={!!formErrors.customer_name} />
-                      {formErrors.customer_name && <p className="text-xs text-destructive mt-1">{formErrors.customer_name}</p>}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-base">
+                    <div className="md:col-span-2 min-w-0">
+                      <Label htmlFor="import-customer-name" className="text-sm font-medium text-foreground">Company/Customer Name *</Label>
+                      <Input id="import-customer-name" value={header.customer_name} onChange={e => { setHeader(h => ({ ...h, customer_name: e.target.value })); setFormErrors(prev => ({ ...prev, customer_name: "" })); }} className="h-11 text-base mt-1.5 min-h-[44px]" aria-invalid={!!formErrors.customer_name} />
+                      {formErrors.customer_name && <p className="text-sm text-destructive mt-1">{formErrors.customer_name}</p>}
                     </div>
-                    <div className="sm:col-span-2">
-                      <Label htmlFor="import-customer-address" className="text-xs text-muted-foreground">Address</Label>
-                      <Textarea id="import-customer-address" value={header.customer_address} onChange={e => setHeader(h => ({ ...h, customer_address: e.target.value }))} className="text-sm mt-1 min-h-[60px]" />
+                    <div className="md:col-span-2 min-w-0">
+                      <Label htmlFor="import-customer-address" className="text-sm font-medium text-foreground">Address</Label>
+                      <Textarea id="import-customer-address" value={header.customer_address} onChange={e => setHeader(h => ({ ...h, customer_address: e.target.value }))} className="text-base mt-1.5 min-h-[88px] leading-relaxed resize-y" rows={3} />
                     </div>
-                    <div>
-                      <Label htmlFor="import-customer-gst" className="text-xs text-muted-foreground">GST Number</Label>
-                      <div className="relative">
-                        <Input id="import-customer-gst" value={header.customer_gst} onChange={e => setHeader(h => ({ ...h, customer_gst: e.target.value.toUpperCase() }))} className="h-8 text-sm mt-1 font-mono pr-8" maxLength={15} aria-invalid={gstValid === false} aria-describedby={gstValid === false ? "import-gst-error" : undefined} />
+                    <div className="min-w-0">
+                      <Label htmlFor="import-customer-gst" className="text-sm font-medium text-foreground">GST Number</Label>
+                      <div className="relative mt-1.5">
+                        <Input id="import-customer-gst" value={header.customer_gst} onChange={e => setHeader(h => ({ ...h, customer_gst: e.target.value.toUpperCase() }))} className="h-11 text-base font-mono pr-10 min-h-[44px] tracking-wide" maxLength={15} placeholder="15-character GSTIN" aria-invalid={gstValid === false} aria-describedby={gstValid === false ? "import-gst-error" : undefined} />
                         {gstValid !== null && (
-                          <span id="import-gst-error" className={`absolute right-2 top-1/2 -translate-y-1/2 mt-0.5 text-sm ${gstValid ? "text-success" : "text-destructive"}`} aria-label={gstValid ? "Valid GSTIN" : "Invalid GSTIN format"}>{gstValid ? "✓" : "✗"}</span>
+                          <span id="import-gst-error" className={`absolute right-3 top-1/2 -translate-y-1/2 text-lg ${gstValid ? "text-success" : "text-destructive"}`} aria-label={gstValid ? "Valid GSTIN" : "Invalid GSTIN format"}>{gstValid ? "✓" : "✗"}</span>
                         )}
                       </div>
                     </div>
-                    <div>
-                      <Label htmlFor="import-customer-contact-person" className="text-xs text-muted-foreground">Contact Person</Label>
-                      <Input id="import-customer-contact-person" value={header.customer_contact_person} onChange={e => setHeader(h => ({ ...h, customer_contact_person: e.target.value }))} className="h-8 text-sm mt-1" />
+                    <div className="min-w-0">
+                      <Label htmlFor="import-customer-contact-person" className="text-sm font-medium text-foreground">Contact Person</Label>
+                      <Input id="import-customer-contact-person" value={header.customer_contact_person} onChange={e => setHeader(h => ({ ...h, customer_contact_person: e.target.value }))} className="h-11 text-base mt-1.5 min-h-[44px]" />
                     </div>
-                    <div>
-                      <Label htmlFor="import-customer-phone" className="text-xs text-muted-foreground">Phone</Label>
-                      <Input id="import-customer-phone" value={header.customer_phone} onChange={e => setHeader(h => ({ ...h, customer_phone: e.target.value.replace(/\D/g, "").slice(0, 10) }))} className="h-8 text-sm mt-1" />
+                    <div className="min-w-0">
+                      <Label htmlFor="import-customer-phone" className="text-sm font-medium text-foreground">Phone</Label>
+                      <Input id="import-customer-phone" value={header.customer_phone} onChange={e => setHeader(h => ({ ...h, customer_phone: e.target.value.replace(/\D/g, "").slice(0, 10) }))} className="h-11 text-base mt-1.5 min-h-[44px] font-mono tracking-wide" placeholder="10 digits" inputMode="numeric" />
                     </div>
-                    <div>
-                      <Label htmlFor="import-customer-email" className="text-xs text-muted-foreground">Email</Label>
-                      <Input id="import-customer-email" type="email" value={header.customer_email} onChange={e => setHeader(h => ({ ...h, customer_email: e.target.value }))} className="h-8 text-sm mt-1" />
+                    <div className="min-w-0">
+                      <Label htmlFor="import-customer-email" className="text-sm font-medium text-foreground">Email</Label>
+                      <Input id="import-customer-email" type="email" value={header.customer_email} onChange={e => setHeader(h => ({ ...h, customer_email: e.target.value }))} className="h-11 text-base mt-1.5 min-h-[44px]" />
                     </div>
                   </div>
                 </CardContent>
@@ -1261,126 +1387,152 @@ export default function ImportPO() {
             </div>
           )}
           <Card>
-            <CardHeader className="py-3 px-4">
-              <CardTitle className="text-sm flex items-center justify-between">
+            <CardHeader className="py-4 px-5">
+              <CardTitle className="text-lg font-semibold flex flex-wrap items-center justify-between gap-2">
                 <span>📦 Line Items ({lineItems.length})</span>
-                <Button variant="outline" size="sm" onClick={addLine} className="h-7 text-xs">
-                  <PlusCircle className="h-3.5 w-3.5 mr-1" />Add Row
+                <Button variant="outline" size="default" onClick={addLine} className="h-10 text-sm shrink-0">
+                  <PlusCircle className="h-4 w-4 mr-1.5" />Add Row
                 </Button>
               </CardTitle>
-              {formErrors.line_items && <p className="text-xs text-destructive mt-1">{formErrors.line_items}</p>}
+              {formErrors.line_items && <p className="text-sm text-destructive mt-2">{formErrors.line_items}</p>}
             </CardHeader>
             <CardContent className="p-0">
-              <div className="overflow-x-auto w-full">
-                <table className="w-full text-xs border-collapse">
-                  <thead className="sticky top-0 z-10 bg-muted">
+              <div className="overflow-x-auto w-full border-t">
+                <table className="w-full min-w-[920px] text-sm border-collapse table-fixed">
+                  <colgroup>
+                    <col className="w-12" />
+                    <col className="min-w-[220px]" />
+                    <col className="w-24" />
+                    <col className="w-[7.5rem]" />
+                    <col className="w-28" />
+                    <col className="w-24" />
+                    <col className="w-28" />
+                    <col className="w-32" />
+                    <col className="w-12" />
+                  </colgroup>
+                  <thead className="sticky top-0 z-10 bg-muted shadow-sm">
                     <tr className="border-b">
-                      <th scope="col" aria-sort={sortCol === "sno" ? (sortDir === "asc" ? "ascending" : "descending") : "none"} className="text-left p-2 font-medium text-muted-foreground w-10 cursor-pointer select-none" onClick={() => handleSort("sno")} onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handleSort("sno"); } }} tabIndex={0}>
+                      <th scope="col" aria-sort={sortCol === "sno" ? (sortDir === "asc" ? "ascending" : "descending") : "none"} className="text-left p-3 text-sm font-semibold text-foreground align-bottom cursor-pointer select-none" onClick={() => handleSort("sno")} onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handleSort("sno"); } }} tabIndex={0}>
                         #{sortCol === "sno" ? (sortDir === "asc" ? " ▲" : " ▼") : ""}
                       </th>
-                      <th scope="col" aria-sort={sortCol === "description" ? (sortDir === "asc" ? "ascending" : "descending") : "none"} className="text-left p-2 font-medium text-muted-foreground min-w-[240px] cursor-pointer select-none" onClick={() => handleSort("description")} onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handleSort("description"); } }} tabIndex={0}>
+                      <th scope="col" aria-sort={sortCol === "description" ? (sortDir === "asc" ? "ascending" : "descending") : "none"} className="text-left p-3 text-sm font-semibold text-foreground align-bottom cursor-pointer select-none" onClick={() => handleSort("description")} onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handleSort("description"); } }} tabIndex={0}>
                         Description{sortCol === "description" ? (sortDir === "asc" ? " ▲" : " ▼") : ""}
                       </th>
-                      <th scope="col" aria-sort={sortCol === "quantity" ? (sortDir === "asc" ? "ascending" : "descending") : "none"} className="text-right p-2 font-medium text-muted-foreground w-16 cursor-pointer select-none" onClick={() => handleSort("quantity")} onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handleSort("quantity"); } }} tabIndex={0}>
+                      <th scope="col" aria-sort={sortCol === "quantity" ? (sortDir === "asc" ? "ascending" : "descending") : "none"} className="text-right p-3 text-sm font-semibold text-foreground align-bottom cursor-pointer select-none" onClick={() => handleSort("quantity")} onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handleSort("quantity"); } }} tabIndex={0}>
                         Qty{sortCol === "quantity" ? (sortDir === "asc" ? " ▲" : " ▼") : ""}
                       </th>
-                      <th scope="col" className="text-left p-2 font-medium text-muted-foreground w-20">Unit</th>
-                      <th scope="col" aria-sort={sortCol === "unit_price" ? (sortDir === "asc" ? "ascending" : "descending") : "none"} className="text-right p-2 font-medium text-muted-foreground w-24 cursor-pointer select-none" onClick={() => handleSort("unit_price")} onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handleSort("unit_price"); } }} tabIndex={0}>
-                        Unit Price ₹{sortCol === "unit_price" ? (sortDir === "asc" ? " ▲" : " ▼") : ""}
+                      <th scope="col" className="text-left p-3 text-sm font-semibold text-foreground align-bottom">Unit</th>
+                      <th scope="col" aria-sort={sortCol === "unit_price" ? (sortDir === "asc" ? "ascending" : "descending") : "none"} className="text-right p-3 text-sm font-semibold text-foreground align-bottom cursor-pointer select-none" onClick={() => handleSort("unit_price")} onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handleSort("unit_price"); } }} tabIndex={0}>
+                        Price ₹{sortCol === "unit_price" ? (sortDir === "asc" ? " ▲" : " ▼") : ""}
                       </th>
-                      <th scope="col" className="text-center p-2 font-medium text-muted-foreground w-16">GST %</th>
-                      <th scope="col" className="text-right p-2 font-medium text-muted-foreground w-24">GST Amt ₹</th>
-                      <th scope="col" aria-sort={sortCol === "line_total" ? (sortDir === "asc" ? "ascending" : "descending") : "none"} className="text-right p-2 font-medium text-muted-foreground w-28 cursor-pointer select-none" onClick={() => handleSort("line_total")} onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handleSort("line_total"); } }} tabIndex={0}>
-                        Line Total ₹{sortCol === "line_total" ? (sortDir === "asc" ? " ▲" : " ▼") : ""}
+                      <th scope="col" className="text-center p-3 text-sm font-semibold text-foreground align-bottom">GST %</th>
+                      <th scope="col" className="text-right p-3 text-sm font-semibold text-foreground align-bottom">GST ₹</th>
+                      <th scope="col" aria-sort={sortCol === "line_total" ? (sortDir === "asc" ? "ascending" : "descending") : "none"} className="text-right p-3 text-sm font-semibold text-foreground align-bottom cursor-pointer select-none" onClick={() => handleSort("line_total")} onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handleSort("line_total"); } }} tabIndex={0}>
+                        Total ₹{sortCol === "line_total" ? (sortDir === "asc" ? " ▲" : " ▼") : ""}
                       </th>
-                      <th scope="col" className="w-10"></th>
+                      <th scope="col" className="p-3 w-12" aria-label="Remove row" />
                     </tr>
                   </thead>
                   <tbody>
-                    {sortedLineItems.map((li, idx) => {
-                      const realIdx = lineItems.indexOf(li);
-                      return (
-                        <tr key={realIdx} className={`border-b ${idx % 2 === 0 ? "" : "bg-muted/20"}`}>
-                          <td className="p-2 text-muted-foreground">{li.sno}</td>
-                          <td className="p-1">
+                    {sortedLineItems.map((li, idx) => (
+                        <tr key={li.id} className={`border-b align-top ${idx % 2 === 0 ? "bg-background" : "bg-muted/15"}`}>
+                          <td className="p-2.5 text-muted-foreground text-base font-medium align-middle">{li.sno}</td>
+                          <td className="p-2 align-middle">
                             <textarea
                               value={li.description}
-                              onChange={e => updateLine(realIdx, "description", e.target.value)}
-                              className="w-full min-h-[28px] text-xs rounded-md border border-input bg-background px-2 py-1 resize-y"
+                              onChange={e => updateLine(li.id, "description", e.target.value)}
+                              className="w-full min-h-[52px] text-base leading-normal rounded-md border border-input bg-background px-3 py-2 resize-y block"
                               placeholder="Item description"
-                              rows={Math.max(1, Math.ceil(li.description.length / 60))}
+                              rows={Math.min(6, Math.max(2, Math.ceil((li.description.length || 1) / 45)))}
                             />
                           </td>
-                          <td className="p-1">
-                            <Input type="number" min={1} value={normalizeNumber(li.quantity) || 1} onChange={e => updateLine(realIdx, "quantity", e.target.value)}
-                              className="h-7 text-xs text-right" />
+                          <td className="p-2 align-middle">
+                            <Input type="text" inputMode="numeric" value={li.quantity === 0 ? "" : String(li.quantity)} onChange={e => {
+                              const v = e.target.value.replace(/\D/g, "");
+                              if (v === "") updateLine(li.id, "quantity", 1);
+                              else updateLine(li.id, "quantity", parseInt(v, 10) || 1);
+                            }} className="h-11 text-base text-right font-medium min-w-0" />
                           </td>
-                          <td className="p-1">
-                            <Select value={li.unit} onValueChange={v => updateLine(realIdx, "unit", v)}>
-                              <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
-                              <SelectContent>{UNITS.map(u => <SelectItem key={u} value={u}>{u}</SelectItem>)}</SelectContent>
+                          <td className="p-2 align-middle">
+                            {(() => {
+                              const unitOpts = UNITS.includes(li.unit) || !li.unit.trim()
+                                ? UNITS
+                                : [li.unit.trim(), ...UNITS.filter(u => u !== li.unit.trim())];
+                              const uval = li.unit.trim() && unitOpts.includes(li.unit.trim()) ? li.unit.trim() : "Nos";
+                              return (
+                            <Select value={uval} onValueChange={v => updateLine(li.id, "unit", v)}>
+                              <SelectTrigger className="h-11 text-base"><SelectValue placeholder="Unit" /></SelectTrigger>
+                              <SelectContent>{unitOpts.map(u => <SelectItem key={u} value={u}>{u}</SelectItem>)}</SelectContent>
                             </Select>
+                              );
+                            })()}
                           </td>
-                          <td className="p-1">
-                            <Input type="number" min={0} step={0.01} value={normalizeNumber(li.unit_price)} onChange={e => updateLine(realIdx, "unit_price", e.target.value)}
-                              className="h-7 text-xs text-right" />
+                          <td className="p-2 align-middle">
+                            <Input type="text" inputMode="decimal" value={li.unit_price === 0 && !Number.isNaN(li.unit_price) ? "" : String(li.unit_price)} onChange={e => {
+                              const raw = e.target.value.replace(/[^\d.]/g, "");
+                              if (raw === "" || raw === ".") updateLine(li.id, "unit_price", 0);
+                              else updateLine(li.id, "unit_price", raw);
+                            }} className="h-11 text-base text-right font-medium font-mono min-w-0" placeholder="0" />
                           </td>
-                          <td className="p-1">
-                            <Select value={String(li.gst_rate)} onValueChange={v => updateLine(realIdx, "gst_rate", Number(v))}>
-                              <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
+                          <td className="p-2 align-middle">
+                            <Select value={String(snapGstRate(li.gst_rate))} onValueChange={v => updateLine(li.id, "gst_rate", Number(v))}>
+                              <SelectTrigger className="h-11 text-base min-w-[4.5rem]"><SelectValue /></SelectTrigger>
                               <SelectContent>{GST_RATES.map(r => <SelectItem key={r} value={String(r)}>{r}%</SelectItem>)}</SelectContent>
                             </Select>
                           </td>
-                          <td className="p-2 text-right text-muted-foreground bg-muted/30">{Number(li.gst_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
-                          <td className="p-2 text-right font-medium bg-muted/30">{Number(li.line_total).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
-                          <td className="p-1">
-                            <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-destructive" onClick={() => removeLine(realIdx)}>
-                              <Trash2 className="h-3 w-3" />
+                          <td className="p-2.5 text-right text-base text-muted-foreground bg-muted/20 font-mono align-middle tabular-nums">{Number(li.gst_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
+                          <td className="p-2.5 text-right text-base font-semibold bg-muted/20 font-mono align-middle tabular-nums">{Number(li.line_total).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
+                          <td className="p-2 align-middle">
+                            <Button type="button" variant="ghost" size="sm" className="h-10 w-10 p-0 text-destructive shrink-0" onClick={() => removeLine(li.id)} aria-label="Remove line">
+                              <Trash2 className="h-5 w-5" />
                             </Button>
                           </td>
                         </tr>
-                      );
-                    })}
+                    ))}
                   </tbody>
                 </table>
               </div>
 
               {/* Totals */}
-              <div className="p-4 border-t space-y-1.5 text-sm max-w-md ml-auto">
-                <div className="flex justify-between"><span className="text-muted-foreground">Subtotal</span><span>{formatINR(totals.subtotal)}</span></div>
+              <div className="p-5 border-t space-y-2 text-base max-w-lg ml-auto bg-muted/10">
+                <div className="flex justify-between gap-4"><span className="text-muted-foreground">Subtotal</span><span className="font-mono font-medium">{formatINR(totals.subtotal)}</span></div>
                 {isIntrastate(header.customer_gst) ? (
                   <>
-                    <div className="flex justify-between"><span className="text-muted-foreground">CGST</span><span>{formatINR(totals.cgst)}</span></div>
-                    <div className="flex justify-between"><span className="text-muted-foreground">SGST</span><span>{formatINR(totals.sgst)}</span></div>
+                    <div className="flex justify-between gap-4"><span className="text-muted-foreground">CGST</span><span className="font-mono">{formatINR(totals.cgst)}</span></div>
+                    <div className="flex justify-between gap-4"><span className="text-muted-foreground">SGST</span><span className="font-mono">{formatINR(totals.sgst)}</span></div>
                   </>
                 ) : (
-                  <div className="flex justify-between"><span className="text-muted-foreground">IGST</span><span>{formatINR(totals.igst)}</span></div>
+                  <div className="flex justify-between gap-4"><span className="text-muted-foreground">IGST</span><span className="font-mono">{formatINR(totals.igst)}</span></div>
                 )}
-                <div className="flex justify-between items-center">
-                  <Label htmlFor="import-discount" className="text-muted-foreground">Discount</Label>
-                  <Input id="import-discount" type="number" min={0} value={header.discount_amount}
-                    onChange={e => setHeader(h => ({ ...h, discount_amount: Number(e.target.value) }))}
-                    className="h-7 w-28 text-xs text-right" />
+                <div className="flex justify-between items-center gap-4 flex-wrap">
+                  <Label htmlFor="import-discount" className="text-foreground font-medium shrink-0">Discount ₹</Label>
+                  <Input id="import-discount" type="text" inputMode="decimal" min={0} className="h-11 w-36 text-base text-right font-mono font-medium"
+                    value={header.discount_amount === 0 ? "" : String(header.discount_amount)}
+                    onChange={e => {
+                      const raw = e.target.value.replace(/[^\d.]/g, "");
+                      setHeader(h => ({ ...h, discount_amount: raw === "" ? 0 : Math.max(0, normalizeNumber(raw)) }));
+                    }}
+                    placeholder="0" />
                 </div>
-                <div className="flex justify-between font-bold text-base pt-2 border-t">
-                  <span>Grand Total</span><span className="text-primary">{formatINR(totals.grand)}</span>
+                <div className="flex justify-between font-bold text-xl pt-3 border-t gap-4">
+                  <span>Grand Total</span><span className="text-primary font-mono">{formatINR(totals.grand)}</span>
                 </div>
-                {amountInWords && <p className="text-xs text-muted-foreground italic">{amountInWords}</p>}
+                {amountInWords && <p className="text-sm text-muted-foreground italic leading-snug">{amountInWords}</p>}
               </div>
             </CardContent>
           </Card>
 
           {/* Additional Info */}
           <Card>
-            <CardHeader className="py-3 px-4"><CardTitle className="text-sm">📝 Additional Info</CardTitle></CardHeader>
-            <CardContent className="px-4 pb-4 space-y-3">
-              <div>
-                <Label htmlFor="import-shipping-address" className="text-xs text-muted-foreground">Shipping Address</Label>
-                <Textarea id="import-shipping-address" value={header.shipping_address} onChange={e => setHeader(h => ({ ...h, shipping_address: e.target.value }))} className="text-sm mt-1 min-h-[50px]" />
+            <CardHeader className="py-4 px-5"><CardTitle className="text-lg font-semibold">📝 Additional Info</CardTitle></CardHeader>
+            <CardContent className="px-5 pb-5 space-y-4">
+              <div className="min-w-0">
+                <Label htmlFor="import-shipping-address" className="text-sm font-medium text-foreground">Shipping Address</Label>
+                <Textarea id="import-shipping-address" value={header.shipping_address} onChange={e => setHeader(h => ({ ...h, shipping_address: e.target.value }))} className="text-base mt-1.5 min-h-[80px]" rows={3} />
               </div>
-              <div>
-                <Label htmlFor="import-notes" className="text-xs text-muted-foreground">Notes</Label>
-                <Textarea id="import-notes" value={header.notes} onChange={e => setHeader(h => ({ ...h, notes: e.target.value }))} className="text-sm mt-1 min-h-[50px]" />
+              <div className="min-w-0">
+                <Label htmlFor="import-notes" className="text-sm font-medium text-foreground">Notes</Label>
+                <Textarea id="import-notes" value={header.notes} onChange={e => setHeader(h => ({ ...h, notes: e.target.value }))} className="text-base mt-1.5 min-h-[80px]" rows={3} />
               </div>
             </CardContent>
           </Card>

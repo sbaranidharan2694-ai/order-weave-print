@@ -51,6 +51,39 @@ export type PayrollRowWeek = {
 const DEFAULT_WORKING_DAYS = 26;
 const DEFAULT_WORKING_DAYS_PER_WEEK = 6;
 
+/**
+ * Calendar Mon–Sat count in month (Sunday weekly off). Used as one consistent
+ * denominator for LOP for every employee in that month.
+ */
+export function getStandardWorkingDaysForMonth(monthYear: string): number {
+  const parts = monthYear.split("-");
+  const y = parseInt(parts[0] ?? "", 10);
+  const m = parseInt(parts[1] ?? "", 10);
+  if (!y || !m || m < 1 || m > 12) return DEFAULT_WORKING_DAYS;
+  const last = new Date(y, m, 0).getDate();
+  let n = 0;
+  for (let d = 1; d <= last; d++) {
+    const day = new Date(y, m - 1, d).getDay();
+    if (day >= 1 && day <= 6) n++;
+  }
+  return Math.max(1, n);
+}
+
+/** Mon–Sat days in the week that ends on `weekEndSunday` (YYYY-MM-DD, Sunday). */
+export function getStandardWorkingDaysForWeekEnding(weekEndSunday: string): number {
+  const parts = weekEndSunday.split("-").map((x) => parseInt(x, 10));
+  if (parts.length < 3 || !parts[0] || !parts[1] || !parts[2]) return DEFAULT_WORKING_DAYS_PER_WEEK;
+  const sun = new Date(parts[0], parts[1] - 1, parts[2]);
+  let n = 0;
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(sun);
+    d.setDate(sun.getDate() - i);
+    const day = d.getDay();
+    if (day >= 1 && day <= 6) n++;
+  }
+  return Math.max(1, n);
+}
+
 function normalizeCode(code: string): string {
   return (code || "").trim().toUpperCase();
 }
@@ -175,14 +208,16 @@ export function getPayrollRowsForMonth(
     salaryByCode.set(normalizeCode(e.employee_code), Number(e.monthly_salary) || 0);
   }
 
+  const standardWD = getStandardWorkingDaysForMonth(monthYear);
   const rows: PayrollRow[] = [];
   for (const [, summary] of monthMap) {
     const code = normalizeCode(summary.code);
     const salary = salaryByCode.get(code) ?? 0;
-    const workingDays = summary.workingDays || DEFAULT_WORKING_DAYS;
+    const absentRaw = Math.max(0, summary.absent);
+    const absentForLop = Math.min(absentRaw, standardWD);
     const lossOfPay =
-      workingDays > 0 && summary.absent > 0
-        ? Math.round((Number(salary) * summary.absent) / workingDays)
+      standardWD > 0 && absentForLop > 0
+        ? Math.round((Number(salary) * absentForLop) / standardWD)
         : 0;
     const netPay = Math.max(0, salary - lossOfPay);
 
@@ -191,8 +226,8 @@ export function getPayrollRowsForMonth(
       name: summary.name,
       monthYear,
       present: summary.present,
-      absent: summary.absent,
-      workingDays: summary.workingDays,
+      absent: absentRaw,
+      workingDays: standardWD,
       monthlySalary: salary,
       lossOfPay,
       netPay,
@@ -305,14 +340,16 @@ export function getPayrollRowsForWeek(
     salaryByCode.set(normalizeCode(e.employee_code), effectiveWeekly);
   }
 
+  const standardWD = getStandardWorkingDaysForWeekEnding(weekEnding);
   const rows: PayrollRowWeek[] = [];
   for (const [, summary] of weekMap) {
     const code = normalizeCode(summary.code);
     const salary = salaryByCode.get(code) ?? 0;
-    const workingDays = summary.workingDays || DEFAULT_WORKING_DAYS_PER_WEEK;
+    const absentRaw = Math.max(0, summary.absent);
+    const absentForLop = Math.min(absentRaw, standardWD);
     const lossOfPay =
-      workingDays > 0 && summary.absent > 0
-        ? Math.round((Number(salary) * summary.absent) / workingDays)
+      standardWD > 0 && absentForLop > 0
+        ? Math.round((Number(salary) * absentForLop) / standardWD)
         : 0;
     const netPay = Math.max(0, salary - lossOfPay);
 
@@ -321,8 +358,8 @@ export function getPayrollRowsForWeek(
       name: summary.name,
       weekEnding,
       present: summary.present,
-      absent: summary.absent,
-      workingDays: summary.workingDays,
+      absent: absentRaw,
+      workingDays: standardWD,
       weeklySalary: salary,
       lossOfPay,
       netPay,

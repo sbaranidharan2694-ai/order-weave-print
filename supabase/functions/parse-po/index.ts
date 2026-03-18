@@ -71,51 +71,60 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/**
- * Aggressively clean AI output before JSON parsing.
- * Removes markdown fences, leading text, comments, trailing commas, normalizes.
- */
-function cleanPotentialJson(text: string): string {
+/** Strip markdown fences only — do not collapse whitespace (breaks valid JSON). */
+function stripFences(text: string): string {
   if (!text || typeof text !== "string") return "";
   let s = text.trim();
-  if (!s) return "";
-
   s = s.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/i, "");
-  s = s.replace(/\/\*[\s\S]*?\*\//g, "");
-  s = s.replace(/\/\/[^\n]*/g, "");
-  s = s.replace(/\s+/g, " ");
-  const start = s.indexOf("{");
-  if (start < 0) return "";
-  const lastBrace = s.lastIndexOf("}");
-  if (lastBrace < start) return "";
-  s = s.slice(start, lastBrace + 1);
-  s = s.replace(/,(\s*[}\]])/g, "$1");
-  return s;
+  return s.trim();
 }
 
 /**
- * Extract JSON between first { and last }, then try parse with cleaning.
+ * First balanced `{...}` object, respecting strings (handles `}` inside string values).
  */
-function extractAndParse(raw: string): { parsed: Record<string, unknown> | null; parseError?: string } {
-  const cleaned = cleanPotentialJson(raw);
-  const firstBrace = cleaned.indexOf("{");
-  if (firstBrace < 0) return { parsed: null, parseError: "No opening brace found" };
-
+function extractBalancedJsonObject(s: string): string | null {
+  const start = s.indexOf("{");
+  if (start < 0) return null;
   let depth = 0;
-  let end = -1;
-  for (let i = firstBrace; i < cleaned.length; i++) {
-    if (cleaned[i] === "{") depth++;
-    else if (cleaned[i] === "}") {
+  let inStr = false;
+  let esc = false;
+  for (let i = start; i < s.length; i++) {
+    const ch = s[i];
+    if (esc) {
+      esc = false;
+      continue;
+    }
+    if (inStr) {
+      if (ch === "\\") esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') {
+      inStr = true;
+      continue;
+    }
+    if (ch === "{") depth++;
+    else if (ch === "}") {
       depth--;
-      if (depth === 0) {
-        end = i;
-        break;
-      }
+      if (depth === 0) return s.slice(start, i + 1);
     }
   }
-  if (end < 0) return { parsed: null, parseError: "Unbalanced braces" };
+  return null;
+}
 
-  let candidate = cleaned.slice(firstBrace, end + 1);
+/**
+ * Extract and parse JSON from AI output.
+ */
+function extractAndParse(raw: string): { parsed: Record<string, unknown> | null; parseError?: string } {
+  const unfenced = stripFences(raw);
+  let candidate = extractBalancedJsonObject(unfenced);
+  if (!candidate) {
+    const collapsed = unfenced.replace(/\s+/g, " ");
+    const fb = collapsed.indexOf("{");
+    const lb = collapsed.lastIndexOf("}");
+    if (fb >= 0 && lb > fb) candidate = collapsed.slice(fb, lb + 1);
+  }
+  if (!candidate) return { parsed: null, parseError: "No JSON object found" };
 
   const attempts = [
     candidate,

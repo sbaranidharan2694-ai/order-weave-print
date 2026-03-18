@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { format, parseISO } from "date-fns";
 import type { WeeklySummary, WeeklyHourRow } from "@/hooks/useWeeklyHours";
 import {
@@ -8,7 +9,7 @@ import {
 
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
-function DayCell({ day }: { day: WeeklyHourRow["days"][0] }) {
+const DayCell = memo(function DayCell({ day }: { day: WeeklyHourRow["days"][0] }) {
   if (day.isWeeklyOff) {
     return <td className="px-1.5 py-1 text-center bg-muted/40 text-muted-foreground text-xs font-medium">OFF</td>;
   }
@@ -48,7 +49,7 @@ function RowBadge({ tier }: { tier: WeeklyHourRow["tier"] }) {
       {TIER_LABEL[tier]}
     </span>
   );
-}
+});
 
 interface Props {
   summaries: WeeklySummary[];

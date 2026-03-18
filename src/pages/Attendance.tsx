@@ -62,6 +62,8 @@ import {
   getPayrollRowsForMonth,
   aggregateAttendanceByWeek,
   getPayrollRowsForWeek,
+  getStandardWorkingDaysForMonth,
+  getStandardWorkingDaysForWeekEnding,
   type PayrollEmployee,
 } from "@/hooks/usePayroll";
 import { useStorageMode } from "@/hooks/useStorageMode";
@@ -123,6 +125,17 @@ export default function Attendance() {
   const totalLossOfPay = useMemo(() => payrollRows.reduce((s, r) => s + r.lossOfPay, 0), [payrollRows]);
   const totalNetPayWeekly = useMemo(() => payrollRowsWeekly.reduce((s, r) => s + r.netPay, 0), [payrollRowsWeekly]);
   const totalLossOfPayWeekly = useMemo(() => payrollRowsWeekly.reduce((s, r) => s + r.lossOfPay, 0), [payrollRowsWeekly]);
+
+  const payrollEmpByCode = useMemo(() => {
+    const m = new Map<string, PayrollEmployee>();
+    for (const e of payrollEmployees) {
+      m.set(e.employee_code.trim().toUpperCase(), e);
+    }
+    return m;
+  }, [payrollEmployees]);
+
+  const standardDaysMonth = selectedMonth ? getStandardWorkingDaysForMonth(selectedMonth) : 0;
+  const standardDaysWeek = selectedWeek ? getStandardWorkingDaysForWeekEnding(selectedWeek) : 0;
 
   const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -512,7 +525,7 @@ export default function Attendance() {
                 Payroll by period
               </CardTitle>
               <p className="text-sm text-muted-foreground font-normal">
-                Analyzes uploaded attendance. Select month or week to see days present/absent, loss of pay, and net pay. Uses salary from the employee master above.
+                Analyzes uploaded attendance. <strong className="text-foreground">Working days</strong> are the same for everyone: Mon–Sat in that period (Sunday off). LOP = (absent ÷ working days) × salary. Present/absent columns come from your PDFs.
               </p>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -588,6 +601,12 @@ export default function Attendance() {
                   {payrollLoading ? (
                     <Skeleton className="h-64 w-full rounded-xl" />
                   ) : payrollPeriod === "monthly" ? (
+                    <div className="space-y-2">
+                      {selectedMonth && (
+                        <p className="text-xs text-muted-foreground bg-muted/40 rounded-lg px-3 py-2 border border-border">
+                          <span className="font-medium text-foreground">{standardDaysMonth} working days</span> in {format(parseISO(selectedMonth + "-01"), "MMMM yyyy")} (Mon–Sat) — identical for all employees in this table.
+                        </p>
+                      )}
                     <div className="overflow-x-auto rounded-xl border">
                       <table className="w-full text-sm">
                         <thead>
@@ -596,7 +615,7 @@ export default function Attendance() {
                             <th className="text-left p-3 font-semibold">Name</th>
                             <th className="text-center p-3 font-semibold text-green-600">Present</th>
                             <th className="text-center p-3 font-semibold text-red-600">Absent</th>
-                            <th className="text-center p-3 font-semibold">Working days</th>
+                            <th className="text-center p-3 font-semibold" title="Mon–Sat count in month">Working days</th>
                             <th className="text-right p-3 font-semibold">Monthly salary (₹)</th>
                             <th className="text-right p-3 font-semibold text-red-600">Loss of pay (₹)</th>
                             <th className="text-right p-3 font-semibold text-primary">Net pay (₹)</th>
@@ -620,9 +639,7 @@ export default function Attendance() {
                                   size="icon"
                                   className="h-8 w-8"
                                   onClick={() => {
-                                    const existing = payrollEmployees.find(
-                                      (e) => e.employee_code.toUpperCase() === row.code.toUpperCase()
-                                    );
+                                    const existing = payrollEmpByCode.get(row.code.trim().toUpperCase());
                                     setEmployeeDialog({ open: true, edit: existing ?? undefined });
                                     setEmpCode(existing?.employee_code ?? row.code);
                                     setEmpName(existing?.display_name ?? row.name);
@@ -638,7 +655,14 @@ export default function Attendance() {
                         </tbody>
                       </table>
                     </div>
+                    </div>
                   ) : (
+                    <div className="space-y-2">
+                      {selectedWeek && (
+                        <p className="text-xs text-muted-foreground bg-muted/40 rounded-lg px-3 py-2 border border-border">
+                          <span className="font-medium text-foreground">{standardDaysWeek} working days</span> in week ending {format(parseISO(selectedWeek), "dd MMM yyyy")} (Mon–Sat) — same for everyone.
+                        </p>
+                      )}
                     <div className="overflow-x-auto rounded-xl border">
                       <table className="w-full text-sm">
                         <thead>
@@ -647,7 +671,7 @@ export default function Attendance() {
                             <th className="text-left p-3 font-semibold">Name</th>
                             <th className="text-center p-3 font-semibold text-green-600">Present</th>
                             <th className="text-center p-3 font-semibold text-red-600">Absent</th>
-                            <th className="text-center p-3 font-semibold">Working days</th>
+                            <th className="text-center p-3 font-semibold" title="Mon–Sat in that week">Working days</th>
                             <th className="text-right p-3 font-semibold">Weekly salary (₹)</th>
                             <th className="text-right p-3 font-semibold text-red-600">Loss of pay (₹)</th>
                             <th className="text-right p-3 font-semibold text-primary">Net pay (₹)</th>
@@ -671,9 +695,7 @@ export default function Attendance() {
                                   size="icon"
                                   className="h-8 w-8"
                                   onClick={() => {
-                                    const existing = payrollEmployees.find(
-                                      (e) => e.employee_code.toUpperCase() === row.code.toUpperCase()
-                                    );
+                                    const existing = payrollEmpByCode.get(row.code.trim().toUpperCase());
                                     setEmployeeDialog({ open: true, edit: existing ?? undefined });
                                     setEmpCode(existing?.employee_code ?? row.code);
                                     setEmpName(existing?.display_name ?? row.name);
@@ -688,6 +710,7 @@ export default function Attendance() {
                           ))}
                         </tbody>
                       </table>
+                    </div>
                     </div>
                   )}
 

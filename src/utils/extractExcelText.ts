@@ -38,7 +38,8 @@ export async function extractTextFromExcel(file: File): Promise<{ text: string }
       const cells = (Array.isArray(row) ? row : []).map((c) =>
         c != null ? String(c).trim() : ""
       );
-      text += cells.join(" ") + "\n";
+      /* Tab-separated preserves columns for rule parser (space merge broke qty/price). */
+      text += cells.join("\t") + "\n";
     });
   });
 

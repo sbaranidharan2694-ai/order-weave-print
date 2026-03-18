@@ -14,17 +14,27 @@ export async function invokeEdgeFunction<T = unknown>(
   name: string,
   body: Record<string, unknown>
 ): Promise<{ data: T | null; error: string | null }> {
-  const url = `${SUPABASE_URL.replace(/\/$/, "")}/functions/v1/${name}`;
-  const authHeader = SUPABASE_KEY ? { Authorization: `Bearer ${SUPABASE_KEY}` } : {};
+  const base = SUPABASE_URL.replace(/\/$/, "").trim();
+  if (!base || base.includes("placeholder")) {
+    return { data: null, error: "Supabase is not configured. Add VITE_SUPABASE_URL in .env." };
+  }
+  const url = `${base}/functions/v1/${name}`;
+  const authHeader = SUPABASE_KEY && SUPABASE_KEY !== "placeholder" ? { Authorization: `Bearer ${SUPABASE_KEY}` } : {};
 
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...authHeader,
-    },
-    body: JSON.stringify(body),
-  });
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeader,
+      },
+      body: JSON.stringify(body),
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Network error";
+    return { data: null, error: msg.includes("Failed to fetch") ? "Cannot reach server. Check network and Supabase URL." : msg };
+  }
 
   const contentType = response.headers.get("Content-Type") ?? "";
   const isJson = contentType.includes("application/json");
