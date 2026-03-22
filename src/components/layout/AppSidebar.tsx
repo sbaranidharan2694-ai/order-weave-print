@@ -102,6 +102,9 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
+      <div className="mt-auto border-t border-sidebar-border px-3 py-2">
+        <span className="text-[10px] text-[#64748B]">v1.0.0</span>
+      </div>
     </Sidebar>
   );
 }
