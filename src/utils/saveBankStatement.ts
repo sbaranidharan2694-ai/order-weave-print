@@ -16,11 +16,9 @@ function s(val: unknown): string {
 /** @deprecated Use extractCounterparty from @/utils/extractCounterparty. Kept for backward compatibility. */
 export const extractParty = extractCounterparty;
 
-const ACCOUNT_KEY: Record<string, string> = {
-  "0244020077280": "superprinters",
-  "0244020080155": "superscreens",
-  "0244011477662": "revathy",
-};
+// Account key mapping loaded at runtime from settings. Empty default — configure
+// via Settings page / `settings` table, not in source code.
+const ACCOUNT_KEY: Record<string, string> = {};
 
 export async function saveBankStatementToDb(
   parsed: any,

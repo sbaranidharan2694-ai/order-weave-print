@@ -1,16 +1,15 @@
 const env = import.meta.env as Record<string, string | undefined>;
 
-/** Same fallbacks as `src/integrations/supabase/client.ts` so edge functions work when .env is missing (e.g. Lovable preview). */
 const SUPABASE_URL =
   env.VITE_SUPABASE_URL ??
   env.SUPABASE_URL ??
-  "https://hlpmmdmgdgyzsxnnrdjl.supabase.co";
+  "";
 
 const SUPABASE_KEY =
   env.VITE_SUPABASE_PUBLISHABLE_KEY ??
   env.VITE_SUPABASE_ANON_KEY ??
   env.SUPABASE_ANON_KEY ??
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhscG1tZG1nZGd5enN4bm5yZGpsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI4NzM2NTEsImV4cCI6MjA4ODQ0OTY1MX0.F7cOqdgjk0FIXWjH8QovNGNe-w5hisVAHfiUuJGs5sg";
+  "";
 const DEBUG = (import.meta as { env?: { DEV?: boolean } }).env?.DEV === true;
 
 /**

@@ -30,31 +30,24 @@ export interface BankStatementData {
   rawText?: string;
 }
 
-/** Account number → tab value (matches BankAnalyser ACCOUNTS[].key) */
-export const ACCOUNT_TAB_MAP: Record<string, string> = {
-  "0244020077280": "superprinters",
-  "0244020080155": "superscreens",
-  "0244011477662": "revathy",
-};
+// Account numbers should be configured in the Settings page and stored in the
+// `settings` table, not in source code. These empty defaults are overridden at
+// runtime via settings if available.
+export const DEFAULT_ACCOUNT_TAB_MAP: Record<string, string> = {};
+export const DEFAULT_ACCOUNT_LABEL_MAP: Record<string, string> = {};
 
-export const ACCOUNT_LABEL_MAP: Record<string, string> = {
-  "0244020077280": "Super Printers",
-  "0244020080155": "Super Screens",
-  "0244011477662": "Revathy B.",
-};
-
-export function getTabForAccount(accountNumber: string): string {
+export function getTabForAccount(accountNumber: string, tabMap: Record<string, string> = DEFAULT_ACCOUNT_TAB_MAP): string {
   const normalized = (accountNumber ?? "").replace(/\s/g, "");
-  if (ACCOUNT_TAB_MAP[normalized]) return ACCOUNT_TAB_MAP[normalized];
-  for (const [num, tab] of Object.entries(ACCOUNT_TAB_MAP)) {
+  if (tabMap[normalized]) return tabMap[normalized];
+  for (const [num, tab] of Object.entries(tabMap)) {
     if (normalized.includes(num)) return tab;
   }
   return "";
 }
 
-export function getLabelForAccount(accountNumber: string): string {
+export function getLabelForAccount(accountNumber: string, labelMap: Record<string, string> = DEFAULT_ACCOUNT_LABEL_MAP): string {
   const normalized = (accountNumber ?? "").replace(/\s/g, "");
-  return ACCOUNT_LABEL_MAP[normalized] ?? `Unknown (${accountNumber || "—"})`;
+  return labelMap[normalized] ?? `Unknown (${accountNumber || "—"})`;
 }
 
 function toNum(raw: string | number): number {
@@ -459,7 +452,7 @@ export function parseBankStatement(rawText: string): BankStatementData {
   const rawAcc = joined.match(/Account\s+Number\s*[:\s]+([\d\s-]{10,24})/i)?.[1] ?? "";
   let accountNumber = normalizeAccountNumber(rawAcc);
   if (!accountNumber) {
-    const known = Object.keys(ACCOUNT_TAB_MAP).find((n) => joined.includes(n));
+    const known = Object.keys(DEFAULT_ACCOUNT_TAB_MAP).find((n) => joined.includes(n));
     accountNumber = known ?? "";
   }
 
