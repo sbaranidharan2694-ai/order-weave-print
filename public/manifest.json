@@ -1,0 +1,12 @@
+{
+  "name": "Super Printers OMS",
+  "short_name": "SP OMS",
+  "description": "Order Management System",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0F172A",
+  "theme_color": "#F97316",
+  "icons": [
+    { "src": "/favicon.ico", "sizes": "64x64", "type": "image/x-icon" }
+  ]
+}
