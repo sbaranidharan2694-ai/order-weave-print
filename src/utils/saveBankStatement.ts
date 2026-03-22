@@ -1,6 +1,7 @@
 import { supabase } from "@/integrations/supabase/client";
 import { extractCounterparty } from "@/utils/extractCounterparty";
 import { logAudit } from "@/utils/auditLog";
+import { logger } from "@/lib/logger";
 
 function n(val: unknown): number {
   if (!val && val !== 0) return 0;
@@ -39,11 +40,11 @@ export async function saveBankStatementToDb(
     .maybeSingle();
 
   if (checkErr) {
-    console.error("[save] Duplicate check error:", checkErr.message);
+    logger.error("[save] Duplicate check error:", checkErr.message);
   }
 
   if (existing?.id) {
-    console.log("[save] Duplicate — skipping");
+    logger.log("[save] Duplicate — skipping");
     return { statementId: existing.id, isNew: false, savedCount: 0 };
   }
 
@@ -78,7 +79,7 @@ export async function saveBankStatementToDb(
   await logAudit("Bank statement parsed", "bank_statement", statementId);
 
   const txns = parsed.transactions ?? [];
-  console.log(`[save] Statement ${statementId} | ${txns.length} transactions to save`);
+  logger.log(`[save] Statement ${statementId} | ${txns.length} transactions to save`);
 
   // ── STEP 3: INSERT TRANSACTIONS ONE BY ONE ─────────────────────────────
   let savedCount = 0;
@@ -105,12 +106,12 @@ export async function saveBankStatementToDb(
       });
 
     if (txErr) {
-      console.error(`[save] TX row ${i + 1} failed: ${txErr.message}`);
+      logger.error(`[save] TX row ${i + 1} failed: ${txErr.message}`);
     } else {
       savedCount++;
     }
   }
 
-  console.log(`[save] Saved ${savedCount}/${txns.length} transactions`);
+  logger.log(`[save] Saved ${savedCount}/${txns.length} transactions`);
   return { statementId, isNew: true, savedCount };
 }

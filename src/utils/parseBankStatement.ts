@@ -1,4 +1,5 @@
 import { extractCounterparty, classifyTransaction } from "@/utils/extractCounterparty";
+import { logger } from "@/lib/logger";
 
 export interface Transaction {
   date: string;
@@ -514,13 +515,13 @@ export function parseBankStatement(rawText: string): BankStatementData {
 
   // Validation: compare parsed totals to reported totals when available
   if (summary.totalCredits > 0 && Math.abs(parsedTotalCredits - summary.totalCredits) > 0.02) {
-    console.warn(`[parseBankStatement] Credits mismatch: parsed=${parsedTotalCredits}, reported=${summary.totalCredits}`);
+    logger.warn(`[parseBankStatement] Credits mismatch: parsed=${parsedTotalCredits}, reported=${summary.totalCredits}`);
   }
   if (summary.totalDebits > 0 && Math.abs(parsedTotalDebits - summary.totalDebits) > 0.02) {
-    console.warn(`[parseBankStatement] Debits mismatch: parsed=${parsedTotalDebits}, reported=${summary.totalDebits}`);
+    logger.warn(`[parseBankStatement] Debits mismatch: parsed=${parsedTotalDebits}, reported=${summary.totalDebits}`);
   }
 
-  console.log(`[parseBankStatement] ${accountHolder} | ${accountNumber} | ${transactions.length} transactions`);
+  logger.log(`[parseBankStatement] ${accountHolder} | ${accountNumber} | ${transactions.length} transactions`);
 
   return {
     docType: "bank_statement",

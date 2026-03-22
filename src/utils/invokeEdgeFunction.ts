@@ -1,3 +1,5 @@
+import { logger } from "@/lib/logger";
+
 const env = import.meta.env as Record<string, string | undefined>;
 
 const SUPABASE_URL =
@@ -53,7 +55,7 @@ export async function invokeEdgeFunction<T = unknown>(
   if (!response.ok) {
     if (DEBUG) {
       const bodyPreview = await response.clone().text().then(t => t.slice(0, 500));
-      console.warn("[invokeEdgeFunction] non-2xx:", response.status, name, bodyPreview);
+      logger.warn("[invokeEdgeFunction] non-2xx:", response.status, name, bodyPreview);
     }
     let message = `Request failed (${response.status})`;
     try {

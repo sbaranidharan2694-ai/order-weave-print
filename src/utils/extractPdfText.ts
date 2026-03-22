@@ -1,4 +1,5 @@
 import * as pdfjsLib from "pdfjs-dist";
+import { logger } from "@/lib/logger";
 
 // Worker version MUST match pdfjs-dist version (e.g. 4.4.168) to avoid "API version does not match Worker version" error.
 pdfjsLib.GlobalWorkerOptions.workerSrc =
@@ -67,7 +68,7 @@ export async function extractTextFromPdf(
         usedOcr = true;
       }
     } catch (ocrErr) {
-      console.warn("OCR fallback failed:", ocrErr);
+      logger.warn("OCR fallback failed:", ocrErr);
       ocrFailed = true;
     }
   }
