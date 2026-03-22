@@ -13,8 +13,9 @@ export function useOrders() {
   const queryClient = useQueryClient();
 
   useEffect(() => {
+    const channelId = `orders-realtime-${Math.random().toString(36).slice(2)}`;
     const channel = supabase
-      .channel("orders-realtime")
+      .channel(channelId)
       .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, () => {
         queryClient.invalidateQueries({ queryKey: ["orders"] });
       })
@@ -129,7 +130,7 @@ export function useCreateOrder() {
         const { data: byName } = await supabase
           .from("customers")
           .select("*")
-          .ilike("name", order.customer_name)
+          .eq("name", order.customer_name)
           .maybeSingle();
 
         if (byName) {
@@ -288,6 +289,8 @@ export function useDeleteOrder() {
       queryClient.invalidateQueries({ queryKey: ["orders"] });
       queryClient.invalidateQueries({ queryKey: ["orders-today"] });
       queryClient.invalidateQueries({ queryKey: ["customers"] });
+      queryClient.invalidateQueries({ queryKey: ["production_jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["order_items"] });
       toast.success("Order deleted!");
     },
     onError: (err) => toast.error("Failed: " + err.message),

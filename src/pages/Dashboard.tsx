@@ -42,7 +42,6 @@ export default function Dashboard() {
     return { pending, printing, ready, completed };
   }, [productionJobs]);
 
-  const yesterday = subDays(new Date(), 1);
   const stats = useMemo(() => {
     const now = new Date();
     const inProduction = orders.filter(o =>
@@ -60,6 +59,7 @@ export default function Dashboard() {
   }, [orders]);
 
   const yesterdayStats = useMemo(() => {
+    const yesterday = subDays(new Date(), 1);
     const yesterdayStart = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate());
     const yesterdayEnd = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate(), 23, 59, 59);
     const yesterdayOrders = orders.filter(o => {
@@ -75,7 +75,7 @@ export default function Dashboard() {
     ).length;
     const todayOrd = yesterdayOrders.length;
     return { todayOrd, inProd, ready, over };
-  }, [orders, yesterday]);
+  }, [orders]);
 
   const overdueOrders = useMemo(() => {
     const now = new Date();
