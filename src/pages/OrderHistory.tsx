@@ -67,15 +67,24 @@ export default function OrderHistory() {
   const [columns, setColumns] = useState<ColumnDef[]>(() => {
     try {
       const saved = localStorage.getItem("sp_columns");
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length === defaultColumns.length) {
+          return parsed;
+        }
+      }
     } catch {
-      // Ignore invalid saved columns
+      // localStorage unavailable (private mode, quota exceeded) — use defaults
     }
     return defaultColumns;
   });
 
   useEffect(() => {
-    localStorage.setItem("sp_columns", JSON.stringify(columns));
+    try {
+      localStorage.setItem("sp_columns", JSON.stringify(columns));
+    } catch {
+      // ignore storage errors
+    }
   }, [columns]);
 
   const [dragIdx, setDragIdx] = useState<number | null>(null);

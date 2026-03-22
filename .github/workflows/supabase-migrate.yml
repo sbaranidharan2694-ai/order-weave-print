@@ -1,3 +1,9 @@
+# IMPORTANT: Set these secrets in GitHub → Settings → Secrets and variables → Actions:
+# SUPABASE_ACCESS_TOKEN  — from https://supabase.com/dashboard/account/tokens
+# SUPABASE_DB_PASSWORD  — your database password (NOT the anon/publishable key)
+# SUPABASE_PROJECT_ID    — hlpmmdmgdgyzsxnnrdjl
+# Never put real credentials in this file or any source file.
+
 # Run Supabase migrations automatically on push to main.
 # Applies ALL .sql files in supabase/migrations/ in order (Bank, Attendance, Payroll, etc.).
 # One-time: Add repo secrets SUPABASE_ACCESS_TOKEN and SUPABASE_PROJECT_REF (see README).

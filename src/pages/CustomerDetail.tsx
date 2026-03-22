@@ -27,11 +27,18 @@ export default function CustomerDetail() {
     queryKey: ["customer_orders", id],
     queryFn: async () => {
       if (!customer) return [];
-      const { data, error } = await supabase
+      let q = supabase
         .from("orders")
         .select("*")
-        .eq("contact_no", customer.contact_no)
         .order("created_at", { ascending: false });
+
+      if (customer.contact_no && customer.contact_no.trim()) {
+        q = q.eq("contact_no", customer.contact_no);
+      } else {
+        q = q.eq("customer_name", customer.name);
+      }
+
+      const { data, error } = await q;
       if (error) throw error;
       return data;
     },

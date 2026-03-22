@@ -77,8 +77,21 @@ export function useDeleteOrderFile() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (id: string) => {
+      const { data: file } = await supabase
+        .from("order_files")
+        .select("storage_url")
+        .eq("id", id)
+        .single();
+
       const { error } = await supabase.from("order_files").delete().eq("id", id);
       if (error) throw error;
+
+      if (file?.storage_url) {
+        await supabase.storage
+          .from("order-files")
+          .remove([file.storage_url])
+          .catch(() => {});
+      }
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["order_files"] });

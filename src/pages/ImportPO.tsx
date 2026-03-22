@@ -32,6 +32,7 @@ import { extractTextFromExcel } from "@/utils/extractExcelText";
 import { parsePOText } from "@/utils/parsePOText";
 import { learnFromParse } from "@/utils/poPatternLearning";
 import { logAudit } from "@/utils/auditLog";
+import { toErrorMessage } from "@/lib/errors";
 import * as XLSX from "xlsx";
 
 /* ─── Constants ─── */
@@ -210,17 +211,6 @@ function safeDate(d: string | null | undefined): string | null {
   const parsed = new Date(trimmed + "T00:00:00");
   if (isNaN(parsed.getTime())) return null;
   return trimmed;
-}
-
-/** Always get a readable string from any thrown/Supabase error (avoids [object Object]). */
-function toErrorMessage(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  if (err != null && typeof err === "object") {
-    const o = err as { message?: string; details?: string };
-    if (typeof o.message === "string" && o.message) return o.message;
-    if (typeof o.details === "string" && o.details) return o.details;
-  }
-  return typeof err === "string" ? err : String(err);
 }
 
 /* ─── Component ─── */

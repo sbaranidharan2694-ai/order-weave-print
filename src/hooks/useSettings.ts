@@ -13,9 +13,9 @@ export function useSettings() {
         .from("settings")
         .select("*")
         .limit(1)
-        .single();
+        .maybeSingle();
       if (error) throw error;
-      return data as Settings;
+      return (data ?? null) as Settings | null;
     },
   });
 }

@@ -57,17 +57,7 @@ import { extractParty } from "@/utils/saveBankStatement";
 import { TransactionTable } from "@/components/BankAnalyser/TransactionTable";
 import { useAccountTransactions } from "@/hooks/useAccountTransactions";
 import type { BankStatement, BankTransaction } from "@/lib/bankStorage";
-
-/** Always get a readable string from any thrown/Supabase error (avoids [object Object]). */
-function toErrorMessage(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  if (err != null && typeof err === "object") {
-    const o = err as { message?: string; details?: string };
-    if (typeof o.message === "string" && o.message) return o.message;
-    if (typeof o.details === "string" && o.details) return o.details;
-  }
-  return typeof err === "string" ? err : JSON.stringify(err);
-}
+import { toErrorMessage } from "@/lib/errors";
 
 /** Detect account key from parsed bank statement accountNumber or accountHolder. */
 function detectAccountFromBankStatementData(data: BankStatementData): string | null {

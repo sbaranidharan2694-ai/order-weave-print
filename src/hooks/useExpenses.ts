@@ -55,7 +55,14 @@ export function useExpenseStats() {
       const weekStart = monday.toISOString().slice(0, 10);
       const monthStart = todayStr.slice(0, 8) + "01";
 
-      const { data, error } = await supabase.from("expenses").select("expense_date, amount, category");
+      const ninetyDaysAgo = new Date();
+      ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+      const fromDate = ninetyDaysAgo.toISOString().slice(0, 10);
+
+      const { data, error } = await supabase
+        .from("expenses")
+        .select("expense_date, amount, category")
+        .gte("expense_date", fromDate);
       if (error) throw error;
       const all = (data || []) as { expense_date: string; amount: number; category: string }[];
 
@@ -79,7 +86,11 @@ export function useCreateExpense() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (expense: { expense_date: string; category: string; description?: string; amount: number; payment_method: string }) => {
-      const { data, error } = await supabase.from("expenses").insert(expense as any).select().single();
+      const { data: { user } } = await supabase.auth.getUser();
+      const { data, error } = await supabase.from("expenses").insert({
+        ...expense,
+        created_by: user?.id ?? null,
+      } as any).select().single();
       if (error) throw error;
       return data;
     },

@@ -81,18 +81,18 @@ export async function saveBankStatementToDb(
   const txns = parsed.transactions ?? [];
   logger.log(`[save] Statement ${statementId} | ${txns.length} transactions to save`);
 
-  // ── STEP 3: INSERT TRANSACTIONS ONE BY ONE ─────────────────────────────
+  // ── STEP 3: INSERT TRANSACTIONS IN BATCHES OF 100 ──────────────────────
   let savedCount = 0;
+  const BATCH_SIZE = 100;
 
-  for (let i = 0; i < txns.length; i++) {
-    const tx = txns[i];
-    const txnId = btoa(statementId + String(i) + s(tx.date) + n(tx.debit) + n(tx.credit))
-      .replace(/[^a-zA-Z0-9]/g, "")
-      .substring(0, 40);
-
-    const { error: txErr } = await supabase
-      .from("bank_transactions")
-      .insert({
+  for (let i = 0; i < txns.length; i += BATCH_SIZE) {
+    const batch = txns.slice(i, i + BATCH_SIZE);
+    const rows = batch.map((tx: any, j: number) => {
+      const idx = i + j;
+      const txnId = btoa(statementId + String(idx) + s(tx.date) + n(tx.debit) + n(tx.credit))
+        .replace(/[^a-zA-Z0-9]/g, "")
+        .substring(0, 40);
+      return {
         id: txnId,
         statement_id: statementId,
         date: s(tx.date),
@@ -103,12 +103,18 @@ export async function saveBankStatementToDb(
         balance: n(tx.balance),
         type: s(tx.type) || (n(tx.debit) > 0 ? "debit" : "credit"),
         counterparty: extractCounterparty(s(tx.details)),
-      });
+      };
+    });
 
-    if (txErr) {
-      logger.error(`[save] TX row ${i + 1} failed: ${txErr.message}`);
+    const { error: batchErr, data: inserted } = await supabase
+      .from("bank_transactions")
+      .insert(rows)
+      .select("id");
+
+    if (batchErr) {
+      if (import.meta.env.DEV) console.warn(`[save] Batch ${i}-${i + batch.length} failed:`, batchErr.message);
     } else {
-      savedCount++;
+      savedCount += inserted?.length ?? 0;
     }
   }
 
