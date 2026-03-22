@@ -1,6 +1,18 @@
 import { describe, expect, it } from "vitest";
 import { parseBankStatement } from "@/utils/parseBankStatement";
 
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+function parseDateFromStatement(dateStr: string): string {
+  const raw = `
+Statement Of Account (in INR) for the period: 01-JAN-2025 to 31-DEC-2025
+Account Number: 1234567890
+${dateStr} ${dateStr} UPI/DR/123456789012/TEST R 123456789012 500.00 0.00 1,000.00
+`;
+  const parsed = parseBankStatement(raw);
+  return parsed.transactions[0]?.date ?? "";
+}
+
 describe("parseBankStatement - CSB formats", () => {
   it("parses SUPER SCREENS style table rows", () => {
     const raw = `
@@ -38,6 +50,36 @@ Account Number: 0244011477662
 
     expect(parsed.accountNumber).toBe("0244011477662");
     expect(parsed.transactions.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("parses date format 04-MAR2025 (no hyphen between month and year)", () => {
+    const date = parseDateFromStatement("04-MAR2025");
+    expect(date).toMatch(DATE_RE);
+    expect(date).toBe("2025-03-04");
+  });
+
+  it("parses date format 21-FEB-2026 (standard DD-Mon-YYYY)", () => {
+    const date = parseDateFromStatement("21-FEB-2026");
+    expect(date).toMatch(DATE_RE);
+    expect(date).toBe("2026-02-21");
+  });
+
+  it("parses date format 2025-Mar-29 (YYYY-Mon-DD)", () => {
+    const date = parseDateFromStatement("2025-Mar-29");
+    expect(date).toMatch(DATE_RE);
+    expect(date).toBe("2025-03-29");
+  });
+
+  it("parses date format 01-01-25 (DD-MM-YY two-digit year)", () => {
+    const date = parseDateFromStatement("01-01-25");
+    expect(date).toMatch(DATE_RE);
+    expect(date).toBe("2025-01-01");
+  });
+
+  it("parses date format 31-12-2025 (DD-MM-YYYY)", () => {
+    const date = parseDateFromStatement("31-12-2025");
+    expect(date).toMatch(DATE_RE);
+    expect(date).toBe("2025-12-31");
   });
 
   it("parses collapsed non-pipe tabular lines", () => {
