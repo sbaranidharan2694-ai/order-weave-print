@@ -1,12 +1,12 @@
 # IMPORTANT: Set these secrets in GitHub → Settings → Secrets and variables → Actions:
 # SUPABASE_ACCESS_TOKEN  — from https://supabase.com/dashboard/account/tokens
-# SUPABASE_DB_PASSWORD  — your database password (NOT the anon/publishable key)
-# SUPABASE_PROJECT_ID    — hlpmmdmgdgyzsxnnrdjl
+# SUPABASE_DB_PASSWORD   — your database password (NOT the anon/publishable key)
+# SUPABASE_PROJECT_REF   — hlpmmdmgdgyzsxnnrdjl
 # Never put real credentials in this file or any source file.
 
 # Run Supabase migrations automatically on push to main.
 # Applies ALL .sql files in supabase/migrations/ in order (Bank, Attendance, Payroll, etc.).
-# One-time: Add repo secrets SUPABASE_ACCESS_TOKEN and SUPABASE_PROJECT_REF (see README).
+# One-time: Add repo secrets SUPABASE_ACCESS_TOKEN, SUPABASE_DB_PASSWORD, and SUPABASE_PROJECT_REF.
 
 name: Supabase migrations
 
@@ -21,9 +21,10 @@ jobs:
     env:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
       SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+      PGPASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Check secrets
         run: |
@@ -33,6 +34,10 @@ jobs:
           fi
           if [ -z "${{ secrets.SUPABASE_PROJECT_REF }}" ]; then
             echo "::error::SUPABASE_PROJECT_REF is not set. Add your Supabase project Reference ID in repo Settings → Secrets and variables → Actions (Supabase Dashboard → Project Settings → General)."
+            exit 1
+          fi
+          if [ -z "${{ secrets.SUPABASE_DB_PASSWORD }}" ]; then
+            echo "::error::SUPABASE_DB_PASSWORD is not set. Add your database password in repo Settings → Secrets and variables → Actions."
             exit 1
           fi
           echo "Secrets are set."
@@ -60,7 +65,8 @@ jobs:
             20260308105337 \
             20260308105730 \
             20260308132745 \
-            20260308143346; do
+            20260308143346 \
+            20260316183928; do
             supabase migration repair "$version" --status applied || true
           done
 
