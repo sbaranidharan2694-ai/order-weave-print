@@ -1,5 +1,5 @@
 import {
-  LayoutDashboard, ClipboardList, PlusCircle, Users, Settings, FileUp, Building2, UserCheck, Briefcase, IndianRupee,
+  LayoutDashboard, ClipboardList, PlusCircle, Users, Settings, FileUp, Building2, UserCheck, Briefcase, IndianRupee, Printer,
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import {
@@ -56,6 +56,12 @@ export function AppSidebar() {
   return (
     <Sidebar collapsible="icon">
       <SidebarContent>
+        <div className="flex items-center gap-2 px-4 py-3 border-b border-sidebar-border">
+          <Printer className="h-5 w-5 text-[#F97316] shrink-0" />
+          {!collapsed && (
+            <span className="font-bold text-sm text-sidebar-primary tracking-tight">Super Printers</span>
+          )}
+        </div>
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu>
