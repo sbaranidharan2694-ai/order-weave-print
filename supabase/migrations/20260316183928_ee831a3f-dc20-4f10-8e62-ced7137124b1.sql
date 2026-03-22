@@ -38,6 +38,7 @@ CREATE POLICY "Allow all access" ON public.production_jobs FOR ALL TO public USI
 
 CREATE INDEX IF NOT EXISTS idx_production_jobs_order_id ON public.production_jobs(order_id);
 
+DROP TRIGGER IF EXISTS update_production_jobs_updated_at ON public.production_jobs;
 CREATE TRIGGER update_production_jobs_updated_at
   BEFORE UPDATE ON public.production_jobs
   FOR EACH ROW
