@@ -206,9 +206,16 @@ serve(async (req) => {
 
     console.log("[parse-po] PDF text length:", pdfText.length);
 
-    const trimmed = pdfText.length > 180_000 ? pdfText.slice(0, 180_000) : pdfText;
+    function smartTruncate(text: string, max: number): string {
+      if (text.length <= max) return text;
+      const head = text.slice(0, 40_000);
+      const tail = text.slice(-60_000);
+      const mid = text.slice(40_000, -60_000).slice(0, max - 100_000);
+      return head + (mid ? "\n[...truncated...]\n" + mid : "") + tail;
+    }
+    const trimmed = smartTruncate(pdfText, 180_000);
     const maxAttempts = 3;
-    const backoffMs = 300;
+    const backoffMs = 2000;
 
     let rawContent = "";
     let lastError = "";

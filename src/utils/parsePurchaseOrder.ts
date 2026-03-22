@@ -182,16 +182,16 @@ function detectDocumentSections(lines: string[]): DocumentSections {
    STAGE 3 — Header Field Extraction
    ═══════════════════════════════════════════════════════ */
 
-const REGEX_DATE = /(\d{1,2})[\/\-\.\s](\d{1,2})[\/\-\.\s](\d{2,4})/;
-const REGEX_ISO_DATE = /(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/;
+const REGEX_DATE = /(\d{1,2})[-/. ](\d{1,2})[-/. ](\d{2,4})/;
+const REGEX_ISO_DATE = /(\d{4})[-/](\d{1,2})[-/](\d{1,2})/;
 const REGEX_GST = /\b\d{2}[A-Z]{5}\d{4}[A-Z][A-Z0-9]Z[A-Z0-9]\b/i;
 const REGEX_EMAIL = /[^\s@]+@[^\s@]+\.[^\s@]+/;
-const REGEX_PHONE = /(?:\+91[\s\-]?)?[6-9]\d{9}/;
+const REGEX_PHONE = /(?:\+91[\s-]?)?[6-9]\d{9}/;
 
 /** Parse numeric value; strip commas and leading zeros so values are stored as proper numbers. */
 function toNum(s: string | undefined | null): number {
   if (!s) return 0;
-  const cleaned = String(s).replace(/,/g, "").replace(/[^0-9.\-]/g, "").replace(/^0+(?=\d)/, "");
+  const cleaned = String(s).replace(/,/g, "").replace(/[^0-9.-]/g, "").replace(/^0+(?=\d)/, "");
   const n = parseFloat(cleaned);
   return Number.isFinite(n) ? n : 0;
 }
@@ -225,46 +225,46 @@ function extractHeaderFields(lines: string[], headerEnd: number): ParsedHeader {
   const allText = headerLines.join("\n");
 
   const po_number = findFieldValue(headerLines, [
-    /PO\s*(?:No|Number|#)?[\s:.\-]*([A-Za-z0-9\-\/]{3,30})/i,
-    /(?:Purchase\s*Order|Order)\s*(?:No|Number|#)?[\s:.\-]*([A-Za-z0-9\-\/]{3,30})/i,
-    /(?:Indent|Work\s*Order|Ref)\s*(?:No|#)?[\s:.\-]*([A-Za-z0-9\-\/]{3,30})/i,
+    /PO\s*(?:No|Number|#)?[\s:.-]*([A-Za-z0-9/-]{3,30})/i,
+    /(?:Purchase\s*Order|Order)\s*(?:No|Number|#)?[\s:.-]*([A-Za-z0-9/-]{3,30})/i,
+    /(?:Indent|Work\s*Order|Ref)\s*(?:No|#)?[\s:.-]*([A-Za-z0-9/-]{3,30})/i,
   ]);
 
   const poDateRaw = findFieldValue(headerLines, [
-    /(?:PO\s*Date|Order\s*Date|Date)\s*[:\-]?\s*([\d\/\-.\s]+)/i,
+    /(?:PO\s*Date|Order\s*Date|Date)\s*[:-]?\s*([\d/. -]+)/i,
   ]);
   const po_date = parseDate(poDateRaw);
 
   const deliveryDateRaw = findFieldValue(headerLines, [
-    /Delivery\s*Date\s*[:\-]?\s*([\d\/\-.\s]+)/i,
-    /Due\s*Date\s*[:\-]?\s*([\d\/\-.\s]+)/i,
+    /Delivery\s*Date\s*[:-]?\s*([\d/. -]+)/i,
+    /Due\s*Date\s*[:-]?\s*([\d/. -]+)/i,
   ]);
   const delivery_date = parseDate(deliveryDateRaw);
 
   const currency = findFieldValue(headerLines, [
-    /Currency\s*[:\-]?\s*([A-Za-z ]+)/i,
+    /Currency\s*[:-]?\s*([A-Za-z ]+)/i,
   ]);
 
   const payment_terms = findFieldValue(headerLines, [
-    /Payment\s*Terms?\s*[:\-]?\s*(.*)/i,
+    /Payment\s*Terms?\s*[:-]?\s*(.*)/i,
   ]);
 
   const prepared_by = findFieldValue(headerLines, [
-    /Prepared\s*by\s*[:\-]?\s*(.*)/i,
+    /Prepared\s*by\s*[:-]?\s*(.*)/i,
   ]);
 
   const customer_name = findFieldValue(headerLines, [
-    /(?:Vendor|Supplier|Company|Customer|Party\s*Name|Bill\s*To|Buyer)\s*[:\-]?\s*(.+)/i,
+    /(?:Vendor|Supplier|Company|Customer|Party\s*Name|Bill\s*To|Buyer)\s*[:-]?\s*(.+)/i,
   ]);
 
-  const addressMatch = allText.match(/(?:Address|Delivery\s*Address|Bill\s*To)\s*[:\-]?\s*([^\n]+(?:\n(?!\s*(?:GST|Phone|Contact|PO|Date))[^\n]+)*)/i);
+  const addressMatch = allText.match(/(?:Address|Delivery\s*Address|Bill\s*To)\s*[:-]?\s*([^\n]+(?:\n(?!\s*(?:GST|Phone|Contact|PO|Date))[^\n]+)*)/i);
   const customer_address = addressMatch ? addressMatch[1].replace(/\n/g, " ").trim().slice(0, 500) : null;
 
   const gstMatch = allText.match(REGEX_GST);
   const customer_gst = gstMatch ? gstMatch[0].toUpperCase() : null;
 
   const contact_person = findFieldValue(headerLines, [
-    /(?:Contact\s*Person|Attn|Attention)\s*[:\-]?\s*(.+)/i,
+    /(?:Contact\s*Person|Attn|Attention)\s*[:-]?\s*(.+)/i,
   ]);
 
   const phoneMatch = allText.match(REGEX_PHONE);
@@ -364,9 +364,19 @@ function extractTableRows(lines: string[], tableStart: number, tableEnd: number)
     let amount = 0;
 
     if (nums.length >= 3) {
-      quantity = nums[0] < 100000 ? nums[0] : 1;
+      let si = 0;
+      if (nums.length >= 4 && nums[0] >= 1 && nums[0] < 1000 && nums[0] === Math.floor(nums[0])) {
+        si = 1; // skip likely serial number
+      }
+      quantity = nums[si] < 100000 ? nums[si] : 1;
       unit_price = nums[nums.length - 2];
       amount = nums[nums.length - 1];
+      if (si === 1 && unit_price > 0 && quantity > 0) {
+        const exp = quantity * unit_price;
+        if (Math.abs(exp - amount) > Math.max(exp * 0.05, 1)) {
+          quantity = nums[0] < 100000 ? nums[0] : 1;
+        }
+      }
     } else if (nums.length === 2) {
       quantity = nums[0] < 100000 ? nums[0] : 1;
       amount = nums[1];
@@ -610,8 +620,6 @@ export function parsePurchaseOrder(rawText: string): ParsedPurchaseOrder {
   if (line_items.length === 0) {
     warnings.push("No line items detected in document.");
   }
-  warnings.push("Parsed with rule-based fallback; please verify fields.");
-
   if (DEBUG) console.log(`${LOG_PREFIX} Result: po_number=${header.po_number}, customer=${header.customer_name}, items=${line_items.length}, total=${totals.grand_total}, confidence=${confidence}`);
 
   return { header, line_items, totals, confidence, warnings };

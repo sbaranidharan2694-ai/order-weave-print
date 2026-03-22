@@ -142,12 +142,12 @@ async function extractTextWithOcr(pdf: pdfjsLib.PDFDocumentProxy): Promise<strin
   if (typeof document === "undefined") return [];
 
   const { recognize } = await import("tesseract.js");
-  const pages = Math.min(pdf.numPages, 12);
+    const pages = Math.min(pdf.numPages, 6);
   const out: string[] = [];
 
   for (let pageNum = 1; pageNum <= pages; pageNum++) {
     const page = await pdf.getPage(pageNum);
-    const viewport = page.getViewport({ scale: 2 });
+    const viewport = page.getViewport({ scale: 1.5 });
     const canvas = document.createElement("canvas");
     const ctx = canvas.getContext("2d");
 
@@ -172,6 +172,10 @@ async function extractTextWithOcr(pdf: pdfjsLib.PDFDocumentProxy): Promise<strin
 
 function shouldRunOcrFallback(text: string, pageCount: number): boolean {
   const trimmed = text.trim();
+  const wordCount = trimmed.split(/\s+/).length;
+  const hasTable = /(description|qty|quantity|unit.?price|amount|hsn)/i.test(trimmed);
+  const hasAmounts = (trimmed.match(/\b\d{2,}\.\d{2}\b/g) ?? []).length;
+  if (wordCount > 150 && hasTable && hasAmounts >= 3) return false;
   if (trimmed.length < 80) return true;
 
   const hasTableSignals = /(s\.?\s*no|sl\.?\s*no|description|qty|quantity|uom|unit\s*price|amount|hsn|cgst|sgst|igst)/i.test(trimmed);

@@ -30,7 +30,7 @@ import { format } from "date-fns";
 import { extractTextFromPdf } from "@/utils/extractPdfText";
 import { extractTextFromExcel } from "@/utils/extractExcelText";
 import { parsePOText } from "@/utils/parsePOText";
-import { generateDocSignature, lookupPatterns, applyLearnedMappings, extractWithLearnedMappings, learnFromParse } from "@/utils/poPatternLearning";
+import { learnFromParse } from "@/utils/poPatternLearning";
 import { logAudit } from "@/utils/auditLog";
 import * as XLSX from "xlsx";
 
@@ -178,13 +178,26 @@ function normalizeDateForInput(v: unknown): string {
   if (v == null || v === "") return "";
   const s = String(v).trim();
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-  const iso = s.match(/^(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})/);
+  const iso = s.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
   if (iso) return `${iso[1]}-${iso[2].padStart(2, "0")}-${iso[3].padStart(2, "0")}`;
-  const dmy = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/);
+  const dmy = s.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})/);
   if (dmy) {
     let y = dmy[3];
     if (y.length === 2) y = parseInt(y, 10) < 50 ? `20${y}` : `19${y}`;
     return `${y}-${dmy[2].padStart(2, "0")}-${dmy[1].padStart(2, "0")}`;
+  }
+  const mon: Record<string, string> = {
+    jan:"01",feb:"02",mar:"03",apr:"04",may:"05",jun:"06",
+    jul:"07",aug:"08",sep:"09",oct:"10",nov:"11",dec:"12"
+  };
+  const m1 = s.match(/^(\d{1,2})[-\s]([A-Za-z]{3})[-\s.](\d{2,4})$/);
+  if (m1) {
+    const yr = m1[3].length === 2 ? (parseInt(m1[3]) < 50 ? "20"+m1[3] : "19"+m1[3]) : m1[3];
+    return `${yr}-${mon[m1[2].toLowerCase()] ?? "01"}-${m1[1].padStart(2,"0")}`;
+  }
+  const m2 = s.match(/^(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]+)\s+(\d{4})$/i);
+  if (m2) {
+    return `${m2[3]}-${mon[m2[2].toLowerCase().slice(0,3)] ?? "01"}-${m2[1].padStart(2,"0")}`;
   }
   return "";
 }
@@ -490,7 +503,19 @@ export default function ImportPO() {
       setParseOcrFailed(false);
 
       if (["png", "jpg", "jpeg"].includes(ext)) {
-        text = "[IMAGE UPLOADED - OCR text not available. Please analyze visible content from the file name: " + file.name + "]";
+        try {
+          const { createWorker } = await import("tesseract.js");
+          const worker = await createWorker("eng");
+          const { data: { text: ocrText } } = await worker.recognize(file);
+          await worker.terminate();
+          text = ocrText?.trim() || "";
+        } catch { text = ""; }
+        if (text.length < 20) {
+          setParseStep("idle");
+          setParseState("error");
+          setParseError("Could not extract text from this image. Please upload a clearer scan or PDF.");
+          return;
+        }
       } else if (ext === "xlsx") {
         const result = await extractTextFromExcel(file);
         text = result.text;
@@ -777,7 +802,7 @@ export default function ImportPO() {
         }
         if (!existing && header.customer_name.trim()) {
           const { data } = await supabase.from("customers")
-            .select("id").ilike("name", header.customer_name.trim()).maybeSingle();
+            .select("id").eq("name", header.customer_name.trim()).maybeSingle();
           existing = data;
         }
         if (existing) {
@@ -972,9 +997,13 @@ export default function ImportPO() {
       setFormErrors({});
       navigate("/orders");
     } catch (err) {
-      // Mark PO as Failed if it was created
       if (poId) {
-        await supabase.from("purchase_orders").update({ status: "Failed" } as any).eq("id", poId);
+        try {
+          await supabase.from("purchase_orders").delete().eq("id", poId);
+          toast.info("Import rolled back — please try again.");
+        } catch {
+          toast.warning("Import failed. A partial PO record may exist — check PO history before retrying.");
+        }
       }
       toast.error("Import failed: " + toErrorMessage(err));
     } finally {
