@@ -5,7 +5,7 @@
 // Request: POST { "pdfText": "...", "parseMode": "bank_statement" | "auto" }
 // Response: { "success": true, "data": { account_holder, transactions, ... } } or { "error": "..." }
 
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 
 const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -163,7 +163,14 @@ serve(async (req: Request): Promise<Response> => {
   let pdfText: string;
   let parseMode: string;
   try {
-    const body = (await req.json()) as { pdfText?: unknown; parseMode?: unknown };
+    const bodyText = await req.text();
+    if (bodyText.length > 100_000) {
+      return new Response(
+        JSON.stringify({ error: "Input too large. Maximum 100KB per request." }),
+        { status: 413, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } }
+      );
+    }
+    const body = JSON.parse(bodyText) as { pdfText?: unknown; parseMode?: unknown };
     if (body == null || typeof body !== "object") {
       return jsonResponse(400, { error: "Request body must be a JSON object." });
     }

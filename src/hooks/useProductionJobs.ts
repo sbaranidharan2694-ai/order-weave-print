@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import type { Tables, TablesInsert } from "@/integrations/supabase/types";
 import { toast } from "sonner";
+import { logger } from "@/lib/logger";
 
 export type ProductionJob = Tables<"production_jobs">;
 export type ProductionJobInsert = TablesInsert<"production_jobs">;
@@ -86,7 +87,7 @@ export async function createJobForOrder(
 ): Promise<ProductionJob | null> {
   const { data: jobNumber, error: rpcErr } = await supabase.rpc("generate_job_number");
   if (rpcErr || !jobNumber) {
-    console.warn("generate_job_number failed", rpcErr);
+    logger.warn("generate_job_number failed", rpcErr);
     return null;
   }
   const description = [order.product_type, order.size, order.paper_type].filter(Boolean).join(" · ") || order.product_type;
@@ -102,7 +103,7 @@ export async function createJobForOrder(
   };
   const { data, error } = await supabase.from("production_jobs").insert(insert).select().single();
   if (error) {
-    console.warn("production_jobs insert failed", error);
+    logger.warn("production_jobs insert failed", error);
     return null;
   }
   return data as ProductionJob;
@@ -115,7 +116,7 @@ export async function createJobForOrderItem(
 ): Promise<ProductionJob | null> {
   const { data: jobNumber, error: rpcErr } = await supabase.rpc("generate_job_number");
   if (rpcErr || !jobNumber) {
-    console.warn("generate_job_number failed", rpcErr);
+    logger.warn("generate_job_number failed", rpcErr);
     return null;
   }
   const insert: ProductionJobInsert & { order_item_id?: string | null } = {
@@ -129,9 +130,9 @@ export async function createJobForOrderItem(
     priority: "normal",
     due_date: order.delivery_date,
   };
-  const { data, error } = await supabase.from("production_jobs").insert(insert as any).select().single();
+  const { data, error } = await supabase.from("production_jobs").insert(insert as ProductionJobInsert).select().single();
   if (error) {
-    console.warn("production_jobs insert failed", error);
+    logger.warn("production_jobs insert failed", error);
     return null;
   }
   return data as ProductionJob;
@@ -219,9 +220,9 @@ export async function getOrdersWithoutJobs(): Promise<{ id: string; order_no: st
     .select("id, order_no, product_type, quantity, delivery_date, assigned_to, size, paper_type, special_instructions, color_mode");
   if (ordersErr || !orders?.length) return [];
   const { data: jobs, error: jobsErr } = await supabase.from("production_jobs").select("order_id");
-  if (jobsErr) return orders as any[];
+  if (jobsErr) return orders as typeof orders;
   const orderIdsWithJobs = new Set((jobs || []).map((j) => j.order_id));
-  return (orders || []).filter((o) => !orderIdsWithJobs.has(o.id)) as any[];
+  return (orders || []).filter((o) => !orderIdsWithJobs.has(o.id));
 }
 
 /** Create production jobs for all orders that don't have one (backfill for current data) */

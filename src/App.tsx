@@ -1,4 +1,5 @@
 import { lazy, Suspense } from "react";
+import { RouteErrorBoundary } from "@/components/RouteErrorBoundary";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -71,19 +72,19 @@ function AppContent() {
             <ProtectedRoute>
               <AppLayout>
                 <Routes>
-                  <Route path="/" element={<Dashboard />} />
-                  <Route path="/orders" element={<OrderHistory />} />
-                  <Route path="/orders/new" element={<NewOrder />} />
-                  <Route path="/orders/:id" element={<OrderDetail />} />
-                  <Route path="/orders/:id/edit" element={<EditOrder />} />
-                  <Route path="/import-po" element={<ImportPO />} />
-                  <Route path="/production-jobs" element={<ProductionJobs />} />
-                  <Route path="/bank-analyser" element={<BankAnalyser />} />
-                  <Route path="/expenses" element={<Expenses />} />
-                  <Route path="/attendance" element={<Attendance />} />
-                  <Route path="/customers" element={<Customers />} />
-                  <Route path="/customers/:id" element={<CustomerDetail />} />
-                  <Route path="/settings" element={<SettingsPage />} />
+                  <Route path="/" element={<RouteErrorBoundary route="Dashboard"><Dashboard /></RouteErrorBoundary>} />
+                  <Route path="/orders" element={<RouteErrorBoundary route="Orders"><OrderHistory /></RouteErrorBoundary>} />
+                  <Route path="/orders/new" element={<RouteErrorBoundary route="New Order"><NewOrder /></RouteErrorBoundary>} />
+                  <Route path="/orders/:id" element={<RouteErrorBoundary route="Order Detail"><OrderDetail /></RouteErrorBoundary>} />
+                  <Route path="/orders/:id/edit" element={<RouteErrorBoundary route="Edit Order"><EditOrder /></RouteErrorBoundary>} />
+                  <Route path="/import-po" element={<RouteErrorBoundary route="Import PO"><ImportPO /></RouteErrorBoundary>} />
+                  <Route path="/production-jobs" element={<RouteErrorBoundary route="Production Jobs"><ProductionJobs /></RouteErrorBoundary>} />
+                  <Route path="/bank-analyser" element={<RouteErrorBoundary route="Bank Analyser"><BankAnalyser /></RouteErrorBoundary>} />
+                  <Route path="/expenses" element={<RouteErrorBoundary route="Expenses"><Expenses /></RouteErrorBoundary>} />
+                  <Route path="/attendance" element={<RouteErrorBoundary route="Attendance"><Attendance /></RouteErrorBoundary>} />
+                  <Route path="/customers" element={<RouteErrorBoundary route="Customers"><Customers /></RouteErrorBoundary>} />
+                  <Route path="/customers/:id" element={<RouteErrorBoundary route="Customer Detail"><CustomerDetail /></RouteErrorBoundary>} />
+                  <Route path="/settings" element={<RouteErrorBoundary route="Settings"><SettingsPage /></RouteErrorBoundary>} />
                   <Route path="*" element={<NotFound />} />
                 </Routes>
               </AppLayout>

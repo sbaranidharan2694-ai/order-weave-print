@@ -70,8 +70,7 @@ export function useOrder(id: string | undefined) {
   });
 }
 
-// Strip balance_due from any payload since it's a generated column
-function stripBalanceDue(obj: Record<string, any>) {
+function stripBalanceDue<T extends Record<string, unknown>>(obj: T): Omit<T, "balance_due"> {
   const { balance_due, ...rest } = obj;
   return rest;
 }
@@ -84,12 +83,13 @@ export function useCreateOrder() {
       const { data: orderNo, error: noErr } = await supabase.rpc("generate_order_no");
       if (noErr) throw noErr;
 
-      const { lineItems, ...orderFields } = order as any;
+      type LineItem = { item_no: number; description: string; quantity: number; unit_price: number; amount: number };
+      const { lineItems, ...orderFields } = order as typeof order & { lineItems?: LineItem[] };
       const qty = lineItems
-        ? lineItems.reduce((s: number, li: any) => s + (li.quantity || 0), 0)
+        ? lineItems.reduce((s: number, li: LineItem) => s + (li.quantity || 0), 0)
         : (orderFields.quantity || 1);
       const amt = lineItems
-        ? lineItems.reduce((s: number, li: any) => s + (li.amount || 0), 0)
+        ? lineItems.reduce((s: number, li: LineItem) => s + (li.amount || 0), 0)
         : (orderFields.amount || 0);
 
       const insertData = stripBalanceDue({
@@ -105,7 +105,7 @@ export function useCreateOrder() {
 
       const { data, error } = await supabase
         .from("orders")
-        .insert(insertData as any)
+        .insert(insertData as OrderInsert)
         .select()
         .single();
       if (error) throw error;
@@ -162,7 +162,7 @@ export function useCreateOrder() {
 
       // Insert line items and create production jobs
       if (lineItems && lineItems.length > 0) {
-        const rows = lineItems.map((li: any) => ({
+        const rows = lineItems.map((li: LineItem) => ({
           order_id: data.id,
           item_no: li.item_no,
           description: li.description,
@@ -172,12 +172,12 @@ export function useCreateOrder() {
         }));
         const { data: insertedItems, error: itemErr } = await supabase
           .from("order_items")
-          .insert(rows as any)
+          .insert(rows)
           .select("id, description, quantity");
         if (!itemErr && insertedItems) {
-          for (const item of insertedItems as any[]) {
+          for (const item of insertedItems) {
             await createJobForOrderItem(
-              item,
+              item as { id: string; description: string; quantity: number },
               { id: data.id, delivery_date: data.delivery_date, assigned_to: data.assigned_to }
             );
           }
@@ -194,11 +194,11 @@ export function useCreateOrder() {
             quantity: qty,
             unit_price: qty > 0 ? amt / qty : 0,
             amount: amt,
-          } as any)
+          })
           .select("id, description, quantity");
         if (!itemErr && orderItems?.[0]) {
           await createJobForOrderItem(
-            (orderItems as any)[0],
+            orderItems[0] as { id: string; description: string; quantity: number },
             { id: data.id, delivery_date: data.delivery_date, assigned_to: data.assigned_to }
           );
         } else {
@@ -237,7 +237,7 @@ export function useUpdateOrderStatus() {
     }) => {
       const { error } = await supabase
         .from("orders")
-        .update({ status: newStatus as any })
+        .update({ status: newStatus as Order["status"] })
         .eq("id", id);
       if (error) throw error;
 
@@ -265,7 +265,7 @@ export function useUpdateOrder() {
       const cleaned = stripBalanceDue(updates);
       const { error } = await supabase
         .from("orders")
-        .update(cleaned as any)
+        .update(cleaned as Partial<Order>)
         .eq("id", id);
       if (error) throw error;
       await logAudit("Order updated", "order", id);

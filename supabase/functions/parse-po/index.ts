@@ -1,4 +1,4 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -175,7 +175,15 @@ serve(async (req) => {
     });
 
   try {
-    const { pdfText } = await req.json();
+    const bodyText = await req.text();
+    if (bodyText.length > 100_000) {
+      return new Response(
+        JSON.stringify({ error: "Input too large. Maximum 100KB per request." }),
+        { status: 413, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+    const body = JSON.parse(bodyText);
+    const { pdfText } = body;
     if (!pdfText || typeof pdfText !== "string") {
       return jsonResponse({ success: false, error: "Missing or invalid pdfText", raw_ai_text: "" }, 400);
     }
