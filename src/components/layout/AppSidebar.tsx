@@ -30,6 +30,7 @@ const group4 = [
 
 const groupLabelClass = "text-[9px] text-[#94A3B8] tracking-[0.1em] pt-3 px-4 pb-1";
 const activeLinkClass = "border-l-[3px] border-l-[#F97316] bg-[#1E3A5F] text-sidebar-primary font-semibold";
+const navItemClass = "hover:bg-sidebar-accent/50 hover:rounded-md transition-all duration-150";
 
 function NavItem({ item, collapsed }: { item: { title: string; url: string; icon: React.ComponentType<{ className?: string }> }; collapsed: boolean }) {
   return (
@@ -38,7 +39,7 @@ function NavItem({ item, collapsed }: { item: { title: string; url: string; icon
         <NavLink
           to={item.url}
           end={item.url === "/"}
-          className="hover:bg-sidebar-accent/50"
+          className={navItemClass}
           activeClassName={activeLinkClass}
         >
           <item.icon className="mr-2 h-4 w-4 shrink-0" />
