@@ -2,7 +2,7 @@
 
 This project is built and deployed **only on [Lovable](https://lovable.dev)**. All configuration and deployment steps assume Lovable.
 
-**URL**: https://lovable.dev/projects/superprintersoms
+**URL**: https://superprintersoms.lovable.app/
 
 ## Running on Lovable
 
