@@ -234,6 +234,8 @@ export default function ImportPO() {
   const [confidence, setConfidence] = useState<string>("");
   const [warnings, setWarnings] = useState<string[]>([]);
   const [rawText, setRawText] = useState("");
+  const [debugOpen, setDebugOpen] = useState(false);
+  const [debugAiRawJson, setDebugAiRawJson] = useState<string>("");
   const [creating, setCreating] = useState(false);
   const [showDiscard, setShowDiscard] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -464,6 +466,16 @@ export default function ImportPO() {
     toast.success(msg);
   }, []);
 
+  const maybeOpenDebugOnParse = useCallback((d: any, raw: string) => {
+    if (!debugOpen) return;
+    try {
+      setDebugAiRawJson(JSON.stringify(d, null, 2));
+    } catch {
+      setDebugAiRawJson(String(d));
+    }
+    setRawText(raw);
+  }, [debugOpen]);
+
   /** Try rule-based parser; return parsed PO if it has at least one line item, else null */
   const tryRuleParserFallback = useCallback((extractedText: string): any | null => {
     if (!extractedText || extractedText.trim().length < 10) return null;
@@ -616,6 +628,7 @@ export default function ImportPO() {
       if (hasLineItems) {
         setParseStep("idle");
         applyParsedToForm(d);
+        maybeOpenDebugOnParse(d, text);
         setParseTime(Math.round((Date.now() - startTime) / 1000));
         toast.success(`PO parsed: ${d.line_items.length} line item(s) found`);
         console.log("[ImportPO] Populated form, line items:", d.line_items.length, "po_number:", d.po_number || "(missing)");
@@ -721,6 +734,8 @@ export default function ImportPO() {
       toast.error(toErrorMessage(e) || "Rule parser failed. Please enter details manually.");
     }
   };
+
+  const debugToggle = () => setDebugOpen((v) => !v);
 
   const handleOpenManualEditor = () => {
     setShowParseFailureModal(false);
@@ -1226,6 +1241,9 @@ export default function ImportPO() {
                 <Button variant="outline" onClick={() => handleUseRuleParser()} disabled={!rawText?.trim()}>
                   <FileText className="mr-2 h-4 w-4" /> Use Rule Parser
                 </Button>
+                <Button variant="outline" onClick={debugToggle}>
+                  <Eye className="mr-2 h-4 w-4" /> {debugOpen ? "Hide Debug" : "Debug"}
+                </Button>
                 <Button variant="secondary" onClick={handleOpenManualEditor}>
                   <FileText className="mr-2 h-4 w-4" /> Open Manual Editor
                 </Button>
@@ -1274,6 +1292,29 @@ export default function ImportPO() {
 
           {parseState === "parsed" && (
             <>
+              {debugOpen && (
+                <div className="mt-4 p-4 border rounded-md bg-muted/30">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="font-medium">Debug</p>
+                      <p className="text-xs text-muted-foreground">AI raw JSON and extracted text snippet</p>
+                    </div>
+                    <Button variant="outline" size="sm" onClick={debugToggle}>
+                      Close
+                    </Button>
+                  </div>
+                  <div className="mt-3 grid grid-cols-1 lg:grid-cols-2 gap-3">
+                    <div>
+                      <p className="text-xs font-medium text-muted-foreground">Extracted text (first 2000 chars)</p>
+                      <pre className="mt-1 text-xs bg-background/50 border rounded p-2 overflow-auto max-h-64 font-mono whitespace-pre-wrap">{rawText?.slice(0, 2000)}</pre>
+                    </div>
+                    <div>
+                      <p className="text-xs font-medium text-muted-foreground">AI JSON</p>
+                      <pre className="mt-1 text-xs bg-background/50 border rounded p-2 overflow-auto max-h-64 font-mono whitespace-pre-wrap">{debugAiRawJson}</pre>
+                    </div>
+                  </div>
+                </div>
+              )}
               {/* Parse status bar */}
               <div className="flex flex-wrap items-center gap-2">
                 {confidence && (
