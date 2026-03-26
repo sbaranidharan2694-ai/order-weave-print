@@ -3,7 +3,8 @@
  * No localStorage fallback — run migrations so tables and bucket exist.
  */
 
-import { supabase, isSupabaseConfigured } from "@/integrations/supabase/client";
+import { supabase } from "@/integrations/supabase/client";
+import { isSupabaseConfigured } from "@/integrations/supabase/config";
 import type { Database } from "@/integrations/supabase/types";
 import { logAudit } from "@/utils/auditLog";
 
