@@ -470,7 +470,7 @@ function validateLineItems(rows: RawRow[]): RawRow[] {
       continue;
     }
 
-    if (r.quantity <= 0) r.quantity = 1;
+    if (r.quantity <= 0) r.quantity = 0;
 
     if (r.unit_price > 0 && r.amount <= 0) {
       r.amount = Math.round(r.quantity * r.unit_price * 100) / 100;
