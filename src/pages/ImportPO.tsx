@@ -866,22 +866,22 @@ export default function ImportPO() {
 
       // 4. Insert line items
       const { error: liErr } = await supabase.from("purchase_order_line_items").insert(
-        lineItems.map((li, idx) => ({
-          purchase_order_id: poId,
-          line_item_no: idx + 1,
-          description: li.description,
-          hsn_code: li.hsn_code || null,
-          qty: Math.max(1, Number(normalizeNumber(li.quantity))),
-          uom: li.unit,
-          unit_price: Math.max(0, Number(normalizeNumber(li.unit_price))),
-          amount: Number(normalizeNumber(li.line_total)),
-          gst_rate: Number(normalizeNumber(li.gst_rate)),
-          gst_amount: Number(normalizeNumber(li.gst_amount)),
-          line_total: Number(normalizeNumber(li.line_total)),
-          sort_order: idx,
-          status: "pending",
-        })) as any
-      );
+    lineItems.map((li, idx) => ({
+      purchase_order_id: poId,
+      line_item_no: idx + 1,
+      description: li.description,
+      hsn_code: li.hsn_code || null,
+      qty: Math.max(0, Number(normalizeNumber(li.quantity))),
+      uom: li.unit,
+      unit_price: Math.max(0, Number(normalizeNumber(li.unit_price))),
+      amount: Number(normalizeNumber(li.line_total)),
+      gst_rate: Number(normalizeNumber(li.gst_rate)),
+      gst_amount: Number(normalizeNumber(li.gst_amount)),
+      line_total: Number(normalizeNumber(li.line_total)),
+      sort_order: idx,
+      status: "pending",
+    })) as any
+  );
       if (liErr) throw new Error("Line items creation failed: " + liErr.message);
 
       // 5. Create one order per PO with one order_item per line and one production_job per item
@@ -946,7 +946,7 @@ export default function ImportPO() {
               order_id: order.id,
               item_no: idx + 1,
               description: (li.description || "").trim(),
-              quantity: Math.max(1, Number(normalizeNumber(li.quantity))),
+              quantity: Math.max(0, Number(normalizeNumber(li.quantity))),
               unit_price: Math.max(0, Number(normalizeNumber(li.unit_price))),
               amount: Number(normalizeNumber(li.line_total)),
             }));
@@ -1016,7 +1016,7 @@ export default function ImportPO() {
         const row = { ...li, id: li.id || newLineId(), sno: idx + 1 };
         return calcLineItem({
           ...row,
-          quantity: Math.max(1, normalizeNumber(row.quantity)),
+          quantity: Math.max(0, normalizeNumber(row.quantity)),
           unit_price: Math.max(0, normalizeNumber(row.unit_price)),
           gst_rate: snapGstRate(row.gst_rate),
         });
