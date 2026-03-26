@@ -365,10 +365,14 @@ export default function ImportPO() {
     if (!canvasContainerRef.current) return;
     canvasContainerRef.current.innerHTML = "";
     try {
-      const pdfjsLib = await import("pdfjs-dist");
-      pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs";
-      const buf = await f.arrayBuffer();
-      const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+       const pdfjsLib = await import("pdfjs-dist");
+       const pdfWorkerSrc = new URL(
+         "pdfjs-dist/build/pdf.worker.min.mjs",
+         import.meta.url,
+       ).toString();
+       pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerSrc;
+       const buf = await f.arrayBuffer();
+       const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
       for (let i = 1; i <= Math.min(pdf.numPages, 10); i++) {
         const page = await pdf.getPage(i);
         const viewport = page.getViewport({ scale: 1.2 });
