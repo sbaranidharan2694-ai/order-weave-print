@@ -236,6 +236,7 @@ export default function ImportPO() {
   const [rawText, setRawText] = useState("");
   const [debugOpen, setDebugOpen] = useState(false);
   const [debugAiRawJson, setDebugAiRawJson] = useState<string>("");
+  const [debugAfterJson, setDebugAfterJson] = useState<string>("");
   const [creating, setCreating] = useState(false);
   const [showDiscard, setShowDiscard] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -473,6 +474,26 @@ export default function ImportPO() {
         setDebugAiRawJson(JSON.stringify(d, null, 2));
       } catch {
         setDebugAiRawJson(String(d));
+      }
+      try {
+        if (d && typeof d === "object") {
+          const after = {
+            po_number: d.po_number,
+            po_date: d.po_date,
+            payment_terms: d.payment_terms,
+            customer: d.customer,
+            line_items: d.line_items,
+            subtotal: d.subtotal,
+            cgst: d.cgst,
+            sgst: d.sgst,
+            igst: d.igst,
+            total_amount: d.total_amount,
+            warnings: d.warnings,
+          };
+          setDebugAfterJson(JSON.stringify(after, null, 2));
+        }
+      } catch {
+        setDebugAfterJson("");
       }
       setRawText(raw);
     },
@@ -1314,6 +1335,10 @@ export default function ImportPO() {
                     <div>
                       <p className="text-xs font-medium text-muted-foreground">AI JSON</p>
                       <pre className="mt-1 text-xs bg-background/50 border rounded p-2 overflow-auto max-h-64 font-mono whitespace-pre-wrap">{debugAiRawJson}</pre>
+                    </div>
+                    <div>
+                      <p className="text-xs font-medium text-muted-foreground">After reconcile/post-process</p>
+                      <pre className="mt-1 text-xs bg-background/50 border rounded p-2 overflow-auto max-h-64 font-mono whitespace-pre-wrap">{debugAfterJson}</pre>
                     </div>
                   </div>
                 </div>

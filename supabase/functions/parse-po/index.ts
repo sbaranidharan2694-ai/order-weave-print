@@ -264,6 +264,67 @@ function postProcessParsed(parsed: Record<string, unknown>): Record<string, unkn
   return parsed;
 }
 
+function reconcileTotals(parsed: Record<string, unknown>): Record<string, unknown> {
+  const lineItems = Array.isArray(parsed.line_items)
+    ? (parsed.line_items as Record<string, unknown>[])
+    : [];
+
+  const GST_RATE_FALLBACK = 0;
+
+  let subtotal = 0;
+  let cgst = 0;
+  let sgst = 0;
+  let igst = 0;
+  let discount_amount = Number(parsed.discount_amount ?? 0) || 0;
+
+  for (const li of lineItems) {
+    const qty = Number(li.quantity ?? li.qty ?? 0) || 0;
+    const unit_price = Number(li.unit_price ?? 0) || 0;
+    const line_total = Math.round(qty * unit_price * 100) / 100;
+
+    const gst_rate = li.gst_rate == null ? GST_RATE_FALLBACK : Number(li.gst_rate) || GST_RATE_FALLBACK;
+    const gst_amount = Math.round((line_total * gst_rate) / 100 * 100) / 100;
+
+    subtotal += line_total;
+
+    const first2 = typeof parsed?.customer?.gst_number === "string"
+      ? (parsed.customer.gst_number as string).slice(0, 2)
+      : null;
+    const intra = first2 === "33";
+    if (gst_rate > 0) {
+      if (intra) {
+        cgst += Math.round((gst_amount / 2) * 100) / 100;
+        sgst += Math.round((gst_amount / 2) * 100) / 100;
+      } else {
+        igst += gst_amount;
+      }
+    }
+
+    li.quantity = qty;
+    li.unit_price = unit_price;
+    li.line_total = line_total;
+    li.gst_rate = gst_rate;
+    li.gst_amount = gst_amount;
+  }
+
+  subtotal = Math.round(subtotal * 100) / 100;
+  cgst = Math.round(cgst * 100) / 100;
+  sgst = Math.round(sgst * 100) / 100;
+  igst = Math.round(igst * 100) / 100;
+  discount_amount = Math.round(discount_amount * 100) / 100;
+
+  const total_amount = Math.round((subtotal + cgst + sgst + igst - discount_amount) * 100) / 100;
+
+  parsed.subtotal = subtotal;
+  parsed.cgst = cgst;
+  parsed.sgst = sgst;
+  parsed.igst = igst;
+  parsed.discount_amount = discount_amount;
+  parsed.total_amount = total_amount;
+
+  return parsed;
+}
+
 async function callAI(
   prompt: string,
   userMessage: string,
@@ -436,6 +497,7 @@ serve(async (req) => {
 
     parsed = ensureMinimumStructure(parsed);
     parsed = postProcessParsed(parsed);
+    parsed = reconcileTotals(parsed);
     return jsonResponse({
       success: true,
       data: parsed,
