@@ -18,6 +18,9 @@ package-lock.json
 .env.*
 !.env.example
 
+# Nested duplicate project folder
+order-weave-print/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
