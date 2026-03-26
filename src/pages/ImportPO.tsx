@@ -148,7 +148,9 @@ function emptyLine(sno: number): LineItem {
 function lineItemFromParsed(li: any, idx: number): LineItem {
   const qty = Math.max(1, normalizeNumber(li.quantity ?? li.qty ?? 1));
   const price = Math.max(0, normalizeNumber(li.unit_price ?? 0));
-  const gstRate = snapGstRate(normalizeNumber(li.gst_rate ?? 18));
+  // Honor explicit 0% GST. Only fall back to 18 when gst_rate is absent.
+  const rawGst = li.gst_rate != null ? normalizeNumber(li.gst_rate) : 18;
+  const gstRate = snapGstRate(rawGst);
   const base = qty * price;
   const gstAmt = Math.round(base * gstRate / 100 * 100) / 100;
   return {

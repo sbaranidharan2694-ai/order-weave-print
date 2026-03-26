@@ -9,23 +9,65 @@ const corsHeaders = {
 const systemPrompt = `You are an expert Indian Purchase Order parser for a printing press.
 
 THE SELLER receiving this PO is: Super Printers (also written as "Super Screens" in some POs), Chennai, Tamil Nadu, India. Super Printers GST numbers: 33ANVPR5833L1Z7 and 33AAGPB7462F1Z1.
-THE CUSTOMER (buyer who ISSUED this PO) is the OTHER company — found in the "FROM", "Billing Address", "Issued By", or header company block.
-NEVER extract "Super Printers", "Super Screens", or any of Super Printers' GST numbers as the customer.
+THE CUSTOMER (buyer who ISSUED this PO) is the OTHER company — never Super Printers.
 
-Extract ALL data from the PO text. Return ONLY valid JSON — no markdown, no backticks, no explanation.
+DOCUMENT STRUCTURE — read carefully before extracting:
+- If the document has a "FROM" section followed by a "TO" section: FROM = customer (buyer), TO = seller (Super Printers). Extract customer from the FROM block.
+- If the document has a "To," header followed by company info: that company is the customer.
+- If "Billing Address" and "Delivery Address" appear: Billing Address is the customer, Delivery Address may be different.
+- NEVER extract "Super Printers", "Super Screens", 33ANVPR5833L1Z7, or 33AAGPB7462F1Z1 as the customer.
 
-HANDLE ANY FORMAT: standard GST POs, government/PSU POs, corporate POs, informal POs, multi-page POs, scanned OCR text, Excel-exported POs.
+Extract ALL data. Return ONLY valid JSON — no markdown, no backticks, no explanation.
+
+HANDLE ANY FORMAT: standard GST POs, government/PSU POs, corporate POs, informal Excel POs, multi-page POs, scanned OCR text, tabular PDFs where columns are merged on the same line.
 
 EXTRACTION RULES:
-- Amounts: Remove Indian commas (1,23,456.78 → 123456.78). Return numbers, not strings.
-- Dates: Convert ANY format to YYYY-MM-DD. Handle: DD/MM/YYYY, DD-MM-YYYY, DD-Mon-YYYY (e.g. 26-Mar-2026), DD Month YYYY.
-- GST: 15 chars. If customer state code (first 2 digits) = 33, taxes are CGST+SGST. Otherwise IGST.
+- Amounts: Remove Indian commas (1,23,456.78 → 123456.78). Return numbers not strings.
+- Dates: Convert ANY format to YYYY-MM-DD.
+  Formats to handle: DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY, DD-Mon-YYYY (26-Mar-2026), DD Month YYYY, DD/MM/YY, DD.MM.YY.
+  For 2-digit years: 00-49 = 2000-2049, 50-99 = 1950-1999. So 26.03.26 → 2026-03-26.
+- GST: 15 chars. If customer GST state code (first 2 digits) = 33, taxes are CGST+SGST. Otherwise IGST.
 - Quantities: Handle "500 nos", "5 reams", "2000 sheets", "204 IN KG" — extract number and unit separately.
 - If GST is inclusive, back-calculate base price.
-- PO number may be labeled: "Purchase Order No.", "PO No.", "Order No.", "Ref No.", "Indent No.", "Work Order No.", "PO NO".
-- For Excel-format POs: amounts may be formula strings like "=F21*G21" — calculate them using the referenced cell values visible in the text.
+- For Excel-format POs: column header rows may be split across 2 rows (e.g., "Qty" on row 1, "IN KG" on row 2 directly below it). Merge them: "Qty" + "IN KG" = quantity column with unit KG.
+- Formula strings like =F21*G21: calculate using visible row values. If row shows price=8, qty=204, total=8×204=1632.
+- For unlabeled payment terms: if a cell in the header area (before line items) contains a standalone credit/payment phrase like "60 DAYS CREDIT", "IMMEDIATE", "ADVANCE", "30 DAYS NET" with no field label, treat it as the payment_terms value.
 
-PRINTING ITEMS TO RECOGNIZE: visiting cards, wedding cards, letterheads, bill books, brochures, flex banners, rubber stamps, ID cards, envelopes, stickers, binding, lamination, screen printing, posters, catalogs, books, carry bags, labels, packaging materials.
+PO NUMBER — CRITICAL:
+- The PO number is the VALUE after the label ("PO No :", "PO NO", "Order No.", "Ref No.", etc.).
+- NEVER set po_number to a field label word: "Date", "Incoterms", "Payment Terms", "Dispatch Mode", "Internal Reference", "Delivery Date", "Remarks", "Reference".
+- In tabular PDF layouts, PO No and Date often appear on the same text line: extract them independently.
+- A valid PO number contains at least one digit and typically has letters+digits+separators (e.g., "GGOR/104PRO/4/1997", "145-03/25-26", "WO/2024/001").
+- If extracted po_number has NO digits, set it to null.
+
+PAYMENT TERMS — CRITICAL:
+- Extract the VALUE after "Payment Terms" label.
+- NEVER set payment_terms to field labels: "Incoterms :", "Dispatch Mode :", "Internal Reference :".
+- In linearized PDF text, "Dispatch Mode : Incoterms : Immediate Payment Terms :" means: Incoterms=blank, PaymentTerms=Immediate. "Immediate" is the payment terms value.
+
+LINE ITEMS — CRITICAL:
+- ONLY include rows that represent actual products/services ordered.
+- A valid line item MUST have: a product/service description AND quantity > 0 AND unit_price > 0.
+- EXCLUDE ALL of these — do NOT add them as line items:
+  * Any row where description matches: "Total", "Sub Total", "Subtotal", "Grand Total", "Net Total", "Net Amount", "Net Value"
+  * Any row starting with: "Amount in Words", "Rupees in words", "₹ in words"
+  * Any row starting with: "CGST", "SGST", "IGST", "GST", "Tax", "Discount", "Round Off"
+  * Any row where description is a field label with colon: "Subtotal (₹) :", "Total (₹) :"
+  * Any row that is a column header (description = "Sr No", "S No", "Item", "Description")
+  * Any blank description row
+- If the PO has 1 real product row, line_items must have exactly 1 entry.
+
+HSN CODE — CRITICAL:
+- HSN codes are 4-8 digit NUMBERS only (e.g., "4821102", "4819", "48192090").
+- NEVER use alphabetic batch numbers, lot numbers, or part numbers as HSN codes (e.g., "15L25AD", "13L0125", "P-PM-00627" are NOT HSN codes).
+- If no valid numeric HSN code is present, set hsn_code to null.
+
+GST RATE — CRITICAL:
+- If the line item row shows CGST%, SGST%, and IGST% ALL as 0 or 0.00, set gst_rate to 0. Do NOT default to 18.
+- If the document shows CGST 9% + SGST 9%, set gst_rate to 18 (9+9).
+- Valid rates: 0, 5, 12, 18, 28.
+
+PRINTING ITEMS TO RECOGNIZE: visiting cards, wedding cards, letterheads, bill books, brochures, flex banners, rubber stamps, ID cards, envelopes, stickers, binding, lamination, screen printing, posters, catalogs, books, carry bags, labels, packaging materials, chemical compounds (screen printing inks/emulsions), GIANITAN products.
 
 Return this EXACT JSON:
 {
@@ -68,9 +110,9 @@ Return this EXACT JSON:
 }
 
 If a field is not found, use null for strings and 0 for numbers.
-Calculate missing fields: line_total = qty × unit_price, gst_amount = line_total × gst_rate/100, subtotal = sum of line_totals, total = subtotal + taxes - discount.
-confidence: high if PO number + customer + items all found, medium if some missing, low if mostly guessing.
-IMPORTANT: line_items MUST always be an array, even if empty [].`;
+Calculate: line_total = qty × unit_price, gst_amount = line_total × gst_rate/100, subtotal = sum(line_totals), total = subtotal + cgst + sgst + igst - discount.
+confidence: high = PO number + customer + line items all found. medium = some missing. low = mostly guessing.
+line_items MUST always be an array, even if empty [].`;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -147,6 +189,77 @@ function ensureMinimumStructure(parsed: Record<string, unknown>): Record<string,
       li.line_total = Math.round(qty * price * 100) / 100;
     }
     li.unit = li.unit ?? li.uom ?? "Nos";
+  }
+  return parsed;
+}
+
+const FOOTER_DESC_PATTERNS = [
+  /^(sub\s*total|subtotal|total|grand\s*total|net\s*total|net\s*amount|net\s*value)[\s:₹(]*$/i,
+  /^amount\s+in\s+words/i,
+  /^(cgst|sgst|igst|gst|tax|discount|round\s*off)[\s:0-9%.]*$/i,
+  /^(for\s+and\s+on\s+behalf|authorized\s*signatory|prepared\s+by|reviewed?\s+by)/i,
+  /^[₹\d,.\s]+$/,
+  /^(sr\.?\s*no\.?|s\.?\s*no\.?|sno\.?|item\s*no\.?|sl\.?\s*no\.?)$/i,
+  /subtotal\s*[₹(]/i,
+];
+
+const INVALID_PO_NUMBER_PATTERNS = [
+  /^date$/i,
+  /^incoterms?:?$/i,
+  /^payment\s*terms?:?$/i,
+  /^dispatch\s*mode:?$/i,
+  /^internal\s*ref/i,
+  /^delivery\s*date:?$/i,
+  /^remarks?:?$/i,
+  /^reference:?$/i,
+  /^[a-z][a-z\s]{0,20}:?\s*$/i,
+];
+
+function isSpuriousLineItem(item: Record<string, unknown>): boolean {
+  const desc = String(item.description ?? "").trim();
+  if (!desc) return true;
+  for (const pat of FOOTER_DESC_PATTERNS) {
+    if (pat.test(desc)) return true;
+  }
+  if (/^[\w\s]{1,25}:\s*$/.test(desc) && !/\d/.test(desc)) return true;
+  return false;
+}
+
+function sanitizePoNumber(value: unknown): string | null {
+  if (!value || typeof value !== "string") return null;
+  const v = value.trim();
+  if (!v) return null;
+  for (const pat of INVALID_PO_NUMBER_PATTERNS) {
+    if (pat.test(v)) return null;
+  }
+  if (!/\d/.test(v)) return null;
+  return v;
+}
+
+function sanitizePaymentTerms(value: unknown): string | null {
+  if (!value || typeof value !== "string") return null;
+  const v = value.trim();
+  if (!v) return null;
+  if (/^incoterms?\s*:?\s*$/i.test(v)) return null;
+  if (/^(dispatch|delivery|internal|reference)\s/i.test(v)) return null;
+  return v;
+}
+
+function postProcessParsed(parsed: Record<string, unknown>): Record<string, unknown> {
+  parsed.po_number = sanitizePoNumber(parsed.po_number);
+  parsed.payment_terms = sanitizePaymentTerms(parsed.payment_terms);
+
+  if (Array.isArray(parsed.line_items)) {
+    const before = (parsed.line_items as unknown[]).length;
+    parsed.line_items = (parsed.line_items as Record<string, unknown>[]).filter(
+      (item) => !isSpuriousLineItem(item),
+    );
+    const removed = before - (parsed.line_items as unknown[]).length;
+    if (removed > 0) {
+      const warnings = Array.isArray(parsed.warnings) ? (parsed.warnings as string[]) : [];
+      warnings.push(`Removed ${removed} spurious footer row(s) from line items.`);
+      parsed.warnings = warnings;
+    }
   }
   return parsed;
 }
@@ -322,6 +435,7 @@ serve(async (req) => {
     }
 
     parsed = ensureMinimumStructure(parsed);
+    parsed = postProcessParsed(parsed);
     return jsonResponse({
       success: true,
       data: parsed,
