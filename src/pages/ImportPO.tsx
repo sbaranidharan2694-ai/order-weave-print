@@ -464,17 +464,20 @@ export default function ImportPO() {
     setParseState("parsed");
     const msg = source ? `Parsed with ${source}. Please verify.` : `PO parsed: ${items.length} line item(s) found`;
     toast.success(msg);
-  }, []);
+  }, [debugOpen, debugAiRawJson, rawText]);
 
-  const maybeOpenDebugOnParse = useCallback((d: any, raw: string) => {
-    if (!debugOpen) return;
-    try {
-      setDebugAiRawJson(JSON.stringify(d, null, 2));
-    } catch {
-      setDebugAiRawJson(String(d));
-    }
-    setRawText(raw);
-  }, [debugOpen]);
+  const maybeOpenDebugOnParse = useCallback(
+    (d: any, raw: string) => {
+      if (!debugOpen) return;
+      try {
+        setDebugAiRawJson(JSON.stringify(d, null, 2));
+      } catch {
+        setDebugAiRawJson(String(d));
+      }
+      setRawText(raw);
+    },
+    [debugOpen],
+  );
 
   /** Try rule-based parser; return parsed PO if it has at least one line item, else null */
   const tryRuleParserFallback = useCallback((extractedText: string): any | null => {
