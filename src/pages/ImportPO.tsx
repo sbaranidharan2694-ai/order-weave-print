@@ -579,6 +579,15 @@ export default function ImportPO() {
       console.log("[ImportPO] Extracted text length:", text.length, "source:", ext, "rule line items:", ruleBackup?.line_items?.length ?? 0);
 
       if (parseAttemptsRef.current >= 3) {
+        const fallback = ruleHasLines && ruleBackup ? ruleBackup : tryRuleParserFallback(text);
+        if (fallback) {
+          setParseStep("idle");
+          applyParsedToForm(fallback, "rule-based parser (AI retries exhausted)");
+          setParseTime(Math.round((Date.now() - startTime) / 1000));
+          toast.success("Parsed with Rule Parser (AI retries exhausted)");
+          return;
+        }
+
         setParseStep("idle");
         setParseRetriesExhausted(true);
         toast.error("Max parse attempts reached. Use Rule Parser or enter manually.");
