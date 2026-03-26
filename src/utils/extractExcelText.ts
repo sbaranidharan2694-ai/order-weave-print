@@ -99,10 +99,19 @@ export async function extractTextFromExcel(file: File): Promise<{ text: string }
 
     function isContinuationHeaderRow(row: string[], prevRow: string[]): boolean {
       const nonEmpty = row.filter((c) => c.trim() !== "");
-      if (nonEmpty.length === 0 || nonEmpty.length > 3) return false;
-      const unitLike =
-        /^(in\s+kg|nos|pcs|nos\.|kgs?|sets?|pairs?|metres?|mtr|ltr|amount|amt|rs\.?|kg)$/i;
-      return nonEmpty.every((c) => unitLike.test(c.trim()));
+      if (nonEmpty.length === 0 || nonEmpty.length > 4) return false;
+      const unitLike = /^(in\s+kg|in\s*kg|nos|pcs|nos\.|kgs?|kg|qty|qty\.|amount|amt|rs\.?|kgs\.?|kgs|in\s*kgs)$/i;
+      return nonEmpty.every((c) => unitLike.test(c.trim().toLowerCase()));
+    }
+
+    function normalizeUnitLikeValue(v: string): string {
+      const s = v.trim().toLowerCase();
+      if (s === "kg" || s === "kgs") return "KG";
+      if (s.startsWith("in kg") || s.startsWith("in  kg") || s.startsWith("in kg")) return "KG";
+      if (s === "nos") return "Nos";
+      if (s === "pcs") return "Nos";
+      if (s.startsWith("in kg")) return "KG";
+      return v.trim();
     }
 
     function getSectionAnnotation(row: string[]): string | null {
@@ -137,7 +146,10 @@ export async function extractTextFromExcel(file: File): Promise<{ text: string }
         isContinuationHeaderRow(cells, prevRow) &&
         outputLines.length > 0
       ) {
-        const unitValues = cells.filter((c) => c.trim() !== "").join(" / ");
+        const unitValues = cells
+          .filter((c) => c.trim() !== "")
+          .map((c) => normalizeUnitLikeValue(c))
+          .join(" / ");
         const lastLine = outputLines[outputLines.length - 1];
         outputLines[outputLines.length - 1] = `${lastLine} [units: ${unitValues}]`;
         prevRow = cells;
