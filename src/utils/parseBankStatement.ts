@@ -294,11 +294,11 @@ function parsePipeTableTransactions(lines: string[]): Transaction[] {
     const corrected = correctDebitCreditFromDescription(details, debit, credit);
 
     const hasDebitSignal =
-      /NEFT[\s-]*(?:DR|DEBIT|D\b)|UPI\/DR|UPI\s*DR|CHQ\s+PAID|ATW\s+USING|ATM\s+WDL|ATM\s+WDR|DEBIT\b|DR\s*--/i.test(
+      /NEFT[\s-]*(?:DR|DEBIT|D\b)|(?:UPI\s*\/\s*DR|UPI\s*\/\s*\/?\s*DR)|(?:UPI\s*DR)|CHQ\s+PAID|ATW\s+USING|ATM\s+WDL|ATM\s+WDR|DEBIT\b|DR\s*--/i.test(
         details,
       );
     const hasCreditSignal =
-      /NEFT[\s-]*(?:CR|CREDIT|C\b)|UPI\/CR|UPI\s*CR|IMPS--|IMPS\s*CR|CREDIT\b|CR\s*--|CR\s*:?/i.test(
+      /NEFT[\s-]*(?:CR|CREDIT|C\b)|(?:UPI\s*\/\s*CR|UPI\s*\/\s*\/?\s*CR)|(?:UPI\s*CR)|IMPS--|IMPS\s*CR|CREDIT\b|CR\s*--|CR\s*:?/i.test(
         details,
       );
 
