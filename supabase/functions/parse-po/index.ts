@@ -163,6 +163,76 @@ function ensureMinimumStructure(parsed: Record<string, unknown>): Record<string,
   return parsed;
 }
 
+async function callAI(systemPrompt: string, userMessage: string): Promise<{ text: string } | { error: string; status: number }> {
+  const lovableKey = Deno.env.get("LOVABLE_API_KEY")?.trim();
+  const googleKey = Deno.env.get("GOOGLE_GEMINI_API_KEY")?.trim() || Deno.env.get("GEMINI_API_KEY")?.trim();
+
+  if (lovableKey) {
+    const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${lovableKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "google/gemini-2.5-flash",
+        temperature: 0,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userMessage },
+        ],
+        stream: false,
+      }),
+    });
+
+    if (res.status === 429) return { error: "Rate limit exceeded, please try again later.", status: 429 };
+    if (res.status === 402) return { error: "AI credits exhausted. Add credits in workspace settings.", status: 402 };
+    if (!res.ok) {
+      console.error("[parse-po] Lovable AI error:", res.status, await res.text().then((t) => t.slice(0, 300)));
+      return { error: "AI parsing failed. Please try again.", status: 500 };
+    }
+
+    const data = await res.json().catch(() => null);
+    const text = data?.choices?.[0]?.message?.content ?? "";
+    if (!text.trim()) return { error: "AI returned no content.", status: 500 };
+    return { text };
+  }
+
+  if (googleKey) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${encodeURIComponent(googleKey)}`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: systemPrompt }] },
+        contents: [{ parts: [{ text: userMessage }] }],
+        generationConfig: { temperature: 0, maxOutputTokens: 8192 },
+      }),
+    });
+
+    if (res.status === 429) return { error: "Rate limit exceeded, please try again later.", status: 429 };
+    if (res.status === 403) {
+      const errText = await res.text();
+      if (/quota|billing|api key/i.test(errText)) {
+        return { error: "Gemini API quota exceeded or invalid key.", status: 403 };
+      }
+      console.error("[parse-po] Gemini API error:", res.status, errText.slice(0, 300));
+      return { error: "AI parsing failed. Please try again.", status: 500 };
+    }
+    if (!res.ok) {
+      console.error("[parse-po] Gemini API error:", res.status, await res.text().then((t) => t.slice(0, 300)));
+      return { error: "AI parsing failed. Please try again.", status: 500 };
+    }
+
+    const data = await res.json().catch(() => null);
+    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+    if (!text.trim()) return { error: "AI returned no content.", status: 500 };
+    return { text };
+  }
+
+  return {
+    error: "AI API key not configured. Add LOVABLE_API_KEY or GEMINI_API_KEY in edge function secrets.",
+    status: 503,
+  };
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -195,15 +265,6 @@ serve(async (req) => {
       );
     }
 
-    const apiKey = Deno.env.get("LOVABLE_API_KEY");
-    if (!apiKey) {
-      return jsonResponse({
-        success: false,
-        error: "AI API key not configured. Ensure Lovable Cloud is enabled.",
-        raw_ai_text: "",
-      }, 503);
-    }
-
     console.log("[parse-po] PDF text length:", pdfText.length);
 
     function smartTruncate(text: string, max: number): string {
@@ -223,74 +284,52 @@ serve(async (req) => {
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            model: "google/gemini-2.5-flash",
-            temperature: 0,
-            messages: [
-              { role: "system", content: systemPrompt },
-              { role: "user", content: `Parse this purchase order and return ONLY the JSON:\n\n${trimmed}` },
-            ],
-          }),
-        });
+        const aiResult = await callAI(
+          systemPrompt,
+          `Parse this purchase order and return ONLY the JSON:\n\n${trimmed}`,
+        );
 
-        if (!response.ok) {
-          const errText = await response.text();
-          console.error("[parse-po] AI gateway error attempt", attempt, response.status, errText.slice(0, 200));
-          lastError = `AI gateway ${response.status}: ${errText.slice(0, 150)}`;
-          if (response.status === 429 || response.status === 502) {
-            await sleep(backoffMs * attempt);
-            continue;
-          }
-          if (response.status === 402) {
+        if ("error" in aiResult) {
+          lastError = aiResult.error;
+          if (aiResult.status === 402 || aiResult.status === 403) {
             return jsonResponse({
               success: false,
-              error: "AI credits exhausted. Add credits in workspace settings.",
-              parse_error: lastError,
+              error: aiResult.error,
+              parse_error: aiResult.error,
               raw_ai_text: "",
-            });
+            }, aiResult.status);
           }
-          if (attempt === maxAttempts) {
+          if (aiResult.status === 429 || aiResult.status === 500) {
+            if (attempt < maxAttempts) {
+              await sleep(backoffMs * attempt);
+              continue;
+            }
             return jsonResponse({
               success: false,
-              error: lastError,
-              parse_error: lastError,
+              error: aiResult.error,
+              parse_error: aiResult.error,
               raw_ai_text: "",
-            });
+            }, aiResult.status);
           }
-          await sleep(backoffMs * attempt);
-          continue;
+          return jsonResponse({
+            success: false,
+            error: aiResult.error,
+            parse_error: aiResult.error,
+            raw_ai_text: "",
+          }, aiResult.status);
         }
 
-        const data = await response.json();
-        rawContent = data?.choices?.[0]?.message?.content ?? "";
+        rawContent = aiResult.text;
         console.log("[parse-po] Attempt", attempt, "AI response length:", rawContent.length, "first 120:", rawContent.slice(0, 120));
 
-        const toolCall = data?.choices?.[0]?.message?.tool_calls?.[0];
-        if (toolCall?.function?.arguments) {
-          try {
-            parsed = JSON.parse(toolCall.function.arguments) as Record<string, unknown>;
-            break;
-          } catch {
-            // fall through to content extraction
-          }
+        const result = extractAndParse(rawContent);
+        if (result.parsed) {
+          parsed = result.parsed;
+          break;
         }
 
-        if (rawContent) {
-          const result = extractAndParse(rawContent);
-          if (result.parsed) {
-            parsed = result.parsed;
-            break;
-          }
-          lastError = result.parseError ?? "Parse failed";
-          console.log("[parse-po] Parse attempt", attempt, "failed:", lastError);
-        }
-
+        lastError = result.parseError ?? "Parse failed";
+        console.log("[parse-po] Parse attempt", attempt, "failed:", lastError);
         if (attempt < maxAttempts) await sleep(backoffMs * attempt);
       } catch (e) {
         lastError = e instanceof Error ? e.message : String(e);
