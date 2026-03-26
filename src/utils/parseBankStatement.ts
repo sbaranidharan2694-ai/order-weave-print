@@ -289,7 +289,37 @@ function parsePipeTableTransactions(lines: string[]): Transaction[] {
     }
     const details = middle.join(" ").replace(/\s+/g, " ").trim() || "Transaction";
     if (/^(TRANS\s+DATE|VALUE\s+DATE|DEBITS?|CREDITS?|BALANCE)$/i.test(details)) continue;
-    const { debit: d, credit: c } = correctDebitCreditFromDescription(details, debit, credit);
+    let d = debit;
+    let c = credit;
+    const corrected = correctDebitCreditFromDescription(details, debit, credit);
+
+    const hasDebitSignal = /NEFT[\s-]*(?:DR|DEBIT)|UPI\/DR|CHQ\s+PAID|ATW\s+USING|ATM\s+WDL|DEBIT\b|DR\s*--/i.test(
+      details,
+    );
+    const hasCreditSignal = /NEFT[\s-]*(?:G\s|CR|CREDIT)|UPI\/CR|IMPS--|CREDIT\b|CR\s*--/i.test(
+      details,
+    );
+
+    if (hasDebitSignal || hasCreditSignal) {
+      d = corrected.debit;
+      c = corrected.credit;
+    } else {
+      // Ambiguous details: if both debit and credit are populated, trust only one side.
+      // Prefer the larger non-zero side, but never keep both non-zero.
+      if (debit > 0 && credit > 0) {
+        if (debit >= credit) {
+          d = Math.max(debit, credit);
+          c = 0;
+        } else {
+          d = 0;
+          c = Math.max(debit, credit);
+        }
+      } else {
+        d = corrected.debit;
+        c = corrected.credit;
+      }
+    }
+
     const isDebit = d > 0 && c === 0;
     out.push({
       date,
