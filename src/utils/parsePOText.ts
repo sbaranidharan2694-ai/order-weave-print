@@ -75,7 +75,9 @@ export function parsePOText(text: string): RuleParsedPO {
     contact_email: h.email,
     payment_terms: h.payment_terms,
     delivery_date: h.delivery_date,
-    line_items,
+    line_items: Array.isArray(line_items)
+      ? line_items.filter((li) => Number(li.quantity) > 0)
+      : [],
     subtotal: totals.subtotal,
     cgst: totals.cgst,
     sgst: totals.sgst,

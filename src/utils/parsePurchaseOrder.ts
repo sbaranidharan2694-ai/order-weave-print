@@ -412,11 +412,11 @@ function extractTableRows(lines: string[], tableStart: number, tableEnd: number)
       if (nums.length >= 4 && nums[0] >= 1 && nums[0] < 1000 && nums[0] === Math.floor(nums[0])) {
         si = 1;
       }
-      quantity = nums[si] < 100000 ? nums[si] : 1;
+      quantity = nums[si] < 100000 ? nums[si] : 0;
       unit_price = nums[nums.length - 2];
       amount = lineTotal;
     } else if (nums.length === 2) {
-      quantity = nums[0] < 100000 ? nums[0] : 1;
+      quantity = nums[0] < 100000 ? nums[0] : 0;
       amount = nums[1];
     } else if (nums.length === 1) {
       amount = nums[0];
@@ -470,7 +470,13 @@ function validateLineItems(rows: RawRow[]): RawRow[] {
       continue;
     }
 
-    if (r.quantity <= 0) r.quantity = 0;
+    if (r.quantity <= 0) {
+      if (r.amount > 0 || r.unit_price > 0) {
+        // Keep row for editing only if quantity is explicitly present; otherwise drop.
+        continue;
+      }
+      r.quantity = 0;
+    }
 
     if (r.unit_price > 0 && r.amount <= 0) {
       r.amount = Math.round(r.quantity * r.unit_price * 100) / 100;
