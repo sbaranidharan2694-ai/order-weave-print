@@ -75,7 +75,6 @@ function normalizeText(text: string): string {
   return text
     .replace(/\r\n/g, "\n")
     .replace(/\r/g, "\n")
-    .replace(/\t/g, " ")
     .replace(/[–—]/g, "-")
     .replace(/['']/g, "'")
     .replace(/[""]/g, '"')
@@ -85,12 +84,6 @@ function normalizeText(text: string): string {
 /* ═══════════════════════════════════════════════════════
    STAGE 2 — Document Segmentation
    ═══════════════════════════════════════════════════════ */
-
-const HEADER_KEYWORDS = [
-  "purchase order", "po number", "po no", "order no", "order number",
-  "vendor", "supplier", "currency", "payment terms", "bill to",
-  "buyer", "ship to", "ref no", "indent no", "work order",
-];
 
 const TABLE_HEADER_KEYWORDS = [
   "description", "item", "qty", "quantity", "nos",
@@ -196,17 +189,32 @@ function toNum(s: string | undefined | null): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+const MONTH_NAMES: Record<string, string> = {
+  jan: "01", feb: "02", mar: "03", apr: "04", may: "05", jun: "06",
+  jul: "07", aug: "08", sep: "09", oct: "10", nov: "11", dec: "12",
+};
+
 function parseDate(s: string | undefined | null): string | null {
   if (!s || typeof s !== "string") return null;
   const trimmed = s.trim();
+  const iso = trimmed.match(REGEX_ISO_DATE);
+  if (iso) return `${iso[1]}-${iso[2].padStart(2, "0")}-${iso[3].padStart(2, "0")}`;
   const d = trimmed.match(REGEX_DATE);
   if (d) {
     const [, day, month, year] = d;
     const y = year.length === 2 ? (parseInt(year, 10) < 50 ? "20" + year : "19" + year) : year;
     return `${y}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
   }
-  const iso = trimmed.match(REGEX_ISO_DATE);
-  if (iso) return `${iso[1]}-${iso[2].padStart(2, "0")}-${iso[3].padStart(2, "0")}`;
+  const mon = trimmed.match(/^(\d{1,2})[-.\s]+([A-Za-z]{3,9})[-.\s]+(\d{2,4})$/);
+  if (mon) {
+    const day = mon[1].padStart(2, "0");
+    const monthKey = mon[2].toLowerCase().slice(0, 3);
+    const monthNum = MONTH_NAMES[monthKey];
+    if (monthNum) {
+      const yr = mon[3].length === 2 ? (parseInt(mon[3], 10) < 50 ? "20" + mon[3] : "19" + mon[3]) : mon[3];
+      return `${yr}-${monthNum}-${day}`;
+    }
+  }
   return null;
 }
 
@@ -231,13 +239,13 @@ function extractHeaderFields(lines: string[], headerEnd: number): ParsedHeader {
   ]);
 
   const poDateRaw = findFieldValue(headerLines, [
-    /(?:PO\s*Date|Order\s*Date|Date)\s*[:-]?\s*([\d/. -]+)/i,
+    /(?:PO\s*Date|Order\s*Date|Date)\s*[:-]?\s*([\d/. A-Za-z-]+)/i,
   ]);
   const po_date = parseDate(poDateRaw);
 
   const deliveryDateRaw = findFieldValue(headerLines, [
-    /Delivery\s*Date\s*[:-]?\s*([\d/. -]+)/i,
-    /Due\s*Date\s*[:-]?\s*([\d/. -]+)/i,
+    /Delivery\s*Date\s*[:-]?\s*([\d/. A-Za-z-]+)/i,
+    /Due\s*Date\s*[:-]?\s*([\d/. A-Za-z-]+)/i,
   ]);
   const delivery_date = parseDate(deliveryDateRaw);
 
@@ -253,9 +261,17 @@ function extractHeaderFields(lines: string[], headerEnd: number): ParsedHeader {
     /Prepared\s*by\s*[:-]?\s*(.*)/i,
   ]);
 
-  const customer_name = findFieldValue(headerLines, [
-    /(?:Vendor|Supplier|Company|Customer|Party\s*Name|Bill\s*To|Buyer)\s*[:-]?\s*(.+)/i,
-  ]);
+  const customer_name =
+    findFieldValue(headerLines, [
+      /(?:Vendor|Supplier|Company|Customer|Party\s*Name|Bill\s*To|Buyer|FROM|Issued\s*By|Purchaser)\s*[:-]?\s*(.+)/i,
+      /(?:Billing\s*Address|Bill\s*Address)\s*[:-]?\s*(.+)/i,
+    ]) ??
+    (headerLines.slice(0, Math.min(headerLines.length, 20)).find(
+      (line) =>
+        /(?:Pvt\.?\s*Ltd|Private\s*Limited|Limited|Industries|Corporation|Chemicals|LLP|LTD\.?)\b/i.test(line) &&
+        line.length < 120 &&
+        !/Super\s*Print|Super\s*Screen/i.test(line),
+    ) ?? null);
 
   const addressMatch = allText.match(/(?:Address|Delivery\s*Address|Bill\s*To)\s*[:-]?\s*([^\n]+(?:\n(?!\s*(?:GST|Phone|Contact|PO|Date))[^\n]+)*)/i);
   const customer_address = addressMatch ? addressMatch[1].replace(/\n/g, " ").trim().slice(0, 500) : null;
@@ -293,7 +309,29 @@ function detectItemTable(lines: string[], sections: DocumentSections): { tableSt
    STAGE 5 — Row Extraction
    ═══════════════════════════════════════════════════════ */
 
-const AMOUNT_RE = /\d{1,3}(?:,\d{2,3})*(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?/g;
+const AMOUNT_RE = /(?<![A-Za-z0-9:/\-#])(\d{1,3}(?:,\d{2,3})*(?:\.\d{1,2})?|\d{4,}(?:\.\d{1,2})?)(?![A-Za-z0-9/])/g;
+
+function findQtyPricePair(
+  nums: number[],
+  lineTotal: number
+): { quantity: number; unit_price: number } | null {
+  if (nums.length < 2 || lineTotal <= 0) return null;
+  let best: { quantity: number; unit_price: number; err: number } | null = null;
+  for (let i = 0; i < nums.length - 1; i++) {
+    const q = nums[i];
+    if (q <= 0 || q >= 100_000) continue;
+    for (let j = i + 1; j < nums.length; j++) {
+      const p = nums[j];
+      if (p <= 0 || p >= 100_000) continue;
+      const product = q * p;
+      const err = Math.abs(product - lineTotal) / lineTotal;
+      if (err < 0.015 && (best === null || err < best.err)) {
+        best = { quantity: q, unit_price: p, err };
+      }
+    }
+  }
+  return best ? { quantity: best.quantity, unit_price: best.unit_price } : null;
+}
 
 function extractTableRows(lines: string[], tableStart: number, tableEnd: number): RawRow[] {
   const rows: RawRow[] = [];
@@ -351,7 +389,7 @@ function extractTableRows(lines: string[], tableStart: number, tableEnd: number)
     }
 
     const hasText = /[a-zA-Z]/.test(line);
-    const amountMatches = line.match(AMOUNT_RE) || [];
+    const amountMatches = [...line.matchAll(AMOUNT_RE)].map(m => m[1]);
     const nums = amountMatches.map(a => toNum(a)).filter(n => n > 0);
     const hasNumeric = nums.length > 0;
 
@@ -363,20 +401,20 @@ function extractTableRows(lines: string[], tableStart: number, tableEnd: number)
     let unit_price = 0;
     let amount = 0;
 
-    if (nums.length >= 3) {
+    const lineTotal = nums[nums.length - 1];
+    const pair = lineTotal > 0 ? findQtyPricePair(nums.slice(0, -1), lineTotal) : null;
+    if (pair) {
+      quantity = pair.quantity;
+      unit_price = pair.unit_price;
+      amount = lineTotal;
+    } else if (nums.length >= 3) {
       let si = 0;
       if (nums.length >= 4 && nums[0] >= 1 && nums[0] < 1000 && nums[0] === Math.floor(nums[0])) {
-        si = 1; // skip likely serial number
+        si = 1;
       }
       quantity = nums[si] < 100000 ? nums[si] : 1;
       unit_price = nums[nums.length - 2];
-      amount = nums[nums.length - 1];
-      if (si === 1 && unit_price > 0 && quantity > 0) {
-        const exp = quantity * unit_price;
-        if (Math.abs(exp - amount) > Math.max(exp * 0.05, 1)) {
-          quantity = nums[0] < 100000 ? nums[0] : 1;
-        }
-      }
+      amount = lineTotal;
     } else if (nums.length === 2) {
       quantity = nums[0] < 100000 ? nums[0] : 1;
       amount = nums[1];
@@ -491,7 +529,7 @@ function extractTotals(lines: string[], footerStart: number): ParsedTotals {
       for (const re of patterns) {
         const m = line.match(re);
         if (m) {
-          const nums = (m[0].match(AMOUNT_RE) || []).map(a => toNum(a)).filter(n => n > 0);
+          const nums = [...m[0].matchAll(AMOUNT_RE)].map(mm => mm[1]).map(a => toNum(a)).filter(n => n > 0);
           if (nums.length > 0) return nums[nums.length - 1];
         }
       }

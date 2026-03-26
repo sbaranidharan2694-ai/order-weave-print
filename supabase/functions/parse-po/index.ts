@@ -6,21 +6,26 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-const systemPrompt = `You are an expert Indian Purchase Order parser for a printing press (Super Printers, Chennai, Tamil Nadu, India, GST 33ANVPR5833L1Z7).
+const systemPrompt = `You are an expert Indian Purchase Order parser for a printing press.
+
+THE SELLER receiving this PO is: Super Printers (also written as "Super Screens" in some POs), Chennai, Tamil Nadu, India. Super Printers GST numbers: 33ANVPR5833L1Z7 and 33AAGPB7462F1Z1.
+THE CUSTOMER (buyer who ISSUED this PO) is the OTHER company — found in the "FROM", "Billing Address", "Issued By", or header company block.
+NEVER extract "Super Printers", "Super Screens", or any of Super Printers' GST numbers as the customer.
 
 Extract ALL data from the PO text. Return ONLY valid JSON — no markdown, no backticks, no explanation.
 
-HANDLE ANY FORMAT: standard GST POs, government/PSU POs, corporate POs, informal POs, multi-page POs, scanned OCR text.
+HANDLE ANY FORMAT: standard GST POs, government/PSU POs, corporate POs, informal POs, multi-page POs, scanned OCR text, Excel-exported POs.
 
 EXTRACTION RULES:
 - Amounts: Remove Indian commas (1,23,456.78 → 123456.78). Return numbers, not strings.
-- Dates: Convert any format to YYYY-MM-DD.
-- GST: 15 chars. If customer state code (first 2 digits) = 33, use CGST+SGST. Otherwise IGST.
-- Quantities: Handle "500 nos", "5 reams", "2000 sheets" — extract number and unit separately.
+- Dates: Convert ANY format to YYYY-MM-DD. Handle: DD/MM/YYYY, DD-MM-YYYY, DD-Mon-YYYY (e.g. 26-Mar-2026), DD Month YYYY.
+- GST: 15 chars. If customer state code (first 2 digits) = 33, taxes are CGST+SGST. Otherwise IGST.
+- Quantities: Handle "500 nos", "5 reams", "2000 sheets", "204 IN KG" — extract number and unit separately.
 - If GST is inclusive, back-calculate base price.
-- PO number may be labeled: "Purchase Order No.", "PO No.", "Order No.", "Ref No.", "Indent No.", "Work Order No."
+- PO number may be labeled: "Purchase Order No.", "PO No.", "Order No.", "Ref No.", "Indent No.", "Work Order No.", "PO NO".
+- For Excel-format POs: amounts may be formula strings like "=F21*G21" — calculate them using the referenced cell values visible in the text.
 
-PRINTING ITEMS TO RECOGNIZE: visiting cards, wedding cards, letterheads, bill books, brochures, flex banners, rubber stamps, ID cards, envelopes, stickers, binding, lamination, screen printing, posters, catalogs, books, carry bags.
+PRINTING ITEMS TO RECOGNIZE: visiting cards, wedding cards, letterheads, bill books, brochures, flex banners, rubber stamps, ID cards, envelopes, stickers, binding, lamination, screen printing, posters, catalogs, books, carry bags, labels, packaging materials.
 
 Return this EXACT JSON:
 {
@@ -64,14 +69,13 @@ Return this EXACT JSON:
 
 If a field is not found, use null for strings and 0 for numbers.
 Calculate missing fields: line_total = qty × unit_price, gst_amount = line_total × gst_rate/100, subtotal = sum of line_totals, total = subtotal + taxes - discount.
-confidence: high if PO number + customer + items found, medium if some missing, low if mostly guessing.
+confidence: high if PO number + customer + items all found, medium if some missing, low if mostly guessing.
 IMPORTANT: line_items MUST always be an array, even if empty [].`;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Strip markdown fences only — do not collapse whitespace (breaks valid JSON). */
 function stripFences(text: string): string {
   if (!text || typeof text !== "string") return "";
   let s = text.trim();
@@ -79,9 +83,6 @@ function stripFences(text: string): string {
   return s.trim();
 }
 
-/**
- * First balanced `{...}` object, respecting strings (handles `}` inside string values).
- */
 function extractBalancedJsonObject(s: string): string | null {
   const start = s.indexOf("{");
   if (start < 0) return null;
@@ -90,19 +91,13 @@ function extractBalancedJsonObject(s: string): string | null {
   let esc = false;
   for (let i = start; i < s.length; i++) {
     const ch = s[i];
-    if (esc) {
-      esc = false;
-      continue;
-    }
+    if (esc) { esc = false; continue; }
     if (inStr) {
       if (ch === "\\") esc = true;
       else if (ch === '"') inStr = false;
       continue;
     }
-    if (ch === '"') {
-      inStr = true;
-      continue;
-    }
+    if (ch === '"') { inStr = true; continue; }
     if (ch === "{") depth++;
     else if (ch === "}") {
       depth--;
@@ -112,9 +107,6 @@ function extractBalancedJsonObject(s: string): string | null {
   return null;
 }
 
-/**
- * Extract and parse JSON from AI output.
- */
 function extractAndParse(raw: string): { parsed: Record<string, unknown> | null; parseError?: string } {
   const unfenced = stripFences(raw);
   let candidate = extractBalancedJsonObject(unfenced);
@@ -125,21 +117,17 @@ function extractAndParse(raw: string): { parsed: Record<string, unknown> | null;
     if (fb >= 0 && lb > fb) candidate = collapsed.slice(fb, lb + 1);
   }
   if (!candidate) return { parsed: null, parseError: "No JSON object found" };
-
   const attempts = [
     candidate,
     candidate.replace(/,(\s*[}\]])/g, "$1"),
     candidate.replace(/,(\s*[}\]])/g, "$1").replace(/(\d)\s+(\d)/g, "$1,$2"),
   ];
-
   for (let i = 0; i < attempts.length; i++) {
     try {
       const parsed = JSON.parse(attempts[i]) as Record<string, unknown>;
       if (parsed && typeof parsed === "object") return { parsed };
     } catch (e) {
-      if (i === attempts.length - 1) {
-        return { parsed: null, parseError: (e as Error).message };
-      }
+      if (i === attempts.length - 1) return { parsed: null, parseError: (e as Error).message };
     }
   }
   return { parsed: null, parseError: "All parse attempts failed" };
@@ -163,9 +151,14 @@ function ensureMinimumStructure(parsed: Record<string, unknown>): Record<string,
   return parsed;
 }
 
-async function callAI(systemPrompt: string, userMessage: string): Promise<{ text: string } | { error: string; status: number }> {
+async function callAI(
+  prompt: string,
+  userMessage: string,
+): Promise<{ text: string } | { error: string; status: number; retryable: boolean }> {
   const lovableKey = Deno.env.get("LOVABLE_API_KEY")?.trim();
-  const googleKey = Deno.env.get("GOOGLE_GEMINI_API_KEY")?.trim() || Deno.env.get("GEMINI_API_KEY")?.trim();
+  const googleKey =
+    Deno.env.get("GOOGLE_GEMINI_API_KEY")?.trim() ||
+    Deno.env.get("GEMINI_API_KEY")?.trim();
 
   if (lovableKey) {
     const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
@@ -174,24 +167,22 @@ async function callAI(systemPrompt: string, userMessage: string): Promise<{ text
       body: JSON.stringify({
         model: "google/gemini-2.5-flash",
         temperature: 0,
+        stream: false,
         messages: [
-          { role: "system", content: systemPrompt },
+          { role: "system", content: prompt },
           { role: "user", content: userMessage },
         ],
-        stream: false,
       }),
     });
-
-    if (res.status === 429) return { error: "Rate limit exceeded, please try again later.", status: 429 };
-    if (res.status === 402) return { error: "AI credits exhausted. Add credits in workspace settings.", status: 402 };
+    if (res.status === 402) return { error: "AI credits exhausted. Add credits in workspace settings.", status: 402, retryable: false };
+    if (res.status === 429) return { error: "Rate limited. Retrying...", status: 429, retryable: true };
     if (!res.ok) {
-      console.error("[parse-po] Lovable AI error:", res.status, await res.text().then((t) => t.slice(0, 300)));
-      return { error: "AI parsing failed. Please try again.", status: 500 };
+      console.error("[parse-po] Lovable AI error:", res.status, await res.text().then((t) => t.slice(0, 200)));
+      return { error: "AI gateway error. Retrying...", status: res.status, retryable: true };
     }
-
     const data = await res.json().catch(() => null);
     const text = data?.choices?.[0]?.message?.content ?? "";
-    if (!text.trim()) return { error: "AI returned no content.", status: 500 };
+    if (!text.trim()) return { error: "AI returned no content.", status: 500, retryable: true };
     return { text };
   }
 
@@ -201,35 +192,30 @@ async function callAI(systemPrompt: string, userMessage: string): Promise<{ text
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        systemInstruction: { parts: [{ text: systemPrompt }] },
+        systemInstruction: { parts: [{ text: prompt }] },
         contents: [{ parts: [{ text: userMessage }] }],
         generationConfig: { temperature: 0, maxOutputTokens: 8192 },
       }),
     });
-
-    if (res.status === 429) return { error: "Rate limit exceeded, please try again later.", status: 429 };
+    if (res.status === 429) return { error: "Gemini rate limited. Retrying...", status: 429, retryable: true };
     if (res.status === 403) {
       const errText = await res.text();
-      if (/quota|billing|api key/i.test(errText)) {
-        return { error: "Gemini API quota exceeded or invalid key.", status: 403 };
-      }
-      console.error("[parse-po] Gemini API error:", res.status, errText.slice(0, 300));
-      return { error: "AI parsing failed. Please try again.", status: 500 };
+      return { error: /quota|billing/i.test(errText) ? "Gemini quota exceeded." : "Gemini key invalid.", status: 403, retryable: false };
     }
     if (!res.ok) {
-      console.error("[parse-po] Gemini API error:", res.status, await res.text().then((t) => t.slice(0, 300)));
-      return { error: "AI parsing failed. Please try again.", status: 500 };
+      console.error("[parse-po] Gemini error:", res.status, await res.text().then((t) => t.slice(0, 200)));
+      return { error: "Gemini API error. Retrying...", status: res.status, retryable: true };
     }
-
     const data = await res.json().catch(() => null);
     const text = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-    if (!text.trim()) return { error: "AI returned no content.", status: 500 };
+    if (!text.trim()) return { error: "Gemini returned no content.", status: 500, retryable: true };
     return { text };
   }
 
   return {
-    error: "AI API key not configured. Add LOVABLE_API_KEY or GEMINI_API_KEY in edge function secrets.",
+    error: "No AI API key configured. Set LOVABLE_API_KEY or GEMINI_API_KEY in Supabase edge function secrets.",
     status: 503,
+    retryable: false,
   };
 }
 
@@ -249,23 +235,22 @@ serve(async (req) => {
     if (bodyText.length > 100_000) {
       return new Response(
         JSON.stringify({ error: "Input too large. Maximum 100KB per request." }),
-        { status: 413, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        { status: 413, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
-    const body = JSON.parse(bodyText);
+    let body: Record<string, unknown>;
+    try {
+      body = JSON.parse(bodyText);
+    } catch {
+      return jsonResponse({ success: false, error: "Invalid JSON body", raw_ai_text: "" }, 400);
+    }
     const { pdfText } = body;
     if (!pdfText || typeof pdfText !== "string") {
       return jsonResponse({ success: false, error: "Missing or invalid pdfText", raw_ai_text: "" }, 400);
     }
-
     if (pdfText.length > 500_000) {
-      return jsonResponse(
-        { success: false, error: "Payload too large. Maximum 500KB.", raw_ai_text: "" },
-        413
-      );
+      return jsonResponse({ success: false, error: "Payload too large. Maximum 500KB.", raw_ai_text: "" }, 413);
     }
-
-    console.log("[parse-po] PDF text length:", pdfText.length);
 
     function smartTruncate(text: string, max: number): string {
       if (text.length <= max) return text;
@@ -274,10 +259,12 @@ serve(async (req) => {
       const mid = text.slice(40_000, -60_000).slice(0, max - 100_000);
       return head + (mid ? "\n[...truncated...]\n" + mid : "") + tail;
     }
+
     const trimmed = smartTruncate(pdfText, 180_000);
+    console.log("[parse-po] PDF text length:", pdfText.length, "trimmed:", trimmed.length);
+
     const maxAttempts = 3;
     const backoffMs = 2000;
-
     let rawContent = "";
     let lastError = "";
     let parsed: Record<string, unknown> | null = null;
@@ -291,49 +278,36 @@ serve(async (req) => {
 
         if ("error" in aiResult) {
           lastError = aiResult.error;
-          if (aiResult.status === 402 || aiResult.status === 403) {
-            return jsonResponse({
-              success: false,
-              error: aiResult.error,
-              parse_error: aiResult.error,
-              raw_ai_text: "",
-            }, aiResult.status);
+          if (!aiResult.retryable) {
+            return jsonResponse(
+              { success: false, error: aiResult.error, parse_error: aiResult.error, raw_ai_text: "" },
+              aiResult.status,
+            );
           }
-          if (aiResult.status === 429 || aiResult.status === 500) {
-            if (attempt < maxAttempts) {
-              await sleep(backoffMs * attempt);
-              continue;
-            }
-            return jsonResponse({
-              success: false,
-              error: aiResult.error,
-              parse_error: aiResult.error,
-              raw_ai_text: "",
-            }, aiResult.status);
+          if (attempt < maxAttempts) {
+            await sleep(backoffMs * attempt);
+            continue;
           }
-          return jsonResponse({
-            success: false,
-            error: aiResult.error,
-            parse_error: aiResult.error,
-            raw_ai_text: "",
-          }, aiResult.status);
+          return jsonResponse(
+            { success: false, error: lastError, parse_error: lastError, raw_ai_text: "" },
+            aiResult.status,
+          );
         }
 
         rawContent = aiResult.text;
-        console.log("[parse-po] Attempt", attempt, "AI response length:", rawContent.length, "first 120:", rawContent.slice(0, 120));
+        console.log("[parse-po] Attempt", attempt, "response length:", rawContent.length, "preview:", rawContent.slice(0, 120));
 
         const result = extractAndParse(rawContent);
         if (result.parsed) {
           parsed = result.parsed;
           break;
         }
-
-        lastError = result.parseError ?? "Parse failed";
-        console.log("[parse-po] Parse attempt", attempt, "failed:", lastError);
+        lastError = result.parseError ?? "JSON parse failed";
+        console.warn("[parse-po] Attempt", attempt, "parse failed:", lastError);
         if (attempt < maxAttempts) await sleep(backoffMs * attempt);
       } catch (e) {
         lastError = e instanceof Error ? e.message : String(e);
-        console.error("[parse-po] Attempt", attempt, "error:", lastError);
+        console.error("[parse-po] Attempt", attempt, "exception:", lastError);
         if (attempt < maxAttempts) await sleep(backoffMs * attempt);
       }
     }
@@ -341,14 +315,13 @@ serve(async (req) => {
     if (!parsed) {
       return jsonResponse({
         success: false,
-        error: "Failed to parse AI response",
+        error: "Failed to parse AI response after all attempts",
         parse_error: lastError || "No valid JSON extracted",
         raw_ai_text: rawContent.slice(0, 2000),
       });
     }
 
     parsed = ensureMinimumStructure(parsed);
-
     return jsonResponse({
       success: true,
       data: parsed,
@@ -356,15 +329,7 @@ serve(async (req) => {
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "PO parsing failed";
-    console.error("[parse-po] Error:", e);
-    return jsonResponse(
-      {
-        success: false,
-        error: msg,
-        parse_error: msg,
-        raw_ai_text: "",
-      },
-      500
-    );
+    console.error("[parse-po] Unhandled error:", e);
+    return jsonResponse({ success: false, error: msg, parse_error: msg, raw_ai_text: "" }, 500);
   }
 });

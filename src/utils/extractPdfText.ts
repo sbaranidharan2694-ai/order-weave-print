@@ -142,7 +142,7 @@ async function extractTextWithOcr(pdf: pdfjsLib.PDFDocumentProxy): Promise<strin
   if (typeof document === "undefined") return [];
 
   const { recognize } = await import("tesseract.js");
-    const pages = Math.min(pdf.numPages, 6);
+  const pages = Math.min(pdf.numPages, 6);
   const out: string[] = [];
 
   for (let pageNum = 1; pageNum <= pages; pageNum++) {

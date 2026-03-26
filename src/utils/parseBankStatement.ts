@@ -275,7 +275,8 @@ function parsePipeTableTransactions(lines: string[]): Transaction[] {
     const credit = toNum(amountCols.at(-2) ?? "0");
     const balance = toNum(amountCols.at(-1) ?? "0");
     if (debit === 0 && credit === 0) continue;
-    const middleStart = cols.length >= 7 ? 2 : 1;
+    const dataStart = (cols[1] && DATE_PREFIX.test(cols[1])) ? 2 : 1;
+    const middleStart = cols.length >= 7 ? Math.max(dataStart, 2) : dataStart;
     const middleEnd = Math.max(middleStart, cols.length - 3);
     const middle = cols.slice(middleStart, middleEnd).filter(Boolean);
     let refNo = "";

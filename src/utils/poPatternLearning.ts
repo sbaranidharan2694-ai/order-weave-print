@@ -115,7 +115,7 @@ export async function learnFromParse(
   customerName: string | null
 ): Promise<void> {
   // Validate: only learn if we have meaningful data
-  const poNumber = parsedResult.po_number || parsedResult.po_number;
+  const poNumber = parsedResult.po_number;
   const lineItems = parsedResult.line_items;
   if (!poNumber && (!Array.isArray(lineItems) || lineItems.length === 0)) {
     console.log("[poPatternLearning] Skipping learning — insufficient data");

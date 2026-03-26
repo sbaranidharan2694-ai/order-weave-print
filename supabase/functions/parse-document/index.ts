@@ -101,8 +101,9 @@ async function callAI(systemPrompt: string, userMessage: string): Promise<{ text
       headers: { Authorization: `Bearer ${lovableKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
         model: "google/gemini-2.5-flash",
-        messages: [{ role: "system", content: systemPrompt }, { role: "user", content: userMessage }],
+        temperature: 0,
         stream: false,
+        messages: [{ role: "system", content: systemPrompt }, { role: "user", content: userMessage }],
       }),
     });
     if (res.status === 429) return { error: "Rate limit exceeded, please try again later.", status: 429 };
