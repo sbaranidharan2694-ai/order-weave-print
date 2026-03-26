@@ -26,6 +26,9 @@ vi.mock("@/integrations/supabase/client", () => ({
     channel: () => ({ on: () => ({ subscribe: () => ({}) }) }),
     removeChannel: () => {},
   },
+}));
+
+vi.mock("@/integrations/supabase/config", () => ({
   isSupabaseConfigured: false,
 }));
 
