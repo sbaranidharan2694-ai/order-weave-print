@@ -133,7 +133,7 @@ function isIntrastate(gst: string): boolean {
 }
 
 function calcLineItem(li: LineItem): LineItem {
-  const qty = Math.max(1, normalizeNumber(li.quantity));
+  const qty = li.quantity == null ? 0 : normalizeNumber(li.quantity);
   const price = Math.max(0, normalizeNumber(li.unit_price));
   const rate = Math.max(0, Math.min(100, normalizeNumber(li.gst_rate)));
   const base = qty * price;
@@ -142,7 +142,7 @@ function calcLineItem(li: LineItem): LineItem {
 }
 
 function emptyLine(sno: number): LineItem {
-  return { id: newLineId(), sno, description: "", quantity: 1, unit: "Nos", unit_price: 0, hsn_code: "", gst_rate: 18, gst_amount: 0, line_total: 0 };
+  return { id: newLineId(), sno, description: "", quantity: 0, unit: "Nos", unit_price: 0, hsn_code: "", gst_rate: 0, gst_amount: 0, line_total: 0 };
 }
 
 function lineItemFromParsed(li: any, idx: number): LineItem {
