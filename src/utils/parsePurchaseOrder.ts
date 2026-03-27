@@ -229,7 +229,9 @@ function findFieldValue(lines: string[], patterns: RegExp[]): string | null {
 }
 
 function extractHeaderFields(lines: string[], headerEnd: number): ParsedHeader {
-  const headerLines = lines.slice(0, Math.max(headerEnd, 20));
+  const headerLines = lines
+    .slice(0, Math.max(headerEnd, 20))
+    .filter((line) => !/^===\s+(?:CUSTOMER|SELLER)\s*\(/i.test(line));
   const allText = headerLines.join("\n");
 
   const po_number = findFieldValue(headerLines, [
@@ -472,7 +474,11 @@ function validateLineItems(rows: RawRow[]): RawRow[] {
 
     if (r.quantity <= 0) {
       if (r.amount > 0 || r.unit_price > 0) {
-        // Keep row for editing only if quantity is explicitly present; otherwise drop.
+        if (DEBUG) {
+          console.log(
+            `${LOG_PREFIX} Validation drop row ${i}: quantity missing/ambiguous — "${r.description.slice(0, 60)}"`,
+          );
+        }
         continue;
       }
       r.quantity = 0;

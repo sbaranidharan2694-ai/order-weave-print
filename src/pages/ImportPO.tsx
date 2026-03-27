@@ -1353,6 +1353,16 @@ export default function ImportPO() {
                       <p className="text-xs font-medium text-muted-foreground">After reconcile/post-process</p>
                       <pre className="mt-1 text-xs bg-background/50 border rounded p-2 overflow-auto max-h-64 font-mono whitespace-pre-wrap">{debugAfterJson}</pre>
                     </div>
+                    <div>
+                      <p className="text-xs font-medium text-muted-foreground">Accuracy report</p>
+                      <div className="mt-1 text-xs bg-background/50 border rounded p-2 space-y-1">
+                        <p>PO Number: {header.po_number ? "OK" : "Missing"}</p>
+                        <p>Customer: {header.customer_name ? "OK" : "Missing"}</p>
+                        <p>Line items: {lineItems.length}</p>
+                        <p>Total: {lineItems.reduce((s, li) => s + (Number(li.line_total) || 0), 0).toLocaleString("en-IN")}</p>
+                        <p>Warnings: {warnings.length}</p>
+                      </div>
+                    </div>
                   </div>
                 </div>
               )}
