@@ -39,14 +39,14 @@ export default function Customers() {
 
     // Start with existing customers
     customers.forEach((c) => {
-      const key = c.contact_no.replace(/\D/g, "").slice(-10);
+      const key = (c.contact_no || "").replace(/\D/g, "").slice(-10);
       customerMap.set(key || c.name.toLowerCase(), { ...c, _key: key || c.name.toLowerCase() });
     });
 
     // Add customers from orders that don't exist in customers table
     orders.forEach((o) => {
-      const key = o.contact_no.replace(/\D/g, "").slice(-10);
-      const nameKey = o.customer_name.toLowerCase();
+      const key = (o.contact_no || "").replace(/\D/g, "").slice(-10);
+      const nameKey = (o.customer_name || "").toLowerCase();
       if (!customerMap.has(key) && !customerMap.has(nameKey)) {
         // Check if matching by name
         const existsByName = Array.from(customerMap.values()).find(
@@ -78,9 +78,8 @@ export default function Customers() {
   const customerSpend = useMemo(() => {
     const map: Record<string, { spend: number; count: number; email: string; qtyOrdered: number; qtyPending: number }> = {};
     orders.forEach((o) => {
-      const key = o.contact_no.replace(/\D/g, "").slice(-10);
-      const nameKey = o.customer_name.toLowerCase();
-      // Try to match by phone first, then by name
+      const key = (o.contact_no || "").replace(/\D/g, "").slice(-10);
+      const nameKey = (o.customer_name || "").toLowerCase();
       const matchKey = key || nameKey;
       if (!map[matchKey]) map[matchKey] = { spend: 0, count: 0, email: "", qtyOrdered: 0, qtyPending: 0 };
       map[matchKey].spend += Number(o.amount) || 0;
@@ -104,7 +103,7 @@ export default function Customers() {
     if (search) {
       const q = search.toLowerCase();
       list = list.filter((c) =>
-        c.name.toLowerCase().includes(q) || c.contact_no.includes(q) || (c.email || "").toLowerCase().includes(q)
+        (c.name || "").toLowerCase().includes(q) || (c.contact_no || "").includes(q) || (c.email || "").toLowerCase().includes(q)
       );
     }
     return list;
@@ -235,7 +234,7 @@ export default function Customers() {
                 </thead>
                 <tbody>
                   {filtered.map((c) => {
-                    const contactKey = c.contact_no.replace(/\D/g, "").slice(-10);
+                    const contactKey = (c.contact_no || "").replace(/\D/g, "").slice(-10);
                     const nameKey = c.name.toLowerCase();
                     const realData = customerSpend[contactKey] || customerSpend[nameKey];
                     const realSpend = realData?.spend || 0;

@@ -493,7 +493,7 @@ export default function OrderDetail() {
           <CardContent className="space-y-3 text-sm">
             <Row label="Customer" value={order.customer_name} />
             <Row label="Contact">
-              <a href={`tel:${order.contact_no.replace(/\D/g, "").slice(-10)}`} className="text-[#3B82F6] hover:underline">{formatContact(order.contact_no)}</a>
+              <a href={`tel:${(order.contact_no || "").replace(/\D/g, "").slice(-10)}`} className="text-[#3B82F6] hover:underline">{formatContact(order.contact_no || "")}</a>
             </Row>
             <Row label="WhatsApp">
               <a href={`https://wa.me/91${formatContact(order.contact_no)}`} target="_blank" className="text-source-whatsapp hover:underline flex items-center gap-1">
@@ -512,7 +512,7 @@ export default function OrderDetail() {
             <Row label="Product" value={order.product_type} />
             <Row label="Quantity" value={String(Number(order.quantity) || 0)} />
             <Row label="Size" value={order.size || "—"} />
-            <Row label="Color Mode" value={order.color_mode.replace("_", " ")} />
+            <Row label="Color Mode" value={(order.color_mode || "").replace("_", " ")} />
             <Row label="Paper" value={order.paper_type || "—"} />
             {hsnCode && <Row label="HSN Code" value={hsnCode} />}
             {poNumber && <Row label="PO Number" value={poNumber} />}

@@ -31,9 +31,9 @@ export function QuickStatusModal({ open, onOpenChange }: Props) {
     return orders
       .filter(o => o.status !== "Delivered" && o.status !== "Cancelled")
       .filter(o =>
-        o.order_no.toLowerCase().includes(q) ||
-        o.customer_name.toLowerCase().includes(q) ||
-        o.contact_no.includes(q)
+        (o.order_no || "").toLowerCase().includes(q) ||
+        (o.customer_name || "").toLowerCase().includes(q) ||
+        (o.contact_no || "").includes(q)
       )
       .slice(0, 8);
   }, [orders, search]);
@@ -63,7 +63,7 @@ export function QuickStatusModal({ open, onOpenChange }: Props) {
       const template = WHATSAPP_STATUS_TEMPLATES[newStatus] || "";
       const msg = fillWhatsAppTemplate(template, { ...selectedOrder, status: newStatus } as any, shopPhone);
       const safeMsg = unescape(encodeURIComponent(msg));
-      const url = `https://wa.me/91${selectedOrder.contact_no.replace(/\D/g, "").slice(-10)}?text=${encodeURIComponent(safeMsg)}`;
+      const url = `https://wa.me/91${(selectedOrder.contact_no || "").replace(/\D/g, "").slice(-10)}?text=${encodeURIComponent(safeMsg)}`;
       window.open(url, "_blank");
       logNotification.mutate({
         order_id: selectedOrder.id,

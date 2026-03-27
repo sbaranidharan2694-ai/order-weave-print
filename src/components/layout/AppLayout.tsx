@@ -43,7 +43,7 @@ export function AppLayout({ children }: AppLayoutProps) {
     const items: { type: string; message: string; orderId: string }[] = [];
 
     orders.forEach((o) => {
-      if (isBefore(parseISO(o.delivery_date), now) && o.status !== "Delivered" && o.status !== "Cancelled") {
+      if (o.delivery_date && isBefore(parseISO(o.delivery_date), now) && o.status !== "Delivered" && o.status !== "Cancelled") {
         items.push({ type: "overdue", message: `${o.order_no} — overdue (${o.customer_name})`, orderId: o.id });
       }
       if (o.status === "Ready to Dispatch") {

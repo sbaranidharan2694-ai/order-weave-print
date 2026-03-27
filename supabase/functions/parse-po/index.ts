@@ -277,6 +277,13 @@ function reconcileTotals(parsed: Record<string, unknown>): Record<string, unknow
   let igst = 0;
   let discount_amount = Number(parsed.discount_amount ?? 0) || 0;
 
+  const customerGst =
+    parsed && typeof parsed === "object" && parsed.customer && typeof parsed.customer === "object"
+      ? (parsed.customer as Record<string, unknown>).gst_number
+      : null;
+  const first2 = typeof customerGst === "string" ? customerGst.slice(0, 2) : null;
+  const intra = first2 === "33";
+
   for (const li of lineItems) {
     const qty = Number(li.quantity ?? li.qty ?? 0) || 0;
     const unit_price = Number(li.unit_price ?? 0) || 0;
@@ -287,10 +294,6 @@ function reconcileTotals(parsed: Record<string, unknown>): Record<string, unknow
 
     subtotal += line_total;
 
-    const first2 = typeof parsed?.customer?.gst_number === "string"
-      ? (parsed.customer.gst_number as string).slice(0, 2)
-      : null;
-    const intra = first2 === "33";
     if (gst_rate > 0) {
       if (intra) {
         cgst += Math.round((gst_amount / 2) * 100) / 100;

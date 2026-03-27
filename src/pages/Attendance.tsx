@@ -129,7 +129,7 @@ export default function Attendance() {
   const payrollEmpByCode = useMemo(() => {
     const m = new Map<string, PayrollEmployee>();
     for (const e of payrollEmployees) {
-      m.set(e.employee_code.trim().toUpperCase(), e);
+      m.set((e.employee_code || "").trim().toUpperCase(), e);
     }
     return m;
   }, [payrollEmployees]);

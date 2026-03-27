@@ -49,7 +49,7 @@ export default function Dashboard() {
     ).length;
     const readyOrOut = orders.filter(o => o.status === "Ready to Dispatch").length;
     const overdue = orders.filter(o =>
-      isBefore(parseISO(o.delivery_date), now) && o.status !== "Delivered" && o.status !== "Cancelled"
+      o.delivery_date && isBefore(parseISO(o.delivery_date), now) && o.status !== "Delivered" && o.status !== "Cancelled"
     ).length;
     const totalBalanceDue = orders.reduce((s, o) => {
       const bal = Number(o.amount) - (Number(o.advance_paid) || 0);
@@ -71,7 +71,7 @@ export default function Dashboard() {
     ).length;
     const ready = yesterdayOrders.filter(o => o.status === "Ready to Dispatch").length;
     const over = yesterdayOrders.filter(o =>
-      isBefore(parseISO(o.delivery_date), yesterday) && o.status !== "Delivered" && o.status !== "Cancelled"
+      o.delivery_date && isBefore(parseISO(o.delivery_date), yesterday) && o.status !== "Delivered" && o.status !== "Cancelled"
     ).length;
     const todayOrd = yesterdayOrders.length;
     return { todayOrd, inProd, ready, over };
@@ -80,17 +80,17 @@ export default function Dashboard() {
   const overdueOrders = useMemo(() => {
     const now = new Date();
     return orders
-      .filter(o => isBefore(parseISO(o.delivery_date), now) && o.status !== "Delivered" && o.status !== "Cancelled")
+      .filter(o => o.delivery_date && isBefore(parseISO(o.delivery_date), now) && o.status !== "Delivered" && o.status !== "Cancelled")
       .map(o => ({
         ...o,
-        daysOverdue: differenceInDays(now, parseISO(o.delivery_date)),
+        daysOverdue: o.delivery_date ? differenceInDays(now, parseISO(o.delivery_date)) : 0,
       }))
       .sort((a, b) => b.daysOverdue - a.daysOverdue);
   }, [orders]);
 
   const todayDeliveries = useMemo(() => {
     return orders.filter(o =>
-      isToday(parseISO(o.delivery_date)) && o.status !== "Delivered" && o.status !== "Cancelled"
+      o.delivery_date && isToday(parseISO(o.delivery_date)) && o.status !== "Delivered" && o.status !== "Cancelled"
     );
   }, [orders]);
 
@@ -260,7 +260,7 @@ export default function Dashboard() {
                         </Button>
                         <Button size="sm" variant="ghost" className="h-7 text-xs gap-1" title="Add Comment" onClick={(e) => {
                           e.stopPropagation();
-                          const url = `https://wa.me/91${o.contact_no.replace(/\D/g, "").slice(-10)}?text=${encodeURIComponent(`Hi ${o.customer_name}, regarding your order ${o.order_no}...`)}`;
+                          const url = `https://wa.me/91${(o.contact_no || "").replace(/\D/g, "").slice(-10)}?text=${encodeURIComponent(`Hi ${o.customer_name || ""}, regarding your order ${o.order_no || ""}...`)}`;
                           window.open(url, "_blank");
                         }}>
                           <MessageCircle className="h-3 w-3" />

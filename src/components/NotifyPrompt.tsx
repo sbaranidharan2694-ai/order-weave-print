@@ -25,7 +25,7 @@ export function NotifyPrompt({ open, onOpenChange, order, status }: NotifyPrompt
   const [message, setMessage] = useState(() => fillWhatsAppTemplate(template, { ...order, status } as any, shopPhone));
 
   const handleWhatsApp = () => {
-    const phone = order.contact_no.replace(/\D/g, "").slice(-10);
+    const phone = (order.contact_no || "").replace(/\D/g, "").slice(-10);
     const url = `https://wa.me/91${phone}?text=${encodeURIComponent(message)}`;
     window.open(url, "_blank");
     logNotification.mutate({

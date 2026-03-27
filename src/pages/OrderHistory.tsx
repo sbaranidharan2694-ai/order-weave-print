@@ -106,17 +106,17 @@ export default function OrderHistory() {
     if (search) {
       const q = search.toLowerCase();
       result = result.filter((o) =>
-        o.order_no.toLowerCase().includes(q) ||
-        o.customer_name.toLowerCase().includes(q) ||
-        o.contact_no.includes(q) ||
+        (o.order_no || "").toLowerCase().includes(q) ||
+        (o.customer_name || "").toLowerCase().includes(q) ||
+        (o.contact_no || "").includes(q) ||
         ((o as any).po_number || "").toLowerCase().includes(q)
       );
     }
     if (statusFilter !== "all") result = result.filter((o) => o.status === statusFilter);
     if (sourceFilter !== "all") result = result.filter((o) => o.source === sourceFilter);
-    if (dateFilter === "7") result = result.filter((o) => parseISO(o.order_date) >= subDays(new Date(), 7));
-    if (dateFilter === "30") result = result.filter((o) => parseISO(o.order_date) >= subDays(new Date(), 30));
-    if (searchParams.get("overdue") === "1") result = result.filter((o) => isBefore(parseISO(o.delivery_date), new Date()) && o.status !== "Delivered" && o.status !== "Cancelled");
+    if (dateFilter === "7") result = result.filter((o) => o.order_date && parseISO(o.order_date) >= subDays(new Date(), 7));
+    if (dateFilter === "30") result = result.filter((o) => o.order_date && parseISO(o.order_date) >= subDays(new Date(), 30));
+    if (searchParams.get("overdue") === "1") result = result.filter((o) => o.delivery_date && isBefore(parseISO(o.delivery_date), new Date()) && o.status !== "Delivered" && o.status !== "Cancelled");
 
     result.sort((a, b) => {
       let av: any = (a as any)[sortCol] || "";
@@ -171,7 +171,7 @@ export default function OrderHistory() {
       .replace("{{product_type}}", order.product_type)
       .replace("{{quantity}}", String(order.quantity))
       .replace("{{status}}", order.status)
-      .replace("{{delivery_date}}", format(parseISO(order.delivery_date), "dd MMM yyyy"))
+      .replace("{{delivery_date}}", order.delivery_date ? format(parseISO(order.delivery_date), "dd MMM yyyy") : "TBD")
       .replace("{{amount}}", Number(order.amount).toLocaleString("en-IN"))
       .replace("{{balance_due}}", Number(order.balance_due || 0).toLocaleString("en-IN"))
       .replace("{{qty_ordered}}", String((order as any).qty_ordered || order.quantity))
@@ -183,7 +183,7 @@ export default function OrderHistory() {
 
   const sendWhatsApp = async () => {
     if (!waOrder) return;
-    const url = `https://wa.me/${waOrder.contact_no.replace(/\D/g, "")}?text=${encodeURIComponent(waMessage)}`;
+    const url = `https://wa.me/${(waOrder.contact_no || "").replace(/\D/g, "")}?text=${encodeURIComponent(waMessage)}`;
     window.open(url, "_blank");
     await supabase.from("orders").update({
       whatsapp_message_sent_at: new Date().toISOString(),
@@ -215,7 +215,7 @@ export default function OrderHistory() {
 
   const renderCell = (o: any, colKey: string) => {
     const tags = orderTagsMap[o.id] || [];
-    const overdue = isBefore(parseISO(o.delivery_date), new Date()) && o.status !== "Delivered" && o.status !== "Cancelled";
+    const overdue = o.delivery_date && isBefore(parseISO(o.delivery_date), new Date()) && o.status !== "Delivered" && o.status !== "Cancelled";
     switch (colKey) {
       case "order_no": {
         const fromPO = o.source === "purchase_order";
@@ -230,8 +230,8 @@ export default function OrderHistory() {
       case "product": return <span className="whitespace-nowrap">{o.product_type}</span>;
       case "customer": return <span className="whitespace-nowrap">{o.customer_name}</span>;
       case "contact": return (
-        <a href={`tel:${o.contact_no.replace(/\D/g, "").slice(-10)}`} className="text-[#3B82F6] hover:underline whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-          {formatContact(o.contact_no)}
+        <a href={`tel:${(o.contact_no || "").replace(/\D/g, "").slice(-10)}`} className="text-[#3B82F6] hover:underline whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+          {formatContact(o.contact_no || "")}
         </a>
       );
       case "amount": return <span className="whitespace-nowrap text-foreground">{Number(o.amount) ? `₹${Number(o.amount).toLocaleString("en-IN")}` : "—"}</span>;
@@ -247,7 +247,7 @@ export default function OrderHistory() {
       );
       case "delivery": return (
         <span className={`whitespace-nowrap ${overdue ? "text-destructive font-semibold" : "text-muted-foreground"}`}>
-          {format(parseISO(o.delivery_date), "dd MMM yyyy")}{overdue && " ⚠"}
+          {o.delivery_date ? format(parseISO(o.delivery_date), "dd MMM yyyy") : "—"}{overdue && " ⚠"}
         </span>
       );
       case "po_number": return <span className="text-muted-foreground whitespace-nowrap text-xs">{(o as any).po_number || "—"}</span>;
