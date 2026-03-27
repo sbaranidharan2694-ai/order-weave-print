@@ -1,5 +1,8 @@
 name: CI
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 on:
   push:
     branches: [main, master]
@@ -17,6 +20,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
+          cache-dependency-path: package-lock.json
 
       - name: Install
         run: npm install
