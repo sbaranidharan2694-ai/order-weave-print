@@ -573,6 +573,15 @@ function postProcessTotals(
   };
 }
 
+function inferUnit(description: string): string {
+  const d = description.toLowerCase();
+  if (/\b(?:kg|kgs|in kg)\b/.test(d)) return "KG";
+  if (/\b(?:nos|pcs|pc|pieces)\b/.test(d)) return "Nos";
+  if (/\b(?:ream|reams)\b/.test(d)) return "Reams";
+  if (/\b(?:sheet|sheets)\b/.test(d)) return "Sheets";
+  return "Nos";
+}
+
 /* ═══════════════════════════════════════════════════════
    MAIN ENTRY POINT
    ═══════════════════════════════════════════════════════ */
@@ -627,16 +636,16 @@ export function parsePurchaseOrder(rawText: string): ParsedPurchaseOrder {
   // Stage 8: False positive filter
   rows = filterFalsePositives(rows);
 
-  // Build line items (default GST 18% when not extracted from document)
+  // Build line items (default GST 0% for rule parser; AI parser handles tax extraction separately)
   const line_items: ParsedLineItem[] = rows.map((r, idx) => {
     const base = r.quantity * r.unit_price;
-    const gstRate = 18;
+    const gstRate = 0;
     const gstAmt = Math.round(base * gstRate / 100 * 100) / 100;
     return {
       sno: idx + 1,
       description: r.description,
       quantity: r.quantity,
-      unit: "Nos",
+      unit: inferUnit(r.description),
       unit_price: r.unit_price,
       hsn_code: null,
       gst_rate: gstRate,

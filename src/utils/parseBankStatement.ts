@@ -515,7 +515,19 @@ export function parseBankStatement(rawText: string): BankStatementData {
     { transactions: looseTxns, openingBalanceFromBF: 0 },
     { transactions: legacyTxns, openingBalanceFromBF: 0 },
   ];
-  const best = candidates.sort((a, b) => b.transactions.length - a.transactions.length)[0];
+
+  const scoreCandidate = (candidate: { transactions: Transaction[]; openingBalanceFromBF: number }): number => {
+    const txns = candidate.transactions;
+    if (txns.length === 0) return -1;
+    let nonZeroSides = 0;
+    for (const t of txns) {
+      const sides = Number((t.debit || 0) > 0) + Number((t.credit || 0) > 0);
+      if (sides === 1) nonZeroSides++;
+    }
+    return txns.length * 10 + nonZeroSides;
+  };
+
+  const best = candidates.sort((a, b) => scoreCandidate(b) - scoreCandidate(a))[0];
   const transactions = best.transactions;
   const effectiveOpeningFromBF = best.openingBalanceFromBF;
 
