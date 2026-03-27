@@ -49,7 +49,7 @@ function calcLineTax(item: LineItem) {
   return calcLineTotal(item) * (item.gst_rate / 100);
 }
 
-const emptyLine = (): LineItem => ({ description: "", quantity: "", unit_price: "", gst_rate: 18 });
+const emptyLine = (): LineItem => ({ description: "", quantity: "", unit_price: "", gst_rate: 0 });
 
 export default function NewOrder() {
   const navigate = useNavigate();
@@ -129,7 +129,7 @@ export default function NewOrder() {
   const hasValidItems = lineItems.some(li => li.description.trim() && normalizeNumber(li.quantity) > 0);
 
   const canSubmit =
-    form.contact_no.length >= 10 &&
+    form.customer_name &&
     form.customer_name &&
     form.product_type &&
     hasValidItems &&
@@ -152,7 +152,6 @@ export default function NewOrder() {
     e.preventDefault();
     const errors: Record<string, string> = {};
     if (!form.customer_name?.trim()) errors.customer_name = "Customer name is required";
-    if (!form.contact_no?.trim()) errors.contact_no = "Contact number is required";
     if (!form.product_type?.trim()) errors.product_type = "Product type is required";
     if (!form.delivery_date) errors.delivery_date = "Delivery date is required";
     if (!hasValidItems) errors.lineItems = "At least one item with description and quantity is required";
@@ -168,7 +167,7 @@ export default function NewOrder() {
       .map((li, idx) => ({
         item_no: idx + 1,
         description: li.description.trim(),
-        quantity: Math.max(1, Math.floor(normalizeNumber(li.quantity))),
+        quantity: Math.max(0, Math.floor(normalizeNumber(li.quantity))),
         unit_price: normalizeNumber(li.unit_price),
         amount: calcLineTotal(li) + calcLineTax(li),
       }));
@@ -176,7 +175,7 @@ export default function NewOrder() {
     try {
       const order = await createOrder.mutateAsync({
         ...form,
-        quantity: totalQty || 1,
+        quantity: totalQty || 0,
         amount: grandTotal,
         advance_paid: adv,
         base_amount: subtotal,

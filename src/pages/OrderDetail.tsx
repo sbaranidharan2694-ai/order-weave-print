@@ -344,7 +344,7 @@ export default function OrderDetail() {
     let taxableAmount = baseAmount > 0 ? baseAmount : Number(order.amount);
     let displayCgst = cgstAmount, displaySgst = sgstAmount, displayIgst = igstAmount, displayTotalTax = totalTax;
     if (!hasTaxBreakdown && showGst && Number(order.amount) > 0) {
-      const gstRate = 18;
+      const gstRate = 0;
       taxableAmount = Number(order.amount) / (1 + gstRate / 100);
       displayTotalTax = Number(order.amount) - taxableAmount;
       if (isInterState) { displayIgst = displayTotalTax; } else { displayCgst = displayTotalTax / 2; displaySgst = displayTotalTax / 2; }

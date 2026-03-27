@@ -98,7 +98,7 @@ export default function EditOrder() {
     await updateOrder.mutateAsync({
       id,
       ...form,
-      quantity: Math.max(1, Math.floor(normalizeNumber(form.quantity))),
+      quantity: Math.max(0, Math.floor(normalizeNumber(form.quantity))),
       amount: amt,
       advance_paid: adv,
       gstin: form.gstin || null,
@@ -115,8 +115,8 @@ export default function EditOrder() {
           <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4 p-6">
             <div><Label>Customer Name <span className="text-[#DC2626]">*</span></Label><Input value={form.customer_name} onChange={e => update("customer_name", e.target.value)} required /></div>
             <div>
-              <Label>Contact No. <span className="text-[#DC2626]">*</span></Label>
-              <Input value={form.contact_no} onChange={e => update("contact_no", e.target.value.replace(/\D/g, "").slice(0, 10))} required />
+              <Label>Contact No.</Label>
+              <Input value={form.contact_no} onChange={e => update("contact_no", e.target.value.replace(/\D/g, "").slice(0, 10))} />
             </div>
             <div>
               <Label>Email</Label>
@@ -150,11 +150,11 @@ export default function EditOrder() {
                 <Label>Quantity <span className="text-[#DC2626]">*</span></Label>
                 <Input
                 type="number"
-                min={1}
+                min={0}
                 value={form.quantity}
                 onChange={(e) => {
                   const v = e.target.value;
-                  update("quantity", v === "" ? "" : String(Math.max(1, Math.floor(normalizeNumber(v)))));
+                  update("quantity", v === "" ? "" : String(Math.max(0, Math.floor(normalizeNumber(v)))));
                 }}
                 placeholder="e.g. 100"
               />

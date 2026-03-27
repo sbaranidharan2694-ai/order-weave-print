@@ -790,7 +790,7 @@ export default function ImportPO() {
     setLineItems(items => items.map((li) => {
       if (li.id !== rowId) return li;
       let normalized = value;
-      if (field === "quantity") normalized = Math.max(1, Math.floor(normalizeNumber(value)));
+      if (field === "quantity") normalized = value === "" ? 0 : Math.max(0, Math.floor(normalizeNumber(value)));
       else if (field === "unit_price") normalized = Math.max(0, normalizeNumber(value));
       else if (field === "gst_rate") normalized = snapGstRate(normalizeNumber(value));
       else if (field === "sno") normalized = Math.max(1, Math.floor(normalizeNumber(value)));
