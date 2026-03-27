@@ -325,7 +325,7 @@ export default function Customers() {
           <DialogHeader><DialogTitle>Add Customer</DialogTitle></DialogHeader>
           <div className="space-y-4">
             <div><Label>Customer Name *</Label><Input value={newCustomer.name} onChange={(e) => setNewCustomer(p => ({ ...p, name: e.target.value }))} /></div>
-            <div><Label>Contact No. *</Label><Input value={newCustomer.contact_no} onChange={(e) => setNewCustomer(p => ({ ...p, contact_no: e.target.value }))} placeholder="9876543210" /></div>
+            <div><Label>Contact No.</Label><Input value={newCustomer.contact_no} onChange={(e) => setNewCustomer(p => ({ ...p, contact_no: e.target.value }))} placeholder="9876543210" /></div>
             <div><Label>Email</Label><Input type="email" value={newCustomer.email} onChange={(e) => setNewCustomer(p => ({ ...p, email: e.target.value }))} /></div>
             <div><Label>GSTIN</Label><Input value={newCustomer.gstin} onChange={(e) => setNewCustomer(p => ({ ...p, gstin: e.target.value }))} placeholder="15-char GSTIN" maxLength={15} /></div>
             <div><Label>Address</Label><Input value={newCustomer.address} onChange={(e) => setNewCustomer(p => ({ ...p, address: e.target.value }))} placeholder="Full address" /></div>

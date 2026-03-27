@@ -639,7 +639,7 @@ export default function Attendance() {
                                   size="icon"
                                   className="h-8 w-8"
                                   onClick={() => {
-                                    const existing = payrollEmpByCode.get(row.code.trim().toUpperCase());
+                                    const existing = payrollEmpByCode.get((row.code || "").trim().toUpperCase());
                                     setEmployeeDialog({ open: true, edit: existing ?? undefined });
                                     setEmpCode(existing?.employee_code ?? row.code);
                                     setEmpName(existing?.display_name ?? row.name);
@@ -695,7 +695,7 @@ export default function Attendance() {
                                   size="icon"
                                   className="h-8 w-8"
                                   onClick={() => {
-                                    const existing = payrollEmpByCode.get(row.code.trim().toUpperCase());
+                                    const existing = payrollEmpByCode.get((row.code || "").trim().toUpperCase());
                                     setEmployeeDialog({ open: true, edit: existing ?? undefined });
                                     setEmpCode(existing?.employee_code ?? row.code);
                                     setEmpName(existing?.display_name ?? row.name);

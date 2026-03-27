@@ -383,8 +383,8 @@ export default function OrderDetail() {
       <div class="info-grid">
         <div class="info-box"><h3>Invoice Details</h3>
           <p><strong>Invoice No:</strong> ${order.order_no}</p>
-          <p><strong>Date:</strong> ${format(parseISO(order.order_date), "dd MMM yyyy")}</p>
-          <p><strong>Due Date:</strong> ${format(parseISO(order.delivery_date), "dd MMM yyyy")}</p>
+          <p><strong>Date:</strong> ${order.order_date ? format(parseISO(order.order_date), "dd MMM yyyy") : "—"}</p>
+          <p><strong>Due Date:</strong> ${order.delivery_date ? format(parseISO(order.delivery_date), "dd MMM yyyy") : "—"}</p>
           ${poNumber ? `<p><strong>PO Ref:</strong> ${poNumber}</p>` : ""}
         </div>
         <div class="info-box"><h3>Bill To</h3>
@@ -496,8 +496,8 @@ export default function OrderDetail() {
               <a href={`tel:${(order.contact_no || "").replace(/\D/g, "").slice(-10)}`} className="text-[#3B82F6] hover:underline">{formatContact(order.contact_no || "")}</a>
             </Row>
             <Row label="WhatsApp">
-              <a href={`https://wa.me/91${formatContact(order.contact_no)}`} target="_blank" className="text-source-whatsapp hover:underline flex items-center gap-1">
-                <MessageCircle className="h-3 w-3" /> {formatContact(order.contact_no)}
+              <a href={`https://wa.me/91${formatContact(order.contact_no || "")}`} target="_blank" className="text-source-whatsapp hover:underline flex items-center gap-1">
+                <MessageCircle className="h-3 w-3" /> {formatContact(order.contact_no || "")}
               </a>
             </Row>
             <Row label="Email">
@@ -523,8 +523,8 @@ export default function OrderDetail() {
         <Card className="shadow-card rounded-2xl border border-[#E5E7EB]">
           <CardHeader className="border-b border-[#F1F5F9]"><CardTitle className="text-sm font-semibold text-[#1E293B]">Payment & Dates</CardTitle></CardHeader>
           <CardContent className="space-y-3 text-sm">
-            <Row label="Order Date" value={format(parseISO(order.order_date), "dd MMM yyyy")} />
-            <Row label="Delivery Date" value={format(parseISO(order.delivery_date), "dd MMM yyyy")} />
+            <Row label="Order Date" value={order.order_date ? format(parseISO(order.order_date), "dd MMM yyyy") : "—"} />
+            <Row label="Delivery Date" value={order.delivery_date ? format(parseISO(order.delivery_date), "dd MMM yyyy") : "—"} />
             {hasTaxBreakdown ? (
               <>
                 <Row label="Base Amount" value={`₹${baseAmount.toLocaleString("en-IN")}`} />
@@ -565,7 +565,7 @@ export default function OrderDetail() {
             <div className="flex items-center gap-2 text-sm p-2 bg-success/10 rounded-lg">
               <CheckCircle2 className="h-4 w-4 text-success" />
               <span>Last: {lastNotif.channel === "whatsapp" ? "📱 WhatsApp" : "📧 Email"} · {lastNotif.status_at_send}</span>
-              <span className="text-muted-foreground">· {formatDistanceToNow(parseISO(lastNotif.sent_at), { addSuffix: true })}</span>
+              <span className="text-muted-foreground">· {lastNotif.sent_at ? formatDistanceToNow(parseISO(lastNotif.sent_at), { addSuffix: true }) : "—"}</span>
             </div>
           )}
 
@@ -574,7 +574,7 @@ export default function OrderDetail() {
               <MessageCircle className="h-5 w-5 text-source-whatsapp" />
               <div className="text-left">
                 <p className="font-semibold text-sm">Send WhatsApp</p>
-                <p className="text-xs text-muted-foreground">{order.customer_name} · {formatContact(order.contact_no)}</p>
+                <p className="text-xs text-muted-foreground">{order.customer_name} · {formatContact(order.contact_no || "")}</p>
               </div>
             </Button>
             <Button variant="outline" className="gap-2 h-auto py-3" disabled={!order.email} onClick={() => toast.info("Configure EmailJS in Settings")}>
@@ -610,7 +610,7 @@ export default function OrderDetail() {
                           <td className="p-2">{n.channel === "whatsapp" ? "📱" : "📧"} {n.channel}</td>
                           <td className="p-2">{n.status_at_send}</td>
                           <td className="p-2 max-w-[200px] truncate text-muted-foreground">{n.message_preview}</td>
-                          <td className="p-2 text-muted-foreground whitespace-nowrap">{format(parseISO(n.sent_at), "dd MMM, HH:mm")}</td>
+                          <td className="p-2 text-muted-foreground whitespace-nowrap">{n.sent_at ? format(parseISO(n.sent_at), "dd MMM, HH:mm") : "—"}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -801,7 +801,7 @@ export default function OrderDetail() {
                     return (
                     <tr key={f.id} className={cn("border-b border-border/50 table-row-hover", idx % 2 === 1 && "bg-muted/30")}>
                       {orderItems.length > 0 && <td className="p-2 text-muted-foreground max-w-[180px] truncate" title={itemDesc ?? undefined}>{itemDesc ?? "Order"}</td>}
-                      <td className="p-2 whitespace-nowrap">{format(parseISO(f.fulfillment_date), "dd MMM yyyy")}</td>
+                      <td className="p-2 whitespace-nowrap">{f.fulfillment_date ? format(parseISO(f.fulfillment_date), "dd MMM yyyy") : "—"}</td>
                       <td className="p-2 text-right font-medium tabular-nums">{Number(f.qty_delivered).toLocaleString("en-IN")}</td>
                       <td className="p-2">{f.invoice_number?.trim() ? <span className="font-medium">{f.invoice_number}</span> : "—"}</td>
                       <td className="p-2 whitespace-nowrap">{f.invoice_date ? format(parseISO(f.invoice_date), "dd MMM yyyy") : "—"}</td>
@@ -1071,7 +1071,7 @@ export default function OrderDetail() {
                   <td className="p-3"><StatusBadge status={l.new_status} /></td>
                   <td className="p-3 text-muted-foreground">{l.changed_by}</td>
                   <td className="p-3 text-muted-foreground">{l.notes || "—"}</td>
-                  <td className="p-3 text-muted-foreground text-xs">{format(parseISO(l.changed_at), "dd MMM, HH:mm")}</td>
+                  <td className="p-3 text-muted-foreground text-xs">{l.changed_at ? format(parseISO(l.changed_at), "dd MMM, HH:mm") : "—"}</td>
                 </tr>
               ))}
             </tbody>

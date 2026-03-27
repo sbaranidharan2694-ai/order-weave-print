@@ -287,7 +287,7 @@ export default function ImportPO() {
     }
     if (header.customer_name.length >= 3) {
       const q = header.customer_name.toLowerCase();
-      const m = customers.find(c => c.name.toLowerCase().includes(q) || q.includes(c.name.toLowerCase()));
+      const m = customers.find(c => (c.name || "").toLowerCase().includes(q) || q.includes((c.name || "").toLowerCase()));
       if (m) return { type: "similar" as const, customer: m };
     }
     return null;
