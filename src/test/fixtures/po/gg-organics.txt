@@ -1,0 +1,11 @@
+PURCHASE ORDER
+To ,
+Dispatch Mode : Incoterms : Immediate
+Payment Terms :
+PO No : GGOR/104PRO/4/1997 Date : 26-Mar-2026
+G.G. ORGANICS PRIVATE LIMITED
+GST No : 33AACCG6299G1ZG
+P-PM-00627  LABEL EXP  4821102  1,650.00 NOS  0.90  0.00  0.00  0.00  0.00  0.00  0.00  1,485.00
+Total  1,650.00  0.00  0.00  0.00  1,485.00
+Amount in Words (₹) : One Thousand Four Hundred Eighty-Five Rupees Only  Subtotal (₹)  1,485.00
+Grand Total (₹) : 1,485.00
