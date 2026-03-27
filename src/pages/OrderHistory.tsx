@@ -135,7 +135,7 @@ export default function OrderHistory() {
   const exportCSV = () => {
     const headers = ["Order No", "Created", "Customer", "Contact", "Product", "Amount", "PO Number", "Source", "Status", "Order Date", "Delivery Date", "Tags"];
     const rows = filtered.map((o) => [
-      o.order_no, format(parseISO(o.created_at), "dd MMM yyyy, h:mm a"), o.customer_name, formatContact(o.contact_no), o.product_type,
+      o.order_no, o.created_at ? format(parseISO(o.created_at), "dd MMM yyyy, h:mm a") : "", (o.customer_name || ""), formatContact(o.contact_no || ""), o.product_type,
       o.amount, (o as any).po_number || "", o.source, o.status,
       o.order_date, o.delivery_date, (orderTagsMap[o.id] || []).join("; "),
     ]);
@@ -226,7 +226,7 @@ export default function OrderHistory() {
           </span>
         );
       }
-      case "created": return <span className="text-muted-foreground whitespace-nowrap text-xs">{format(parseISO(o.created_at), "dd MMM yyyy, h:mm a")}</span>;
+      case "created": return <span className="text-muted-foreground whitespace-nowrap text-xs">{o.created_at ? format(parseISO(o.created_at), "dd MMM yyyy, h:mm a") : "—"}</span>;
       case "product": return <span className="whitespace-nowrap">{o.product_type}</span>;
       case "customer": return <span className="whitespace-nowrap">{o.customer_name}</span>;
       case "contact": return (

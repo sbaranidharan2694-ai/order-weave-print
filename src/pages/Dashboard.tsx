@@ -63,6 +63,7 @@ export default function Dashboard() {
     const yesterdayStart = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate());
     const yesterdayEnd = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate(), 23, 59, 59);
     const yesterdayOrders = orders.filter(o => {
+      if (!o.created_at) return false;
       const created = parseISO(o.created_at);
       return created >= yesterdayStart && created <= yesterdayEnd;
     });

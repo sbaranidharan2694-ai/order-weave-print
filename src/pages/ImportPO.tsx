@@ -285,8 +285,8 @@ export default function ImportPO() {
       const m = customers.find(c => c.contact_no === header.customer_phone);
       if (m) return { type: "exact" as const, customer: m };
     }
-    if (header.customer_name.length >= 3) {
-      const q = header.customer_name.toLowerCase();
+    if ((header.customer_name || "").length >= 3) {
+      const q = (header.customer_name || "").toLowerCase();
       const m = customers.find(c => (c.name || "").toLowerCase().includes(q) || q.includes((c.name || "").toLowerCase()));
       if (m) return { type: "similar" as const, customer: m };
     }
