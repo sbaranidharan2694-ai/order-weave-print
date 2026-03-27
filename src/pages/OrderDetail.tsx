@@ -311,15 +311,18 @@ export default function OrderDetail() {
     }
   };
 
-  const lastDeliveryDate = fulfillments.length > 0
-    ? format(parseISO([...fulfillments].sort((a, b) => String(b.fulfillment_date).localeCompare(String(a.fulfillment_date)))[0].fulfillment_date), "dd MMM yyyy")
+  const latestFulfillment = [...fulfillments]
+    .filter((f) => !!f.fulfillment_date)
+    .sort((a, b) => String(b.fulfillment_date).localeCompare(String(a.fulfillment_date)))[0];
+  const lastDeliveryDate = latestFulfillment?.fulfillment_date
+    ? format(parseISO(latestFulfillment.fulfillment_date), "dd MMM yyyy")
     : null;
 
   const handleWhatsAppNow = () => {
     const template = WHATSAPP_STATUS_TEMPLATES[order.status] || "";
     const msg = fillWhatsAppTemplate(template, order, shopPhone);
     const safeMsg = unescape(encodeURIComponent(msg));
-    const url = `https://wa.me/91${formatContact(order.contact_no)}?text=${encodeURIComponent(safeMsg)}`;
+    const url = `https://wa.me/91${formatContact(order.contact_no || "")}?text=${encodeURIComponent(safeMsg)}`;
     window.open(url, "_blank");
     logNotification.mutate({
       order_id: order.id, channel: "whatsapp", status_at_send: order.status,

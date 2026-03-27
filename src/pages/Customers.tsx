@@ -40,7 +40,7 @@ export default function Customers() {
     // Start with existing customers
     customers.forEach((c) => {
       const key = (c.contact_no || "").replace(/\D/g, "").slice(-10);
-      customerMap.set(key || c.name.toLowerCase(), { ...c, _key: key || c.name.toLowerCase() });
+      customerMap.set(key || (c.name || "").toLowerCase(), { ...c, _key: key || (c.name || "").toLowerCase() });
     });
 
     // Add customers from orders that don't exist in customers table
@@ -50,7 +50,7 @@ export default function Customers() {
       if (!customerMap.has(key) && !customerMap.has(nameKey)) {
         // Check if matching by name
         const existsByName = Array.from(customerMap.values()).find(
-          (c) => c.name.toLowerCase() === nameKey
+          (c) => (c.name || "").toLowerCase() === nameKey
         );
         if (!existsByName) {
           customerMap.set(key || nameKey, {
@@ -235,7 +235,7 @@ export default function Customers() {
                 <tbody>
                   {filtered.map((c) => {
                     const contactKey = (c.contact_no || "").replace(/\D/g, "").slice(-10);
-                    const nameKey = c.name.toLowerCase();
+                    const nameKey = (c.name || "").toLowerCase();
                     const realData = customerSpend[contactKey] || customerSpend[nameKey];
                     const realSpend = realData?.spend || 0;
                     const realCount = realData?.count || 0;

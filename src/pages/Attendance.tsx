@@ -861,14 +861,14 @@ export default function Attendance() {
             <Button
               className="rounded-xl"
               onClick={async () => {
-                if (!empCode.trim() || !empName.trim()) {
+                if (!(empCode || "").trim() || !(empName || "").trim()) {
                   toast.error("Code and name are required");
                   return;
                 }
                 await upsertPayroll.mutateAsync({
                   id: employeeDialog.edit?.id,
-                  employee_code: empCode.trim(),
-                  display_name: empName.trim(),
+                  employee_code: (empCode || "").trim(),
+                  display_name: (empName || "").trim(),
                   monthly_salary: Number(empSalary) || 0,
                   weekly_salary: Number(empWeeklySalary) || 0,
                 });
