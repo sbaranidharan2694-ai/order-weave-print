@@ -142,7 +142,7 @@ export default function Customers() {
     setAddingCustomer(true);
     const { error } = await supabase.from("customers").insert({
       name: newCustomer.name,
-      contact_no: newCustomer.contact_no.replace(/\D/g, "").slice(-10),
+      contact_no: (newCustomer.contact_no || "").replace(/\D/g, "").slice(-10),
       email: newCustomer.email || null,
       gstin: newCustomer.gstin || null,
       address: newCustomer.address || null,

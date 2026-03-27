@@ -153,7 +153,7 @@ export default function CustomerDetail() {
                       <td className="p-3">{o.product_type}</td>
                       <td className="p-3">₹{Number(o.amount).toLocaleString("en-IN")}</td>
                       <td className="p-3"><StatusBadge status={o.status} /></td>
-                      <td className="p-3 text-muted-foreground">{format(parseISO(o.order_date), "dd MMM yyyy")}</td>
+                      <td className="p-3 text-muted-foreground">{o.order_date ? format(parseISO(o.order_date), "dd MMM yyyy") : "—"}</td>
                     </tr>
                   ))}
                 </tbody>

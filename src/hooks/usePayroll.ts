@@ -402,8 +402,8 @@ export function useUpsertPayrollEmployee() {
       weekly_salary?: number;
     }) => {
       const row = {
-        employee_code: payload.employee_code.trim(),
-        display_name: payload.display_name.trim(),
+        employee_code: (payload.employee_code || "").trim(),
+        display_name: (payload.display_name || "").trim(),
         monthly_salary: Number(payload.monthly_salary) || 0,
         weekly_salary: Number(payload.weekly_salary ?? 0) || 0,
         updated_at: new Date().toISOString(),
@@ -503,8 +503,8 @@ export function useBulkUpsertPayrollEmployees() {
     mutationFn: async (rows: ParsedEmployeeRow[]) => {
       if (rows.length === 0) return [];
       const payload = rows.map((r) => ({
-        employee_code: r.employee_code.trim(),
-        display_name: r.display_name.trim(),
+        employee_code: (r.employee_code || "").trim(),
+        display_name: (r.display_name || "").trim(),
         monthly_salary: Number(r.monthly_salary) || 0,
         weekly_salary: Number(r.weekly_salary) || 0,
         updated_at: new Date().toISOString(),
