@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import {
   Upload,
   Calendar,
@@ -134,6 +134,27 @@ export default function Attendance() {
     return m;
   }, [payrollEmployees]);
 
+  const [uploadReminderOpen, setUploadReminderOpen] = useState(false);
+  const [uploadReminderReason, setUploadReminderReason] = useState<"saturday" | "month_end">("saturday");
+  const reminderShownRef = useRef(false);
+  const uploadInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (reminderShownRef.current) return;
+    const today = new Date();
+    const day = today.getDate();
+    const weekday = today.getDay(); // 0=Sun,6=Sat
+    if (weekday === 6) {
+      setUploadReminderReason("saturday");
+      setUploadReminderOpen(true);
+      reminderShownRef.current = true;
+    } else if (day === 31) {
+      setUploadReminderReason("month_end");
+      setUploadReminderOpen(true);
+      reminderShownRef.current = true;
+    }
+  }, []);
+
   const standardDaysMonth = selectedMonth ? getStandardWorkingDaysForMonth(selectedMonth) : 0;
   const standardDaysWeek = selectedWeek ? getStandardWorkingDaysForWeekEnding(selectedWeek) : 0;
 
@@ -192,6 +213,48 @@ export default function Attendance() {
 
   return (
     <div className="space-y-6">
+      <AlertDialog open={uploadReminderOpen} onOpenChange={setUploadReminderOpen}>
+        <AlertDialogContent className="max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-lg">
+              <FileUp className="h-5 w-5 text-orange-500" />
+              {uploadReminderReason === "saturday"
+                ? "📋 Saturday Attendance Upload Reminder"
+                : "📋 Month-End Attendance Upload Reminder"}
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-sm text-muted-foreground space-y-2">
+              <span className="block">
+                {uploadReminderReason === "saturday"
+                  ? "It's Saturday! Please upload the weekly attendance PDF from your external attendance system (ESSL / biometric device)."
+                  : "It's the 31st! Please upload the monthly attendance PDF from your external attendance system before closing the month."}
+              </span>
+              <span className="block font-medium text-foreground">
+                Steps:
+              </span>
+              <ol className="list-decimal list-inside space-y-1 text-xs">
+                <li>Export the attendance PDF from your ESSL / biometric system</li>
+                <li>Click <strong>"Upload Now"</strong> below to select and upload it</li>
+                <li>Verify the employee rows are detected correctly</li>
+              </ol>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-col sm:flex-row gap-2">
+            <AlertDialogCancel className="flex-1">Remind Me Later</AlertDialogCancel>
+            <AlertDialogAction
+              className="flex-1 bg-orange-500 hover:bg-orange-600 gap-2"
+              onClick={() => {
+                setUploadReminderOpen(false);
+                setTimeout(() => {
+                  uploadInputRef.current?.click();
+                }, 200);
+              }}
+            >
+              <Upload className="h-4 w-4" /> Upload Now
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <SharedDataBanner useLocalStorage={storageMode.attendance === "local"} feature="Attendance" />
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
@@ -234,6 +297,7 @@ export default function Attendance() {
               accept=".pdf"
               className="hidden"
               id="att-pdf"
+              ref={uploadInputRef}
               onChange={handleFile}
               disabled={uploading}
             />
