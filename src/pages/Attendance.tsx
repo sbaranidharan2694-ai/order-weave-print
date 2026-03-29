@@ -134,6 +134,7 @@ export default function Attendance() {
     return m;
   }, [payrollEmployees]);
 
+  const [deleteEmployeeName, setDeleteEmployeeName] = useState<string>("");
   const [uploadReminderOpen, setUploadReminderOpen] = useState(false);
   const [uploadReminderReason, setUploadReminderReason] = useState<"saturday" | "month_end">("saturday");
   const reminderShownRef = useRef(false);
@@ -720,7 +721,12 @@ export default function Attendance() {
                                      className="h-8 w-8 text-red-500 hover:text-red-700 hover:bg-red-50"
                                      onClick={() => {
                                        const existing = payrollEmpByCode.get((row.code || "").trim().toUpperCase());
-                                       if (existing) setDeleteEmployeeId(existing.id);
+                                       if (existing) {
+                                         setDeleteEmployeeId(existing.id);
+                                         setDeleteEmployeeName(existing.display_name || row.name || row.code);
+                                       } else {
+                                         toast.error(`${row.name || row.code} is not in the payroll master list. Add them via "Add employee / Set salary" first.`);
+                                       }
                                      }}
                                    >
                                      <Trash2 className="h-3.5 w-3.5" />
@@ -729,11 +735,11 @@ export default function Attendance() {
                                </td>
                              </tr>
                            ))}
-                        </tbody>
-                      </table>
-                    </div>
-                    </div>
-                  ) : (
+                         </tbody>
+                       </table>
+                     </div>
+                     </div>
+                   ) : (
                     <div className="space-y-2">
                       {selectedWeek && (
                         <p className="text-xs text-muted-foreground bg-muted/40 rounded-lg px-3 py-2 border border-border">
@@ -783,20 +789,25 @@ export default function Attendance() {
                                    >
                                      <Edit2 className="h-3.5 w-3.5 text-muted-foreground" />
                                    </Button>
-                                   <Button
-                                     variant="ghost"
-                                     size="icon"
-                                     className="h-8 w-8 text-red-500 hover:text-red-700 hover:bg-red-50"
-                                     onClick={() => {
-                                       const existing = payrollEmpByCode.get((row.code || "").trim().toUpperCase());
-                                       if (existing) setDeleteEmployeeId(existing.id);
-                                     }}
-                                   >
-                                     <Trash2 className="h-3.5 w-3.5" />
-                                   </Button>
-                                 </div>
-                               </td>
-                             </tr>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-8 w-8 text-red-500 hover:text-red-700 hover:bg-red-50"
+                                      onClick={() => {
+                                        const existing = payrollEmpByCode.get((row.code || "").trim().toUpperCase());
+                                        if (existing) {
+                                          setDeleteEmployeeId(existing.id);
+                                          setDeleteEmployeeName(existing.display_name || row.name || row.code);
+                                        } else {
+                                          toast.error(`${row.name || row.code} is not in the payroll master list. Add them via "Add employee / Set salary" first.`);
+                                        }
+                                      }}
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    </Button>
+                                  </div>
+                                </td>
+                              </tr>
                            ))}
                         </tbody>
                       </table>
@@ -1008,12 +1019,12 @@ export default function Attendance() {
         </DialogContent>
       </Dialog>
 
-      <AlertDialog open={!!deleteEmployeeId} onOpenChange={() => setDeleteEmployeeId(null)}>
+      <AlertDialog open={!!deleteEmployeeId} onOpenChange={(open) => { if (!open) { setDeleteEmployeeId(null); setDeleteEmployeeName(""); } }}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Remove employee from master?</AlertDialogTitle>
+            <AlertDialogTitle>Remove {deleteEmployeeName ? `"${deleteEmployeeName}"` : "employee"} from payroll master?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will remove the employee from the payroll master list. You can add them again later.
+              This will remove <strong>{deleteEmployeeName || "this employee"}</strong> from the payroll master list and their salary configuration. Their attendance records already uploaded will remain. You can add them again later.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -1024,6 +1035,7 @@ export default function Attendance() {
                 if (deleteEmployeeId) {
                   await deletePayrollEmployee.mutateAsync(deleteEmployeeId);
                   setDeleteEmployeeId(null);
+                  setDeleteEmployeeName("");
                 }
               }}
             >
