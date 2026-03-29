@@ -51,7 +51,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { useAttendanceUploads, useSaveAttendanceUpload, useDeleteAttendanceUpload, parseAttendancePdfText } from "@/hooks/useAttendance";
+import { useAttendanceUploads, useSaveAttendanceUpload, useDeleteAttendanceUpload, useRemoveEmployeeEverywhere, parseAttendancePdfText } from "@/hooks/useAttendance";
 import {
   usePayrollEmployees,
   useUpsertPayrollEmployee,
@@ -84,6 +84,7 @@ export default function Attendance() {
   const { data: payrollEmployees = [], isLoading: payrollLoading } = usePayrollEmployees();
   const upsertPayroll = useUpsertPayrollEmployee();
   const deletePayrollEmployee = useDeletePayrollEmployee();
+  const removeEmployeeEverywhere = useRemoveEmployeeEverywhere();
   const bulkUpsertPayroll = useBulkUpsertPayrollEmployees();
   const [uploading, setUploading] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
@@ -135,6 +136,7 @@ export default function Attendance() {
   }, [payrollEmployees]);
 
   const [deleteEmployeeName, setDeleteEmployeeName] = useState<string>("");
+  const [deleteEmployeeCode, setDeleteEmployeeCode] = useState<string>("");
   const [uploadReminderOpen, setUploadReminderOpen] = useState(false);
   const [uploadReminderReason, setUploadReminderReason] = useState<"saturday" | "month_end">("saturday");
   const reminderShownRef = useRef(false);
@@ -722,6 +724,7 @@ export default function Attendance() {
                                      onClick={() => {
                                        const existing = payrollEmpByCode.get((row.code || "").trim().toUpperCase());
                                        setDeleteEmployeeName(existing?.display_name || row.name || row.code);
+                                       setDeleteEmployeeCode(row.code || "");
                                        setDeleteEmployeeId(existing?.id ?? `attendance-only::${row.code}`);
                                      }}
                                    >
@@ -792,6 +795,7 @@ export default function Attendance() {
                                       onClick={() => {
                                         const existing = payrollEmpByCode.get((row.code || "").trim().toUpperCase());
                                         setDeleteEmployeeName(existing?.display_name || row.name || row.code);
+                                        setDeleteEmployeeCode(row.code || "");
                                         setDeleteEmployeeId(existing?.id ?? `attendance-only::${row.code}`);
                                       }}
                                     >
@@ -1011,40 +1015,33 @@ export default function Attendance() {
         </DialogContent>
       </Dialog>
 
-      <AlertDialog open={!!deleteEmployeeId} onOpenChange={(open) => { if (!open) { setDeleteEmployeeId(null); setDeleteEmployeeName(""); } }}>
+      <AlertDialog open={!!deleteEmployeeId} onOpenChange={(open) => { if (!open) { setDeleteEmployeeId(null); setDeleteEmployeeName(""); setDeleteEmployeeCode(""); } }}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Remove {deleteEmployeeName ? `"${deleteEmployeeName}"` : "employee"}?</AlertDialogTitle>
             <AlertDialogDescription>
-              {deleteEmployeeId?.startsWith("attendance-only::") ? (
-                <>
-                  <strong>{deleteEmployeeName || "This employee"}</strong> only exists in uploaded attendance data — they have no payroll salary record.
-                  <br /><br />
-                  To permanently remove them, re-upload the attendance PDF without this employee. Alternatively, you can exclude them from payroll by not setting a salary via <strong>"Add employee / Set salary"</strong>.
-                </>
-              ) : (
-                <>
-                  This will remove <strong>{deleteEmployeeName || "this employee"}</strong> from the payroll master list and their salary configuration. Their attendance records already uploaded will remain intact. You can re-add them later.
-                </>
-              )}
+              This will permanently remove <strong>{deleteEmployeeName || "this employee"}</strong> from all uploaded attendance records and the payroll master list. This cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            {!deleteEmployeeId?.startsWith("attendance-only::") && (
-              <AlertDialogAction
-                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                onClick={async () => {
-                  if (deleteEmployeeId) {
-                    await deletePayrollEmployee.mutateAsync(deleteEmployeeId);
-                    setDeleteEmployeeId(null);
-                    setDeleteEmployeeName("");
-                  }
-                }}
-              >
-                Remove
-              </AlertDialogAction>
-            )}
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={async () => {
+                const isAttendanceOnly = deleteEmployeeId?.startsWith("attendance-only::");
+                const payrollId = isAttendanceOnly ? undefined : (deleteEmployeeId ?? undefined);
+                await removeEmployeeEverywhere.mutateAsync({
+                  employeeCode: deleteEmployeeCode,
+                  employeeName: deleteEmployeeName,
+                  payrollMasterId: payrollId,
+                });
+                setDeleteEmployeeId(null);
+                setDeleteEmployeeName("");
+                setDeleteEmployeeCode("");
+              }}
+            >
+              Remove Permanently
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

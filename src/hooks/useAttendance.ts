@@ -336,4 +336,70 @@ export function useDeleteAttendanceUpload() {
   });
 }
 
+export function useRemoveEmployeeEverywhere() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ employeeCode, employeeName, payrollMasterId }: {
+      employeeCode: string;
+      employeeName: string;
+      payrollMasterId?: string;
+    }) => {
+      const normalizedCode = (employeeCode || "").trim().toUpperCase();
+
+      // 1. Load all attendance uploads
+      const { data: uploads, error: fetchErr } = await supabase
+        .from("attendance_uploads")
+        .select("id, parsed_data");
+      if (fetchErr) throw fetchErr;
+
+      // 2. Strip the employee from each upload's parsed_data JSON
+      const updates: Promise<void>[] = (uploads ?? []).map(async (upload) => {
+        const parsed = upload.parsed_data as any;
+        if (!parsed?.employees?.length) return;
+
+        const before = parsed.employees.length;
+        parsed.employees = parsed.employees.filter((e: any) => {
+          const code = (e.code || e.employee_code || "").trim().toUpperCase();
+          const name = (e.name || e.display_name || "").trim().toLowerCase();
+          return code !== normalizedCode && name !== (employeeName || "").trim().toLowerCase();
+        });
+        if (parsed.employees.length === before) return; // no change
+
+        const { error } = await supabase
+          .from("attendance_uploads")
+          .update({ parsed_data: parsed })
+          .eq("id", upload.id);
+        if (error) throw error;
+      });
+
+      await Promise.all(updates);
+
+      // 3. Delete from payroll master if they have a record
+      if (payrollMasterId) {
+        const { error } = await supabase.from("payroll_employees").delete().eq("id", payrollMasterId);
+        if (error) throw error;
+      } else {
+        // Try to find and delete by code
+        const { data: empRow } = await supabase
+          .from("payroll_employees")
+          .select("id")
+          .ilike("employee_code", normalizedCode)
+          .maybeSingle();
+        if (empRow?.id) {
+          await supabase.from("payroll_employees").delete().eq("id", empRow.id);
+        }
+      }
+    },
+    onSuccess: (_, vars) => {
+      qc.invalidateQueries({ queryKey: ["attendance_uploads"] });
+      qc.invalidateQueries({ queryKey: ["payroll_employees"] });
+      toast.success(`${vars.employeeName || "Employee"} removed from all attendance records and payroll.`);
+    },
+    onError: (e: unknown) => {
+      const msg = e != null && typeof e === "object" && "message" in e ? String((e as { message?: unknown }).message) : "Remove failed";
+      toast.error(msg);
+    },
+  });
+}
+
 export { parseAttendanceFromText };
