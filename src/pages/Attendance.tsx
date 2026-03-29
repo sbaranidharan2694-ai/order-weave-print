@@ -683,39 +683,52 @@ export default function Attendance() {
                             <th className="text-right p-3 font-semibold">Monthly salary (₹)</th>
                             <th className="text-right p-3 font-semibold text-red-600">Loss of pay (₹)</th>
                             <th className="text-right p-3 font-semibold text-primary">Net pay (₹)</th>
-                            <th className="w-10 p-2" />
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {payrollRows.map((row, i) => (
-                            <tr key={`${row.code}-${row.monthYear}-${i}`} className="border-b last:border-0 hover:bg-muted/30">
-                              <td className="p-3 font-mono text-xs">{row.code}</td>
-                              <td className="p-3 font-medium">{row.name}</td>
-                              <td className="p-3 text-center text-green-600">{row.present}</td>
-                              <td className="p-3 text-center text-red-600">{row.absent}</td>
-                              <td className="p-3 text-center">{row.workingDays}</td>
-                              <td className="p-3 text-right font-medium">{row.monthlySalary > 0 ? row.monthlySalary.toLocaleString("en-IN") : "—"}</td>
-                              <td className="p-3 text-right text-red-600">{row.lossOfPay > 0 ? row.lossOfPay.toLocaleString("en-IN") : "—"}</td>
-                              <td className="p-3 text-right font-semibold text-primary">{row.netPay.toLocaleString("en-IN")}</td>
-                              <td className="p-2">
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-8 w-8"
-                                  onClick={() => {
-                                    const existing = payrollEmpByCode.get((row.code || "").trim().toUpperCase());
-                                    setEmployeeDialog({ open: true, edit: existing ?? undefined });
-                                    setEmpCode(existing?.employee_code ?? row.code);
-                                    setEmpName(existing?.display_name ?? row.name);
-                                    setEmpSalary(existing ? String(existing.monthly_salary) : "");
-                                    setEmpWeeklySalary(existing?.weekly_salary != null ? String(existing.weekly_salary) : "");
-                                  }}
-                                >
-                                  <Edit2 className="h-3.5 w-3.5 text-muted-foreground" />
-                                </Button>
-                              </td>
-                            </tr>
-                          ))}
+                             <th className="w-20 p-2" />
+                           </tr>
+                         </thead>
+                         <tbody>
+                           {payrollRows.map((row, i) => (
+                             <tr key={`${row.code}-${row.monthYear}-${i}`} className="border-b last:border-0 hover:bg-muted/30">
+                               <td className="p-3 font-mono text-xs">{row.code}</td>
+                               <td className="p-3 font-medium">{row.name}</td>
+                               <td className="p-3 text-center text-green-600">{row.present}</td>
+                               <td className="p-3 text-center text-red-600">{row.absent}</td>
+                               <td className="p-3 text-center">{row.workingDays}</td>
+                               <td className="p-3 text-right font-medium">{row.monthlySalary > 0 ? row.monthlySalary.toLocaleString("en-IN") : "—"}</td>
+                               <td className="p-3 text-right text-red-600">{row.lossOfPay > 0 ? row.lossOfPay.toLocaleString("en-IN") : "—"}</td>
+                               <td className="p-3 text-right font-semibold text-primary">{row.netPay.toLocaleString("en-IN")}</td>
+                               <td className="p-2">
+                                 <div className="flex items-center gap-1">
+                                   <Button
+                                     variant="ghost"
+                                     size="icon"
+                                     className="h-8 w-8"
+                                     onClick={() => {
+                                       const existing = payrollEmpByCode.get((row.code || "").trim().toUpperCase());
+                                       setEmployeeDialog({ open: true, edit: existing ?? undefined });
+                                       setEmpCode(existing?.employee_code ?? row.code);
+                                       setEmpName(existing?.display_name ?? row.name);
+                                       setEmpSalary(existing ? String(existing.monthly_salary) : "");
+                                       setEmpWeeklySalary(existing?.weekly_salary != null ? String(existing.weekly_salary) : "");
+                                     }}
+                                   >
+                                     <Edit2 className="h-3.5 w-3.5 text-muted-foreground" />
+                                   </Button>
+                                   <Button
+                                     variant="ghost"
+                                     size="icon"
+                                     className="h-8 w-8 text-red-500 hover:text-red-700 hover:bg-red-50"
+                                     onClick={() => {
+                                       const existing = payrollEmpByCode.get((row.code || "").trim().toUpperCase());
+                                       if (existing) setDeleteEmployeeId(existing.id);
+                                     }}
+                                   >
+                                     <Trash2 className="h-3.5 w-3.5" />
+                                   </Button>
+                                 </div>
+                               </td>
+                             </tr>
+                           ))}
                         </tbody>
                       </table>
                     </div>
@@ -739,39 +752,52 @@ export default function Attendance() {
                             <th className="text-right p-3 font-semibold">Weekly salary (₹)</th>
                             <th className="text-right p-3 font-semibold text-red-600">Loss of pay (₹)</th>
                             <th className="text-right p-3 font-semibold text-primary">Net pay (₹)</th>
-                            <th className="w-10 p-2" />
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {payrollRowsWeekly.map((row, i) => (
-                            <tr key={`${row.code}-${row.weekEnding}-${i}`} className="border-b last:border-0 hover:bg-muted/30">
-                              <td className="p-3 font-mono text-xs">{row.code}</td>
-                              <td className="p-3 font-medium">{row.name}</td>
-                              <td className="p-3 text-center text-green-600">{row.present}</td>
-                              <td className="p-3 text-center text-red-600">{row.absent}</td>
-                              <td className="p-3 text-center">{row.workingDays}</td>
-                              <td className="p-3 text-right font-medium">{row.weeklySalary > 0 ? row.weeklySalary.toLocaleString("en-IN") : "—"}</td>
-                              <td className="p-3 text-right text-red-600">{row.lossOfPay > 0 ? row.lossOfPay.toLocaleString("en-IN") : "—"}</td>
-                              <td className="p-3 text-right font-semibold text-primary">{row.netPay.toLocaleString("en-IN")}</td>
-                              <td className="p-2">
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-8 w-8"
-                                  onClick={() => {
-                                    const existing = payrollEmpByCode.get((row.code || "").trim().toUpperCase());
-                                    setEmployeeDialog({ open: true, edit: existing ?? undefined });
-                                    setEmpCode(existing?.employee_code ?? row.code);
-                                    setEmpName(existing?.display_name ?? row.name);
-                                    setEmpSalary(existing ? String(existing.monthly_salary) : "");
-                                    setEmpWeeklySalary(existing?.weekly_salary != null ? String(existing.weekly_salary) : "");
-                                  }}
-                                >
-                                  <Edit2 className="h-3.5 w-3.5 text-muted-foreground" />
-                                </Button>
-                              </td>
-                            </tr>
-                          ))}
+                             <th className="w-20 p-2" />
+                           </tr>
+                         </thead>
+                         <tbody>
+                           {payrollRowsWeekly.map((row, i) => (
+                             <tr key={`${row.code}-${row.weekEnding}-${i}`} className="border-b last:border-0 hover:bg-muted/30">
+                               <td className="p-3 font-mono text-xs">{row.code}</td>
+                               <td className="p-3 font-medium">{row.name}</td>
+                               <td className="p-3 text-center text-green-600">{row.present}</td>
+                               <td className="p-3 text-center text-red-600">{row.absent}</td>
+                               <td className="p-3 text-center">{row.workingDays}</td>
+                               <td className="p-3 text-right font-medium">{row.weeklySalary > 0 ? row.weeklySalary.toLocaleString("en-IN") : "—"}</td>
+                               <td className="p-3 text-right text-red-600">{row.lossOfPay > 0 ? row.lossOfPay.toLocaleString("en-IN") : "—"}</td>
+                               <td className="p-3 text-right font-semibold text-primary">{row.netPay.toLocaleString("en-IN")}</td>
+                               <td className="p-2">
+                                 <div className="flex items-center gap-1">
+                                   <Button
+                                     variant="ghost"
+                                     size="icon"
+                                     className="h-8 w-8"
+                                     onClick={() => {
+                                       const existing = payrollEmpByCode.get((row.code || "").trim().toUpperCase());
+                                       setEmployeeDialog({ open: true, edit: existing ?? undefined });
+                                       setEmpCode(existing?.employee_code ?? row.code);
+                                       setEmpName(existing?.display_name ?? row.name);
+                                       setEmpSalary(existing ? String(existing.monthly_salary) : "");
+                                       setEmpWeeklySalary(existing?.weekly_salary != null ? String(existing.weekly_salary) : "");
+                                     }}
+                                   >
+                                     <Edit2 className="h-3.5 w-3.5 text-muted-foreground" />
+                                   </Button>
+                                   <Button
+                                     variant="ghost"
+                                     size="icon"
+                                     className="h-8 w-8 text-red-500 hover:text-red-700 hover:bg-red-50"
+                                     onClick={() => {
+                                       const existing = payrollEmpByCode.get((row.code || "").trim().toUpperCase());
+                                       if (existing) setDeleteEmployeeId(existing.id);
+                                     }}
+                                   >
+                                     <Trash2 className="h-3.5 w-3.5" />
+                                   </Button>
+                                 </div>
+                               </td>
+                             </tr>
+                           ))}
                         </tbody>
                       </table>
                     </div>
