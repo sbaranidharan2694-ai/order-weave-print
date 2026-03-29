@@ -234,11 +234,17 @@ function extractHeaderFields(lines: string[], headerEnd: number): ParsedHeader {
     .filter((line) => !/^===\s+(?:CUSTOMER|SELLER)\s*\(/i.test(line));
   const allText = headerLines.join("\n");
 
-  const po_number = findFieldValue(headerLines, [
-    /PO\s*(?:No|Number|#)?[\s:.-]*([A-Za-z0-9/-]{3,30})/i,
-    /(?:Purchase\s*Order|Order)\s*(?:No|Number|#)?[\s:.-]*([A-Za-z0-9/-]{3,30})/i,
-    /(?:Indent|Work\s*Order|Ref)\s*(?:No|#)?[\s:.-]*([A-Za-z0-9/-]{3,30})/i,
+  const po_number_raw = findFieldValue(headerLines, [
+    /PO\s*(?:No\.?|Number|#)\s*[:\s.-]*([A-Za-z0-9][A-Za-z0-9/._-]{2,35})/i,
+    /(?:Purchase\s*Order)\s*(?:No\.?|Number|#)\s*[:\s.-]*([A-Za-z0-9][A-Za-z0-9/._-]{2,35})/i,
+    /(?:Order\s*No\.?|Order\s*Number)\s*[:\s.-]*([A-Za-z0-9][A-Za-z0-9/._-]{2,35})/i,
+    /(?:Indent\s*No\.?|Work\s*Order\s*No\.?|Ref\s*No\.?)\s*[:\s.-]*([A-Za-z0-9][A-Za-z0-9/._-]{2,35})/i,
   ]);
+  // Must contain at least one digit and must not be a reserved label word
+  const INVALID_PO = /^(date|day|incoterms?|payment|dispatch|delivery|terms?|reference|remarks?|internal|currency|mode)$/i;
+  const po_number = po_number_raw && /\d/.test(po_number_raw) && !INVALID_PO.test(po_number_raw.trim())
+    ? po_number_raw.trim()
+    : null;
 
   const poDateRaw = findFieldValue(headerLines, [
     /(?:PO\s*Date|Order\s*Date|Date)\s*[:-]?\s*([\d/. A-Za-z-]+)/i,
@@ -263,17 +269,29 @@ function extractHeaderFields(lines: string[], headerEnd: number): ParsedHeader {
     /Prepared\s*by\s*[:-]?\s*(.*)/i,
   ]);
 
-  const customer_name =
-    findFieldValue(headerLines, [
-      /(?:Vendor|Supplier|Company|Customer|Party\s*Name|Bill\s*To|Buyer|FROM|Issued\s*By|Purchaser)\s*[:-]?\s*(.+)/i,
-      /(?:Billing\s*Address|Bill\s*Address)\s*[:-]?\s*(.+)/i,
-    ]) ??
-    (headerLines.slice(0, Math.min(headerLines.length, 20)).find(
-      (line) =>
-        /(?:Pvt\.?\s*Ltd|Private\s*Limited|Limited|Industries|Corporation|Chemicals|LLP|LTD\.?)\b/i.test(line) &&
-        line.length < 120 &&
-        !/Super\s*Print|Super\s*Screen/i.test(line),
-    ) ?? null);
+  // Customer name: try label-based first, then company-name pattern
+  // Never extract Super Printers itself or bare label words as the customer
+  const SUPER_PRINTERS_RE = /super\s*print|super\s*screen/i;
+  const customerNameFromLabel = findFieldValue(headerLines, [
+    /(?:Vendor|Supplier|Purchaser|Buyer)\s*[:\s-]+([A-Za-z0-9][\w\s,./&()-]{2,80})/i,
+    /(?:Bill(?:ing)?\s*(?:To|From)|Ship\s*To|Party\s*Name|Issued\s*By|From)\s*[:\s-]+([A-Za-z0-9][\w\s,./&()-]{2,80})/i,
+    /(?:M\/s\.?\s*|Messrs\.?\s*)([A-Za-z0-9][\w\s,./&()-]{2,80})/i,
+  ])?.trim() ?? null;
+
+  const customerNameFromPattern = headerLines.slice(0, Math.min(headerLines.length, 25)).find(
+    (line) =>
+      /(?:Pvt\.?\s*Ltd|Private\s*Limited|\bLimited\b|Industries|Corporation|Chemicals|LLP|LTD\.?|M\/s\.?\s+\w)/i.test(line) &&
+      line.length >= 5 &&
+      line.length < 120 &&
+      !SUPER_PRINTERS_RE.test(line) &&
+      !/^(To|From|Dear|Attn|purchase order|quotation)/i.test(line.trim()),
+  ) ?? null;
+
+  const customer_name = (
+    customerNameFromLabel && !SUPER_PRINTERS_RE.test(customerNameFromLabel)
+      ? customerNameFromLabel
+      : customerNameFromPattern
+  )?.trim().slice(0, 150) ?? null;
 
   const addressMatch = allText.match(/(?:Address|Delivery\s*Address|Bill\s*To)\s*[:-]?\s*([^\n]+(?:\n(?!\s*(?:GST|Phone|Contact|PO|Date))[^\n]+)*)/i);
   const customer_address = addressMatch ? addressMatch[1].replace(/\n/g, " ").trim().slice(0, 500) : null;

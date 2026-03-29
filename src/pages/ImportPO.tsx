@@ -257,6 +257,7 @@ export default function ImportPO() {
   const [waPrompt, setWaPrompt] = useState<{ order: Order; lineItems: { description: string; quantity: number; amount: number }[] } | null>(null);
   const [sortCol, setSortCol] = useState<keyof LineItem | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [rawPriceMap, setRawPriceMap] = useState<Record<string, string>>({});
 
   const sortedLineItems = useMemo(() => {
     if (!sortCol || sortCol === "id") return lineItems;
@@ -793,8 +794,8 @@ export default function ImportPO() {
     setLineItems(items => items.map((li) => {
       if (li.id !== rowId) return li;
       let normalized = value;
-      if (field === "quantity") normalized = value === "" ? 0 : Math.max(0, Math.floor(normalizeNumber(value)));
-      else if (field === "unit_price") normalized = Math.max(0, normalizeNumber(value));
+      if (field === "quantity") normalized = value === "" || value === null || value === undefined ? 0 : Math.max(0, Math.floor(normalizeNumber(value)));
+      else if (field === "unit_price") normalized = value === "" || value === null || value === undefined ? 0 : Math.max(0, normalizeNumber(value));
       else if (field === "gst_rate") normalized = snapGstRate(normalizeNumber(value));
       else if (field === "sno") normalized = Math.max(1, Math.floor(normalizeNumber(value)));
       const updated = { ...li, [field]: normalized } as LineItem;
@@ -1596,11 +1597,17 @@ export default function ImportPO() {
                             />
                           </td>
                           <td className="p-2 align-middle">
-                            <Input type="text" inputMode="numeric" value={li.quantity === 0 ? "" : String(li.quantity)} onChange={e => {
-                              const v = e.target.value.replace(/\D/g, "");
-                              if (v === "") updateLine(li.id, "quantity", 1);
-                              else updateLine(li.id, "quantity", parseInt(v, 10) || 1);
-                            }} className="h-11 text-base text-right font-medium min-w-0" />
+                            <Input
+                              type="text"
+                              inputMode="numeric"
+                              value={li.quantity === 0 ? "" : String(li.quantity)}
+                              placeholder="—"
+                              onChange={e => {
+                                const v = e.target.value.replace(/[^\d]/g, "");
+                                updateLine(li.id, "quantity", v === "" ? 0 : parseInt(v, 10));
+                              }}
+                              className="h-11 text-base text-right font-medium min-w-0"
+                            />
                           </td>
                           <td className="p-2 align-middle">
                             {(() => {
@@ -1617,11 +1624,27 @@ export default function ImportPO() {
                             })()}
                           </td>
                           <td className="p-2 align-middle">
-                            <Input type="text" inputMode="decimal" value={li.unit_price === 0 && !Number.isNaN(li.unit_price) ? "" : String(li.unit_price)} onChange={e => {
-                              const raw = e.target.value.replace(/[^\d.]/g, "");
-                              if (raw === "" || raw === ".") updateLine(li.id, "unit_price", 0);
-                              else updateLine(li.id, "unit_price", raw);
-                            }} className="h-11 text-base text-right font-medium font-mono min-w-0" placeholder="0" />
+                            <Input
+                              type="text"
+                              inputMode="decimal"
+                              placeholder="0.00"
+                              value={rawPriceMap[li.id] !== undefined ? rawPriceMap[li.id] : (li.unit_price === 0 ? "" : String(li.unit_price))}
+                              onChange={e => {
+                                const raw = e.target.value.replace(/[^\d.]/g, "").replace(/^(\d*\.?\d*).*$/, "$1");
+                                setRawPriceMap(m => ({ ...m, [li.id]: raw }));
+                                const n = parseFloat(raw);
+                                if (!isNaN(n)) updateLine(li.id, "unit_price", n);
+                                else if (raw === "" || raw === ".") updateLine(li.id, "unit_price", 0);
+                              }}
+                              onBlur={e => {
+                                const raw = e.target.value;
+                                const n = parseFloat(raw);
+                                const final = isNaN(n) ? 0 : n;
+                                updateLine(li.id, "unit_price", final);
+                                setRawPriceMap(m => { const copy = { ...m }; delete copy[li.id]; return copy; });
+                              }}
+                              className="h-11 text-base text-right font-medium font-mono min-w-0"
+                            />
                           </td>
                           <td className="p-2 align-middle">
                             <Select value={String(snapGstRate(li.gst_rate))} onValueChange={v => updateLine(li.id, "gst_rate", Number(v))}>
