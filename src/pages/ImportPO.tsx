@@ -33,6 +33,8 @@ import { parsePOText } from "@/utils/parsePOText";
 import { learnFromParse } from "@/utils/poPatternLearning";
 import { logAudit } from "@/utils/auditLog";
 import { toErrorMessage } from "@/lib/errors";
+import { OrderCreatedWhatsApp } from "@/components/OrderCreatedWhatsApp";
+import type { Order } from "@/hooks/useOrders";
 import * as XLSX from "xlsx";
 
 /* ─── Constants ─── */
@@ -252,6 +254,7 @@ export default function ImportPO() {
   const [header, setHeader] = useState<POHeader>(emptyHeader());
   const [lineItems, setLineItems] = useState<LineItem[]>([]);
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
+  const [waPrompt, setWaPrompt] = useState<{ order: Order; lineItems: { description: string; quantity: number; amount: number }[] } | null>(null);
   const [sortCol, setSortCol] = useState<keyof LineItem | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
@@ -1039,6 +1042,26 @@ export default function ImportPO() {
       }
 
       setFormErrors({});
+
+      // Show WhatsApp confirmation prompt if order was created and has a phone number
+      if (orderId && orderNo && header.customer_phone) {
+        const { data: createdOrder } = await supabase
+          .from("orders")
+          .select("*")
+          .eq("id", orderId)
+          .single();
+        if (createdOrder) {
+          setWaPrompt({
+            order: createdOrder as Order,
+            lineItems: validLines.map((li) => ({
+              description: (li.description || "").trim(),
+              quantity: Number(normalizeNumber(li.quantity)) || 0,
+              amount: Number(normalizeNumber(li.line_total)) || 0,
+            })),
+          });
+          return;
+        }
+      }
       navigate("/orders");
     } catch (err) {
       if (poId) {
@@ -1161,6 +1184,19 @@ export default function ImportPO() {
   /* ─── Render ─── */
   return (
     <div className="animate-fade-in">
+      {waPrompt && (
+        <OrderCreatedWhatsApp
+          open={!!waPrompt}
+          onOpenChange={(open) => {
+            if (!open) {
+              setWaPrompt(null);
+              navigate("/orders");
+            }
+          }}
+          order={waPrompt.order}
+          lineItems={waPrompt.lineItems}
+        />
+      )}
       <h1 className="text-2xl font-bold text-foreground mb-4">Import Purchase Order</h1>
 
       {/* Split screen layout: left 45%, right 55%, divider */}

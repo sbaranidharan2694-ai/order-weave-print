@@ -138,6 +138,59 @@ For queries, please contact us.
 📞 Super Printers: {{shop_phone}}`,
 };
 
+export const ORDER_CREATED_TEMPLATE = `Hello {{customer_name}}! 👋
+
+Thank you for placing your order with *Super Printers*. 🙏
+
+We're getting your order ready and will notify you once it's shipped. 🚚✨
+
+📦 *Order ID:* {{order_no}}
+
+🛒 *Items:*
+{{items_list}}
+💳 *Invoice Total:* ₹{{amount}}
+{{advance_line}}
+📅 *Expected Delivery:* {{delivery_date}}
+
+For any queries, feel free to reach us at {{shop_phone}}.
+
+*Team Super Printers* 🖨️`;
+
+export function fillOrderCreatedTemplate(
+  order: Order,
+  shopPhone: string,
+  lineItems?: { description: string; quantity: number; amount: number }[]
+): string {
+  const deliveryDate = order.delivery_date
+    ? new Date(order.delivery_date).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })
+    : "TBD";
+  const adv = Number(order.advance_paid) || 0;
+  const total = Number(order.amount) || 0;
+
+  let itemsList = "";
+  if (lineItems && lineItems.length > 0) {
+    itemsList = lineItems
+      .map((li, i) => `  ${i + 1}. ${li.description} × ${li.quantity} — ₹${Number(li.amount).toLocaleString("en-IN")}`)
+      .join("\n");
+  } else {
+    const qty = order.quantity || 0;
+    itemsList = `  1. ${order.product_type || "Print Job"} × ${qty} — ₹${total.toLocaleString("en-IN")}`;
+  }
+
+  const advanceLine = adv > 0
+    ? `✅ *Advance Paid:* ₹${adv.toLocaleString("en-IN")}\n💰 *Balance Due:* ₹${(total - adv).toLocaleString("en-IN")}\n`
+    : "";
+
+  return ORDER_CREATED_TEMPLATE
+    .replace(/\{\{customer_name\}\}/g, order.customer_name || "")
+    .replace(/\{\{order_no\}\}/g, order.order_no || "")
+    .replace(/\{\{items_list\}\}/g, itemsList + "\n")
+    .replace(/\{\{amount\}\}/g, total.toLocaleString("en-IN"))
+    .replace(/\{\{advance_line\}\}/g, advanceLine)
+    .replace(/\{\{delivery_date\}\}/g, deliveryDate)
+    .replace(/\{\{shop_phone\}\}/g, shopPhone);
+}
+
 export function fillWhatsAppTemplate(template: string, order: Order, shopPhone: string): string {
   const deliveryDate = order.delivery_date 
     ? new Date(order.delivery_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })

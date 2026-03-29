@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useCreateOrder } from "@/hooks/useOrders";
 import { useCustomerByContact } from "@/hooks/useCustomers";
@@ -21,6 +21,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import ImportPO from "./ImportPO";
 import { Skeleton } from "@/components/ui/skeleton";
+import { OrderCreatedWhatsApp } from "@/components/OrderCreatedWhatsApp";
+import type { Order } from "@/hooks/useOrders";
 
 const INSTRUCTION_TEMPLATES = [
   "Urgent job - call before print",
@@ -83,6 +85,7 @@ export default function NewOrder() {
   const [emailTouched, setEmailTouched] = useState(false);
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const prevCustomerRef = useRef<string | null>(null);
+  const [waPrompt, setWaPrompt] = useState<{ order: Order; lineItems: { description: string; quantity: number; amount: number }[] } | null>(null);
 
   const { data: existingCustomer } = useCustomerByContact(form.contact_no);
   const operators = settings?.operator_names || [];
@@ -201,7 +204,14 @@ export default function NewOrder() {
         } as any);
       }
 
-      navigate("/orders");
+      setWaPrompt({
+        order,
+        lineItems: validItems.map((li) => ({
+          description: li.description,
+          quantity: li.quantity,
+          amount: li.amount,
+        })),
+      });
     } catch (err) {
       // Error handled by mutation
     }
@@ -245,6 +255,19 @@ export default function NewOrder() {
 
   return (
     <div className="max-w-3xl mx-auto space-y-4 animate-fade-in">
+      {waPrompt && (
+        <OrderCreatedWhatsApp
+          open={!!waPrompt}
+          onOpenChange={(open) => {
+            if (!open) {
+              setWaPrompt(null);
+              navigate("/orders");
+            }
+          }}
+          order={waPrompt.order}
+          lineItems={waPrompt.lineItems}
+        />
+      )}
       <h1 className="text-2xl font-bold text-foreground">New Order</h1>
 
       <Tabs defaultValue="manual">
