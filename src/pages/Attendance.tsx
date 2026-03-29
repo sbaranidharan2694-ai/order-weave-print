@@ -721,12 +721,8 @@ export default function Attendance() {
                                      className="h-8 w-8 text-red-500 hover:text-red-700 hover:bg-red-50"
                                      onClick={() => {
                                        const existing = payrollEmpByCode.get((row.code || "").trim().toUpperCase());
-                                       if (existing) {
-                                         setDeleteEmployeeId(existing.id);
-                                         setDeleteEmployeeName(existing.display_name || row.name || row.code);
-                                       } else {
-                                         toast.error(`${row.name || row.code} is not in the payroll master list. Add them via "Add employee / Set salary" first.`);
-                                       }
+                                       setDeleteEmployeeName(existing?.display_name || row.name || row.code);
+                                       setDeleteEmployeeId(existing?.id ?? `attendance-only::${row.code}`);
                                      }}
                                    >
                                      <Trash2 className="h-3.5 w-3.5" />
@@ -795,12 +791,8 @@ export default function Attendance() {
                                       className="h-8 w-8 text-red-500 hover:text-red-700 hover:bg-red-50"
                                       onClick={() => {
                                         const existing = payrollEmpByCode.get((row.code || "").trim().toUpperCase());
-                                        if (existing) {
-                                          setDeleteEmployeeId(existing.id);
-                                          setDeleteEmployeeName(existing.display_name || row.name || row.code);
-                                        } else {
-                                          toast.error(`${row.name || row.code} is not in the payroll master list. Add them via "Add employee / Set salary" first.`);
-                                        }
+                                        setDeleteEmployeeName(existing?.display_name || row.name || row.code);
+                                        setDeleteEmployeeId(existing?.id ?? `attendance-only::${row.code}`);
                                       }}
                                     >
                                       <Trash2 className="h-3.5 w-3.5" />
@@ -1022,25 +1014,37 @@ export default function Attendance() {
       <AlertDialog open={!!deleteEmployeeId} onOpenChange={(open) => { if (!open) { setDeleteEmployeeId(null); setDeleteEmployeeName(""); } }}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Remove {deleteEmployeeName ? `"${deleteEmployeeName}"` : "employee"} from payroll master?</AlertDialogTitle>
+            <AlertDialogTitle>Remove {deleteEmployeeName ? `"${deleteEmployeeName}"` : "employee"}?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will remove <strong>{deleteEmployeeName || "this employee"}</strong> from the payroll master list and their salary configuration. Their attendance records already uploaded will remain. You can add them again later.
+              {deleteEmployeeId?.startsWith("attendance-only::") ? (
+                <>
+                  <strong>{deleteEmployeeName || "This employee"}</strong> only exists in uploaded attendance data — they have no payroll salary record.
+                  <br /><br />
+                  To permanently remove them, re-upload the attendance PDF without this employee. Alternatively, you can exclude them from payroll by not setting a salary via <strong>"Add employee / Set salary"</strong>.
+                </>
+              ) : (
+                <>
+                  This will remove <strong>{deleteEmployeeName || "this employee"}</strong> from the payroll master list and their salary configuration. Their attendance records already uploaded will remain intact. You can re-add them later.
+                </>
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              onClick={async () => {
-                if (deleteEmployeeId) {
-                  await deletePayrollEmployee.mutateAsync(deleteEmployeeId);
-                  setDeleteEmployeeId(null);
-                  setDeleteEmployeeName("");
-                }
-              }}
-            >
-              Remove
-            </AlertDialogAction>
+            {!deleteEmployeeId?.startsWith("attendance-only::") && (
+              <AlertDialogAction
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                onClick={async () => {
+                  if (deleteEmployeeId) {
+                    await deletePayrollEmployee.mutateAsync(deleteEmployeeId);
+                    setDeleteEmployeeId(null);
+                    setDeleteEmployeeName("");
+                  }
+                }}
+              >
+                Remove
+              </AlertDialogAction>
+            )}
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
