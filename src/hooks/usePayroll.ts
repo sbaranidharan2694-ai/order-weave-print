@@ -3,12 +3,21 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import type { AttendanceUpload, AttendanceParsedData, AbsentListParsedData, DetailedReportParsedData } from "./useAttendance";
 
+export type SalaryType = "monthly_8th" | "monthly_1st" | "weekly";
+
+export const SALARY_TYPE_LABELS: Record<SalaryType, string> = {
+  monthly_8th: "Monthly (paid on 8th)",
+  monthly_1st: "Monthly (paid on 1st)",
+  weekly: "Weekly (paid every Saturday)",
+};
+
 export type PayrollEmployee = {
   id: string;
   employee_code: string;
   display_name: string;
   monthly_salary: number;
   weekly_salary?: number;
+  salary_type?: SalaryType;
   created_at: string;
   updated_at: string;
 };
@@ -33,6 +42,8 @@ export type PayrollRow = {
   monthlySalary: number;
   lossOfPay: number;
   netPay: number;
+  salaryType: SalaryType;
+  payDate: string;
 };
 
 /** One row in the payroll table (weekly) */
@@ -46,6 +57,8 @@ export type PayrollRowWeek = {
   weeklySalary: number;
   lossOfPay: number;
   netPay: number;
+  salaryType: SalaryType;
+  payDate: string;
 };
 
 const DEFAULT_WORKING_DAYS = 26;
@@ -87,6 +100,52 @@ export function getStandardWorkingDaysForWeekEnding(weekEndSunday: string): numb
 function normalizeCode(code: string): string {
   return (code || "").trim().toUpperCase();
 }
+
+/**
+ * Compute the actual pay date for a given employee salary type and period.
+ * - monthly_8th: paid on 8th of the SAME month (covers 8th prev → 7th current)
+ * - monthly_1st: paid on 1st of the month AFTER the worked month
+ * - weekly: paid on the Saturday of the worked week
+ */
+export function getPayDate(salaryType: SalaryType, period: string): string {
+  if (salaryType === "weekly") {
+    const sun = new Date(period + "T12:00:00Z");
+    sun.setUTCDate(sun.getUTCDate() - 1);
+    return sun.toISOString().slice(0, 10);
+  }
+  const [y, m] = period.split("-").map(Number);
+  if (!y || !m) return period;
+  if (salaryType === "monthly_8th") {
+    // Pay on 8th of the current month (period is the month being displayed)
+    return `${y}-${String(m).padStart(2, "0")}-08`;
+  }
+  // monthly_1st: pay on 1st of next month
+  const nextMonth = m === 12 ? 1 : m + 1;
+  const nextYear = m === 12 ? y + 1 : y;
+  return `${nextYear}-${String(nextMonth).padStart(2, "0")}-01`;
+}
+
+/**
+ * Salary period description for display.
+ * - monthly_8th: 8th of prev month to 7th of current month
+ * - monthly_1st: 1st to last of current month
+ * - weekly: Mon to Sat of that week
+ */
+export function getSalaryPeriodLabel(salaryType: SalaryType, period: string): string {
+  if (salaryType === "weekly") return "Mon–Sat";
+  const [y, m] = period.split("-").map(Number);
+  if (!y || !m) return period;
+  if (salaryType === "monthly_8th") {
+    const prevMonth = m === 1 ? 12 : m - 1;
+    const prevYear = m === 1 ? y - 1 : y;
+    const lastDay = new Date(y, m - 1, 0).getDate();
+    return `8 ${new Date(prevYear, prevMonth - 1, 1).toLocaleString("en-IN", { month: "short" })} – 7 ${new Date(y, m - 1, 1).toLocaleString("en-IN", { month: "short" })}`;
+  }
+  const lastDay = new Date(y, m, 0).getDate();
+  return `1 – ${lastDay} ${new Date(y, m - 1, 1).toLocaleString("en-IN", { month: "short" })}`;
+}
+
+const FREE_HOLIDAYS_PER_MONTH = 1;
 
 /** Get week-ending date (Sunday) as YYYY-MM-DD for the week containing the given date */
 function getWeekEnding(dateStr: string): string {
@@ -203,23 +262,31 @@ export function getPayrollRowsForMonth(
   const monthMap = byMonth.get(monthYear);
   if (!monthMap || monthMap.size === 0) return [];
 
-  const salaryByCode = new Map<string, number>();
+  const empByCode = new Map<string, PayrollEmployee>();
   for (const e of payrollEmployees) {
-    salaryByCode.set(normalizeCode(e.employee_code), Number(e.monthly_salary) || 0);
+    empByCode.set(normalizeCode(e.employee_code), e);
   }
 
   const standardWD = getStandardWorkingDaysForMonth(monthYear);
   const rows: PayrollRow[] = [];
   for (const [, summary] of monthMap) {
     const code = normalizeCode(summary.code);
-    const salary = salaryByCode.get(code) ?? 0;
+    const emp = empByCode.get(code);
+    const salary = Number(emp?.monthly_salary) || 0;
+    const salaryType: SalaryType = (emp?.salary_type && emp.salary_type !== "weekly")
+      ? emp.salary_type
+      : "monthly_8th";
+
     const absentRaw = Math.max(0, summary.absent);
-    const absentForLop = Math.min(absentRaw, standardWD);
+    // Apply 1 free holiday per month — deduct from absent count before computing LOP
+    const absentAfterHoliday = Math.max(0, absentRaw - FREE_HOLIDAYS_PER_MONTH);
+    const absentForLop = Math.min(absentAfterHoliday, standardWD);
     const lossOfPay =
       standardWD > 0 && absentForLop > 0
         ? Math.round((Number(salary) * absentForLop) / standardWD)
         : 0;
     const netPay = Math.max(0, salary - lossOfPay);
+    const payDate = getPayDate(salaryType, monthYear);
 
     rows.push({
       code: summary.code,
@@ -231,10 +298,15 @@ export function getPayrollRowsForMonth(
       monthlySalary: salary,
       lossOfPay,
       netPay,
+      salaryType,
+      payDate,
     });
   }
 
-  return rows.sort((a, b) => a.name.localeCompare(b.name));
+  return rows.sort((a, b) => {
+    if (a.payDate !== b.payDate) return a.payDate.localeCompare(b.payDate);
+    return a.name.localeCompare(b.name);
+  });
 }
 
 /** Per-employee, per-week attendance summary (same shape as month for reuse) */
@@ -332,19 +404,29 @@ export function getPayrollRowsForWeek(
   const weekMap = byWeek.get(weekEnding);
   if (!weekMap || weekMap.size === 0) return [];
 
-  const salaryByCode = new Map<string, number>();
+  const empByCode = new Map<string, PayrollEmployee>();
   for (const e of payrollEmployees) {
-    const weekly = Number(e.weekly_salary) || 0;
-    const fromMonthly = Number(e.monthly_salary) || 0;
-    const effectiveWeekly = weekly > 0 ? weekly : (fromMonthly > 0 ? Math.round(fromMonthly / 4.33) : 0);
-    salaryByCode.set(normalizeCode(e.employee_code), effectiveWeekly);
+    empByCode.set(normalizeCode(e.employee_code), e);
   }
 
   const standardWD = getStandardWorkingDaysForWeekEnding(weekEnding);
+  const payDate = getPayDate("weekly", weekEnding);
   const rows: PayrollRowWeek[] = [];
+
   for (const [, summary] of weekMap) {
     const code = normalizeCode(summary.code);
-    const salary = salaryByCode.get(code) ?? 0;
+    const emp = empByCode.get(code);
+
+    // Only include weekly employees in the weekly payroll table
+    // If salary_type not set but has weekly_salary, treat as weekly
+    const isWeekly = emp?.salary_type === "weekly" ||
+      (!emp?.salary_type && (Number(emp?.weekly_salary) > 0));
+    if (emp && !isWeekly) continue;
+
+    const weekly = Number(emp?.weekly_salary) || 0;
+    const fromMonthly = Number(emp?.monthly_salary) || 0;
+    const salary = weekly > 0 ? weekly : (fromMonthly > 0 ? Math.round(fromMonthly / 4.33) : 0);
+
     const absentRaw = Math.max(0, summary.absent);
     const absentForLop = Math.min(absentRaw, standardWD);
     const lossOfPay =
@@ -363,6 +445,8 @@ export function getPayrollRowsForWeek(
       weeklySalary: salary,
       lossOfPay,
       netPay,
+      salaryType: "weekly",
+      payDate,
     });
   }
 
@@ -400,12 +484,14 @@ export function useUpsertPayrollEmployee() {
       display_name: string;
       monthly_salary: number;
       weekly_salary?: number;
+      salary_type?: SalaryType;
     }) => {
       const row = {
         employee_code: (payload.employee_code || "").trim(),
         display_name: (payload.display_name || "").trim(),
         monthly_salary: Number(payload.monthly_salary) || 0,
         weekly_salary: Number(payload.weekly_salary ?? 0) || 0,
+        salary_type: payload.salary_type ?? "monthly_8th",
         updated_at: new Date().toISOString(),
       };
       if (payload.id) {

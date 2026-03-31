@@ -64,7 +64,10 @@ import {
   getPayrollRowsForWeek,
   getStandardWorkingDaysForMonth,
   getStandardWorkingDaysForWeekEnding,
+  getSalaryPeriodLabel,
+  SALARY_TYPE_LABELS,
   type PayrollEmployee,
+  type SalaryType,
 } from "@/hooks/usePayroll";
 import { useStorageMode } from "@/hooks/useStorageMode";
 import { SharedDataBanner } from "@/components/SharedDataBanner";
@@ -100,6 +103,7 @@ export default function Attendance() {
   const [empName, setEmpName] = useState("");
   const [empSalary, setEmpSalary] = useState("");
   const [empWeeklySalary, setEmpWeeklySalary] = useState("");
+  const [empSalaryType, setEmpSalaryType] = useState<SalaryType>("monthly_8th");
 
   const byMonth = useMemo(() => aggregateAttendanceByMonth(uploads), [uploads]);
   const byWeek = useMemo(() => aggregateAttendanceByWeek(uploads), [uploads]);
@@ -658,6 +662,7 @@ export default function Attendance() {
                         setEmpName("");
                         setEmpSalary("");
                         setEmpWeeklySalary("");
+                        setEmpSalaryType("monthly_8th");
                       }}
                     >
                       <UserPlus className="h-4 w-4" />
@@ -671,7 +676,7 @@ export default function Attendance() {
                     <div className="space-y-2">
                       {selectedMonth && (
                         <p className="text-xs text-muted-foreground bg-muted/40 rounded-lg px-3 py-2 border border-border">
-                          <span className="font-medium text-foreground">{standardDaysMonth} working days</span> in {format(parseISO(selectedMonth + "-01"), "MMMM yyyy")} (Mon–Sat) — identical for all employees in this table.
+                          <span className="font-medium text-foreground">{standardDaysMonth} working days</span> in {format(parseISO(selectedMonth + "-01"), "MMMM yyyy")} (Mon–Sat). <span className="text-foreground font-medium">1 free holiday/month</span> applied — LOP calculated on absences minus 1. Rows sorted by pay date.
                         </p>
                       )}
                     <div className="overflow-x-auto rounded-xl border">
@@ -686,6 +691,7 @@ export default function Attendance() {
                             <th className="text-right p-3 font-semibold">Monthly salary (₹)</th>
                             <th className="text-right p-3 font-semibold text-red-600">Loss of pay (₹)</th>
                             <th className="text-right p-3 font-semibold text-primary">Net pay (₹)</th>
+                            <th className="text-center p-3 font-semibold text-orange-600">Pay Date</th>
                              <th className="w-20 p-2" />
                            </tr>
                          </thead>
@@ -693,13 +699,21 @@ export default function Attendance() {
                            {payrollRows.map((row, i) => (
                              <tr key={`${row.code}-${row.monthYear}-${i}`} className="border-b last:border-0 hover:bg-muted/30">
                                <td className="p-3 font-mono text-xs">{row.code}</td>
-                               <td className="p-3 font-medium">{row.name}</td>
+                               <td className="p-3 font-medium">
+                                 <div>{row.name}</div>
+                                 <div className="text-xs text-muted-foreground">{getSalaryPeriodLabel(row.salaryType, row.monthYear)}</div>
+                               </td>
                                <td className="p-3 text-center text-green-600">{row.present}</td>
                                <td className="p-3 text-center text-red-600">{row.absent}</td>
                                <td className="p-3 text-center">{row.workingDays}</td>
                                <td className="p-3 text-right font-medium">{row.monthlySalary > 0 ? row.monthlySalary.toLocaleString("en-IN") : "—"}</td>
                                <td className="p-3 text-right text-red-600">{row.lossOfPay > 0 ? row.lossOfPay.toLocaleString("en-IN") : "—"}</td>
                                <td className="p-3 text-right font-semibold text-primary">{row.netPay.toLocaleString("en-IN")}</td>
+                               <td className="p-3 text-center">
+                                 <span className="inline-flex items-center rounded-full bg-orange-50 px-2 py-0.5 text-xs font-medium text-orange-700 border border-orange-200">
+                                   {row.payDate ? format(parseISO(row.payDate), "dd MMM") : "—"}
+                                 </span>
+                               </td>
                                <td className="p-2">
                                  <div className="flex items-center gap-1">
                                    <Button
@@ -713,6 +727,7 @@ export default function Attendance() {
                                        setEmpName(existing?.display_name ?? row.name);
                                        setEmpSalary(existing ? String(existing.monthly_salary) : "");
                                        setEmpWeeklySalary(existing?.weekly_salary != null ? String(existing.weekly_salary) : "");
+                                       setEmpSalaryType(existing?.salary_type ?? "monthly_8th");
                                      }}
                                    >
                                      <Edit2 className="h-3.5 w-3.5 text-muted-foreground" />
@@ -757,11 +772,14 @@ export default function Attendance() {
                             <th className="text-right p-3 font-semibold">Weekly salary (₹)</th>
                             <th className="text-right p-3 font-semibold text-red-600">Loss of pay (₹)</th>
                             <th className="text-right p-3 font-semibold text-primary">Net pay (₹)</th>
+                            <th className="text-center p-3 font-semibold text-orange-600">Pay Date</th>
                              <th className="w-20 p-2" />
                            </tr>
                          </thead>
                          <tbody>
-                           {payrollRowsWeekly.map((row, i) => (
+                           {payrollRowsWeekly.length === 0 ? (
+                             <tr><td colSpan={10} className="p-6 text-center text-muted-foreground text-sm">No weekly employees found for this week. Set employees as "Weekly" in the payroll master.</td></tr>
+                           ) : payrollRowsWeekly.map((row, i) => (
                              <tr key={`${row.code}-${row.weekEnding}-${i}`} className="border-b last:border-0 hover:bg-muted/30">
                                <td className="p-3 font-mono text-xs">{row.code}</td>
                                <td className="p-3 font-medium">{row.name}</td>
@@ -771,6 +789,11 @@ export default function Attendance() {
                                <td className="p-3 text-right font-medium">{row.weeklySalary > 0 ? row.weeklySalary.toLocaleString("en-IN") : "—"}</td>
                                <td className="p-3 text-right text-red-600">{row.lossOfPay > 0 ? row.lossOfPay.toLocaleString("en-IN") : "—"}</td>
                                <td className="p-3 text-right font-semibold text-primary">{row.netPay.toLocaleString("en-IN")}</td>
+                               <td className="p-3 text-center">
+                                 <span className="inline-flex items-center rounded-full bg-orange-50 px-2 py-0.5 text-xs font-medium text-orange-700 border border-orange-200">
+                                   {row.payDate ? format(parseISO(row.payDate), "dd MMM") : "—"}
+                                 </span>
+                               </td>
                                <td className="p-2">
                                  <div className="flex items-center gap-1">
                                    <Button
@@ -782,12 +805,13 @@ export default function Attendance() {
                                        setEmployeeDialog({ open: true, edit: existing ?? undefined });
                                        setEmpCode(existing?.employee_code ?? row.code);
                                        setEmpName(existing?.display_name ?? row.name);
-                                       setEmpSalary(existing ? String(existing.monthly_salary) : "");
-                                       setEmpWeeklySalary(existing?.weekly_salary != null ? String(existing.weekly_salary) : "");
-                                     }}
-                                   >
-                                     <Edit2 className="h-3.5 w-3.5 text-muted-foreground" />
-                                   </Button>
+                                        setEmpSalary(existing ? String(existing.monthly_salary) : "");
+                                        setEmpWeeklySalary(existing?.weekly_salary != null ? String(existing.weekly_salary) : "");
+                                        setEmpSalaryType(existing?.salary_type ?? "weekly");
+                                      }}
+                                    >
+                                      <Edit2 className="h-3.5 w-3.5 text-muted-foreground" />
+                                    </Button>
                                     <Button
                                       variant="ghost"
                                       size="icon"
@@ -924,29 +948,46 @@ export default function Attendance() {
               />
             </div>
             <div className="grid gap-2">
-              <Label>Monthly salary (₹)</Label>
-              <Input
-                type="number"
-                min={0}
-                step={100}
-                value={empSalary}
-                onChange={(e) => setEmpSalary(e.target.value)}
-                placeholder="0"
-                className="rounded-xl"
-              />
+              <Label>Salary Type</Label>
+              <Select value={empSalaryType} onValueChange={(v) => setEmpSalaryType(v as SalaryType)}>
+                <SelectTrigger className="rounded-xl">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="monthly_8th">Monthly — paid on 8th (period: 8th prev → 7th current)</SelectItem>
+                  <SelectItem value="monthly_1st">Monthly — paid on 1st (period: 1st → last of month)</SelectItem>
+                  <SelectItem value="weekly">Weekly — paid every Saturday</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
-            <div className="grid gap-2">
-              <Label>Weekly salary (₹) — optional, for weekly payroll</Label>
-              <Input
-                type="number"
-                min={0}
-                step={100}
-                value={empWeeklySalary}
-                onChange={(e) => setEmpWeeklySalary(e.target.value)}
-                placeholder="0 or leave blank to use monthly ÷ 4.33"
-                className="rounded-xl"
-              />
-            </div>
+            {empSalaryType !== "weekly" ? (
+              <div className="grid gap-2">
+                <Label>Monthly salary (₹)</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  step={100}
+                  value={empSalary}
+                  onChange={(e) => setEmpSalary(e.target.value)}
+                  placeholder="0"
+                  className="rounded-xl"
+                />
+              </div>
+            ) : (
+              <div className="grid gap-2">
+                <Label>Weekly salary (₹)</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  step={100}
+                  value={empWeeklySalary}
+                  onChange={(e) => setEmpWeeklySalary(e.target.value)}
+                  placeholder="e.g. 3000"
+                  className="rounded-xl"
+                />
+                <p className="text-xs text-muted-foreground">If blank, calculated as monthly ÷ 4.33</p>
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button
@@ -966,8 +1007,9 @@ export default function Attendance() {
                   id: employeeDialog.edit?.id,
                   employee_code: (empCode || "").trim(),
                   display_name: (empName || "").trim(),
-                  monthly_salary: Number(empSalary) || 0,
-                  weekly_salary: Number(empWeeklySalary) || 0,
+                  monthly_salary: empSalaryType !== "weekly" ? Number(empSalary) || 0 : 0,
+                  weekly_salary: empSalaryType === "weekly" ? Number(empWeeklySalary) || 0 : 0,
+                  salary_type: empSalaryType,
                 });
                 setEmployeeDialog({ open: false });
               }}

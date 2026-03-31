@@ -74,21 +74,41 @@ describe("Payroll delete flow", () => {
     }
   });
 
-  it("net pay is correctly reduced for absent days", () => {
+  it("net pay is correctly reduced for absent days (2 absent - 1 free = 1 LOP day)", () => {
     const byMonth = aggregateAttendanceByMonth(mockUploads as any);
     const rows = getPayrollRowsForMonth(byMonth, mockPayrollEmployees, "2026-03");
     const rajan = rows.find((r) => r.code === "SP001");
     expect(rajan).toBeDefined();
+    // 2 absent - 1 free holiday = 1 day LOP
     expect(rajan!.lossOfPay).toBeGreaterThan(0);
     expect(rajan!.netPay).toBeLessThan(rajan!.monthlySalary);
   });
 
-  it("zero absent means full salary", () => {
+  it("zero absent means full salary (free holiday not consumed)", () => {
     const byMonth = aggregateAttendanceByMonth(mockUploads as any);
     const rows = getPayrollRowsForMonth(byMonth, mockPayrollEmployees, "2026-03");
     const priya = rows.find((r) => r.code === "SP002");
     expect(priya).toBeDefined();
     expect(priya!.lossOfPay).toBe(0);
     expect(priya!.netPay).toBe(priya!.monthlySalary);
+  });
+
+  it("1 absent with free holiday means no LOP", () => {
+    const uploads = [{
+      ...mockUploads[0],
+      parsed_data: {
+        ...mockUploads[0].parsed_data,
+        employees: [
+          { code: "SP001", name: "Rajan Kumar", totalAbsentDays: 1, absent_dates: [] },
+        ],
+      },
+    }];
+    const byMonth = aggregateAttendanceByMonth(uploads as any);
+    const rows = getPayrollRowsForMonth(byMonth, mockPayrollEmployees, "2026-03");
+    const rajan = rows.find((r) => r.code === "SP001");
+    expect(rajan).toBeDefined();
+    // 1 absent - 1 free holiday = 0 LOP
+    expect(rajan!.lossOfPay).toBe(0);
+    expect(rajan!.netPay).toBe(rajan!.monthlySalary);
   });
 });
