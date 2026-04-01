@@ -170,20 +170,52 @@ function parseAbsentDate(dayMonth: string, monthYear: string): string | null {
  * Aggregate all attendance uploads into per-month, per-employee stats.
  * Handles absent_list (totalAbsentDays only) and detailed_report (present/absent/weeklyOff).
  */
+// Priority: detailed_report > absent_list > generic
+function sourcePriority(source?: string): number {
+  if (source === "detailed_report") return 2;
+  if (source === "absent_list") return 1;
+  return 0;
+}
+
 export function aggregateAttendanceByMonth(uploads: AttendanceUpload[]): Map<string, Map<string, AttendanceMonthSummary>> {
   const byMonth = new Map<string, Map<string, AttendanceMonthSummary>>();
+  // Track which source priority was used per (monthYear, employeeCode) so a
+  // higher-quality source always wins and a same-quality second upload doesn't double-count.
+  const seenPriority = new Map<string, number>(); // key = `${monthYear}::${code}`
 
-  for (const u of uploads) {
+  // Sort uploads oldest→newest so newer uploads override older ones of same type
+  const sorted = [...uploads].sort((a, b) =>
+    (a.created_at || "").localeCompare(b.created_at || "")
+  );
+
+  for (const u of sorted) {
     const monthYear = u.month_year;
     if (!monthYear) continue;
     const data = u.parsed_data as AttendanceParsedData;
     if (!data?.employees?.length) continue;
+
+    const uploadPriority = sourcePriority(data.source_type);
 
     let monthMap = byMonth.get(monthYear);
     if (!monthMap) {
       monthMap = new Map();
       byMonth.set(monthYear, monthMap);
     }
+
+    const processEmployee = (code: string, name: string, present: number, absent: number, workingDays: number) => {
+      const seenKey = `${monthYear}::${code}`;
+      const prevPriority = seenPriority.get(seenKey) ?? -1;
+
+      if (uploadPriority > prevPriority) {
+        // Higher-quality source: replace existing entry entirely
+        monthMap!.set(code, { code, name, present, absent, workingDays });
+        seenPriority.set(seenKey, uploadPriority);
+      } else if (uploadPriority === prevPriority) {
+        // Same quality source but newer upload — replace (not add) to avoid double-count
+        monthMap!.set(code, { code, name, present, absent, workingDays });
+      }
+      // Lower priority: skip — better data already present
+    };
 
     if (data.source_type === "absent_list") {
       const absentData = data as AbsentListParsedData;
@@ -192,14 +224,7 @@ export function aggregateAttendanceByMonth(uploads: AttendanceUpload[]): Map<str
         const absent = emp.totalAbsentDays ?? 0;
         const workingDays = DEFAULT_WORKING_DAYS;
         const present = Math.max(0, workingDays - absent);
-        const existing = monthMap.get(code);
-        if (existing) {
-          existing.present += present;
-          existing.absent += absent;
-          existing.workingDays = Math.max(existing.workingDays, workingDays);
-        } else {
-          monthMap.set(code, { code: emp.code, name: emp.name || emp.code, present, absent, workingDays });
-        }
+        processEmployee(code, emp.name || emp.code, present, absent, workingDays);
       }
     } else if (data.source_type === "detailed_report") {
       const detailData = data as DetailedReportParsedData;
@@ -208,20 +233,7 @@ export function aggregateAttendanceByMonth(uploads: AttendanceUpload[]): Map<str
         const present = emp.present ?? 0;
         const absent = emp.absent ?? 0;
         const workingDays = present + absent || DEFAULT_WORKING_DAYS;
-        const existing = monthMap.get(code);
-        if (existing) {
-          existing.present += present;
-          existing.absent += absent;
-          existing.workingDays = Math.max(existing.workingDays, workingDays);
-        } else {
-          monthMap.set(code, {
-            code: emp.code,
-            name: emp.name || emp.code,
-            present,
-            absent,
-            workingDays,
-          });
-        }
+        processEmployee(code, emp.name || emp.code, present, absent, workingDays);
       }
     } else {
       const employees = data.employees as Array<{ name: string; present?: number; absent?: number; code?: string }>;
@@ -230,20 +242,7 @@ export function aggregateAttendanceByMonth(uploads: AttendanceUpload[]): Map<str
         const present = emp.present ?? 0;
         const absent = emp.absent ?? 0;
         const workingDays = present + absent || DEFAULT_WORKING_DAYS;
-        const existing = monthMap.get(code);
-        if (existing) {
-          existing.present += present;
-          existing.absent += absent;
-          existing.workingDays = Math.max(existing.workingDays, workingDays);
-        } else {
-          monthMap.set(code, {
-            code: emp.code ?? "",
-            name: emp.name || code,
-            present,
-            absent,
-            workingDays,
-          });
-        }
+        processEmployee(code, emp.code ?? emp.name ?? "", present, absent, workingDays);
       }
     }
   }
@@ -272,6 +271,10 @@ export function getPayrollRowsForMonth(
   for (const [, summary] of monthMap) {
     const code = normalizeCode(summary.code);
     const emp = empByCode.get(code);
+
+    // Skip weekly employees — they belong in the weekly payroll table only
+    if (emp?.salary_type === "weekly") continue;
+
     const salary = Number(emp?.monthly_salary) || 0;
     const salaryType: SalaryType = (emp?.salary_type && emp.salary_type !== "weekly")
       ? emp.salary_type
@@ -318,48 +321,61 @@ export type AttendanceWeekSummary = AttendanceMonthSummary;
  */
 export function aggregateAttendanceByWeek(uploads: AttendanceUpload[]): Map<string, Map<string, AttendanceWeekSummary>> {
   const byWeek = new Map<string, Map<string, AttendanceWeekSummary>>();
+  // Track source priority per (weekKey, employeeCode) to avoid double-counting
+  const seenPriority = new Map<string, number>(); // key = `${weekKey}::${code}`
 
-  for (const u of uploads) {
+  // Sort oldest → newest so newer uploads of same type override older ones
+  const sorted = [...uploads].sort((a, b) =>
+    (a.created_at || "").localeCompare(b.created_at || "")
+  );
+
+  for (const u of sorted) {
     const data = u.parsed_data as AttendanceParsedData;
     if (!data?.employees?.length) continue;
+
+    const uploadPriority = sourcePriority(data.source_type);
 
     if (data.source_type === "detailed_report") {
       const detailData = data as DetailedReportParsedData;
       for (const emp of detailData.employees) {
         const days = emp.days ?? [];
+        const code = normalizeCode(emp.code);
+
+        // Group days by week first
+        const weekDays = new Map<string, { present: number; absent: number; workingDays: number }>();
         for (const d of days) {
           const dateStr = d.date;
           if (!dateStr) continue;
           const weekKey = getWeekEnding(dateStr);
-          let weekMap = byWeek.get(weekKey);
-          if (!weekMap) {
-            weekMap = new Map();
-            byWeek.set(weekKey, weekMap);
-          }
-          const code = normalizeCode(emp.code);
           const isPresent = /present/i.test(d.status);
           const isAbsent = /absent/i.test(d.status);
-          const existing = weekMap.get(code);
-          if (!existing) {
-            weekMap.set(code, {
-              code: emp.code,
-              name: emp.name || emp.code,
-              present: isPresent ? 1 : 0,
-              absent: isAbsent ? 1 : 0,
-              workingDays: (isPresent || isAbsent) ? 1 : 0,
-            });
-          } else {
-            if (isPresent) existing.present += 1;
-            if (isAbsent) existing.absent += 1;
-            if (isPresent || isAbsent) existing.workingDays += 1;
-          }
+          const entry = weekDays.get(weekKey) ?? { present: 0, absent: 0, workingDays: 0 };
+          if (isPresent) entry.present += 1;
+          if (isAbsent) entry.absent += 1;
+          if (isPresent || isAbsent) entry.workingDays += 1;
+          weekDays.set(weekKey, entry);
+        }
+
+        for (const [weekKey, stats] of weekDays) {
+          const seenKey = `${weekKey}::${code}`;
+          const prevPriority = seenPriority.get(seenKey) ?? -1;
+          if (uploadPriority < prevPriority) continue; // worse source, skip
+
+          let weekMap = byWeek.get(weekKey);
+          if (!weekMap) { weekMap = new Map(); byWeek.set(weekKey, weekMap); }
+
+          // Replace (not add) to avoid double-counting
+          weekMap.set(code, { code: emp.code, name: emp.name || emp.code, ...stats });
+          seenPriority.set(seenKey, uploadPriority);
         }
       }
     } else if (data.source_type === "absent_list") {
       const absentData = data as AbsentListParsedData;
       const monthYear = data.month_year;
       if (!monthYear) continue;
+
       for (const emp of absentData.employees) {
+        const code = normalizeCode(emp.code);
         const absentDates = emp.absentDates ?? [];
         const weekAbsent = new Map<string, number>();
         for (const dayMonth of absentDates) {
@@ -368,23 +384,19 @@ export function aggregateAttendanceByWeek(uploads: AttendanceUpload[]): Map<stri
           const weekKey = getWeekEnding(fullDate);
           weekAbsent.set(weekKey, (weekAbsent.get(weekKey) ?? 0) + 1);
         }
+
         for (const [weekKey, absent] of weekAbsent) {
+          const seenKey = `${weekKey}::${code}`;
+          const prevPriority = seenPriority.get(seenKey) ?? -1;
+          if (uploadPriority < prevPriority) continue; // better source already present, skip
+
           let weekMap = byWeek.get(weekKey);
-          if (!weekMap) {
-            weekMap = new Map();
-            byWeek.set(weekKey, weekMap);
-          }
-          const code = normalizeCode(emp.code);
+          if (!weekMap) { weekMap = new Map(); byWeek.set(weekKey, weekMap); }
+
           const workingDays = DEFAULT_WORKING_DAYS_PER_WEEK;
           const present = Math.max(0, workingDays - absent);
-          const existing = weekMap.get(code);
-          if (existing) {
-            existing.present += present;
-            existing.absent += absent;
-            existing.workingDays = Math.max(existing.workingDays, workingDays);
-          } else {
-            weekMap.set(code, { code: emp.code, name: emp.name || emp.code, present, absent, workingDays });
-          }
+          weekMap.set(code, { code: emp.code, name: emp.name || emp.code, present, absent, workingDays });
+          seenPriority.set(seenKey, uploadPriority);
         }
       }
     }
@@ -593,6 +605,7 @@ export function useBulkUpsertPayrollEmployees() {
         display_name: (r.display_name || "").trim(),
         monthly_salary: Number(r.monthly_salary) || 0,
         weekly_salary: Number(r.weekly_salary) || 0,
+        salary_type: "monthly_8th",
         updated_at: new Date().toISOString(),
       }));
       const { data, error } = await supabase.from("payroll_employees").upsert(payload, { onConflict: "employee_code" }).select();

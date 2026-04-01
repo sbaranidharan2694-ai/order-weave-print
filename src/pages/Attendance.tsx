@@ -186,6 +186,20 @@ export default function Attendance() {
         return;
       }
       const resolvedMonth = parsed.month_year || new Date().toISOString().slice(0, 7);
+
+      // Check for duplicate uploads of the same month + source type
+      const newSourceType = (parsed as any).source_type ?? "unknown";
+      const existingDupe = uploads.find(
+        (u) =>
+          u.month_year === resolvedMonth &&
+          (u.parsed_data as any)?.source_type === newSourceType
+      );
+      if (existingDupe) {
+        // Delete old upload before inserting new one to avoid duplication
+        await deleteUpload.mutateAsync(existingDupe.id);
+        toast.info(`Replaced previous ${newSourceType === "detailed_report" ? "detailed report" : "absent list"} for ${resolvedMonth}.`);
+      }
+
       await saveUpload.mutateAsync({
         month_year: resolvedMonth,
         file_name: file.name,

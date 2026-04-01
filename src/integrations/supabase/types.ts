@@ -615,6 +615,7 @@ export type Database = {
           employee_code: string
           id: string
           monthly_salary: number
+          salary_type: string
           updated_at: string
           weekly_salary: number
         }
@@ -624,6 +625,7 @@ export type Database = {
           employee_code: string
           id?: string
           monthly_salary?: number
+          salary_type?: string
           updated_at?: string
           weekly_salary?: number
         }
@@ -633,6 +635,7 @@ export type Database = {
           employee_code?: string
           id?: string
           monthly_salary?: number
+          salary_type?: string
           updated_at?: string
           weekly_salary?: number
         }
