@@ -115,14 +115,11 @@ export function getPayDate(salaryType: SalaryType, period: string): string {
   }
   const [y, m] = period.split("-").map(Number);
   if (!y || !m) return period;
-  if (salaryType === "monthly_8th") {
-    // Pay on 8th of the current month (period is the month being displayed)
-    return `${y}-${String(m).padStart(2, "0")}-08`;
-  }
-  // monthly_1st: pay on 1st of next month
+  // Both monthly types pay in the NEXT month after the attendance period
   const nextMonth = m === 12 ? 1 : m + 1;
   const nextYear = m === 12 ? y + 1 : y;
-  return `${nextYear}-${String(nextMonth).padStart(2, "0")}-01`;
+  const day = salaryType === "monthly_8th" ? "08" : "01";
+  return `${nextYear}-${String(nextMonth).padStart(2, "0")}-${day}`;
 }
 
 /**
