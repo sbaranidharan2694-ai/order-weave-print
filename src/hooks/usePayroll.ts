@@ -280,7 +280,10 @@ export function getPayrollRowsForMonth(
       ? emp.salary_type
       : "monthly_8th";
 
-    const absentRaw = Math.max(0, summary.absent);
+    // Cap absent to standardWD to prevent impossible values from bad/duplicate PDF data
+    const absentRaw = Math.min(Math.max(0, summary.absent), standardWD);
+    // Present = working days minus absent (capped), regardless of what PDF says
+    const presentCapped = Math.max(0, standardWD - absentRaw);
     // Apply 1 free holiday per month — deduct from absent count before computing LOP
     const absentAfterHoliday = Math.max(0, absentRaw - FREE_HOLIDAYS_PER_MONTH);
     const absentForLop = Math.min(absentAfterHoliday, standardWD);
@@ -295,7 +298,7 @@ export function getPayrollRowsForMonth(
       code: summary.code,
       name: summary.name,
       monthYear,
-      present: summary.present,
+      present: presentCapped,
       absent: absentRaw,
       workingDays: standardWD,
       monthlySalary: salary,
@@ -439,7 +442,8 @@ export function getPayrollRowsForWeek(
     const fromMonthly = Number(emp?.monthly_salary) || 0;
     const salary = weekly > 0 ? weekly : (fromMonthly > 0 ? Math.round(fromMonthly / 4.33) : 0);
 
-    const absentRaw = Math.max(0, summary.absent);
+    const absentRaw = Math.min(Math.max(0, summary.absent), standardWD);
+    const presentCappedW = Math.max(0, standardWD - absentRaw);
     const absentForLop = Math.min(absentRaw, standardWD);
     const lossOfPay =
       standardWD > 0 && absentForLop > 0
@@ -451,7 +455,7 @@ export function getPayrollRowsForWeek(
       code: summary.code,
       name: summary.name,
       weekEnding,
-      present: summary.present,
+      present: presentCappedW,
       absent: absentRaw,
       workingDays: standardWD,
       weeklySalary: salary,
