@@ -569,42 +569,94 @@ export default function Attendance() {
                         <th className="text-left p-3 font-semibold">Name</th>
                         <th className="text-right p-3 font-semibold">Monthly salary (₹)</th>
                         <th className="text-right p-3 font-semibold">Weekly salary (₹)</th>
+                        <th className="text-right p-3 font-semibold text-amber-600">Advance given (₹)</th>
+                        <th className="text-right p-3 font-semibold text-green-700">Advance paid (₹)</th>
+                        <th className="text-right p-3 font-semibold text-red-600">Outstanding (₹)</th>
+                        <th className="text-center p-3 font-semibold text-amber-600">Monthly deduction</th>
                         <th className="w-20 p-2" />
                       </tr>
                     </thead>
                     <tbody>
-                      {payrollEmployees.map((emp) => (
-                        <tr key={emp.id} className="border-b last:border-0 hover:bg-muted/30">
-                          <td className="p-3 font-mono text-xs">{emp.employee_code}</td>
-                          <td className="p-3 font-medium">{emp.display_name}</td>
-                          <td className="p-3 text-right">{emp.monthly_salary > 0 ? emp.monthly_salary.toLocaleString("en-IN") : "—"}</td>
-                          <td className="p-3 text-right">{emp.weekly_salary ? emp.weekly_salary.toLocaleString("en-IN") : "—"}</td>
-                          <td className="p-2 flex items-center gap-1">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8"
-                              onClick={() => {
-                                setEmployeeDialog({ open: true, edit: emp });
-                                setEmpCode(emp.employee_code);
-                                setEmpName(emp.display_name);
-                                setEmpSalary(String(emp.monthly_salary));
-                                setEmpWeeklySalary(emp.weekly_salary != null ? String(emp.weekly_salary) : "");
-                              }}
-                            >
-                              <Edit2 className="h-3.5 w-3.5 text-muted-foreground" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8 text-destructive hover:text-destructive"
-                              onClick={() => setDeleteEmployeeId(emp.id)}
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </Button>
-                          </td>
-                        </tr>
-                      ))}
+                      {payrollEmployees.map((emp) => {
+                        const code = (emp.employee_code || "").trim().toUpperCase();
+                        const empAdvances = employeeAdvances.filter(
+                          (a) => (a.employee_code || "").trim().toUpperCase() === code
+                        );
+                        const totalGiven = empAdvances.reduce((s, a) => s + a.amount, 0);
+                        const totalPaid = empAdvances.reduce((s, a) => s + a.amount_paid, 0);
+                        const outstanding = totalGiven - totalPaid;
+                        return (
+                          <tr key={emp.id} className="border-b last:border-0 hover:bg-muted/30">
+                            <td className="p-3 font-mono text-xs">{emp.employee_code}</td>
+                            <td className="p-3 font-medium">{emp.display_name}</td>
+                            <td className="p-3 text-right">{emp.monthly_salary > 0 ? emp.monthly_salary.toLocaleString("en-IN") : "—"}</td>
+                            <td className="p-3 text-right">{emp.weekly_salary ? emp.weekly_salary.toLocaleString("en-IN") : "—"}</td>
+                            <td className="p-3 text-right text-amber-600 font-medium">
+                              {totalGiven > 0 ? totalGiven.toLocaleString("en-IN") : <span className="text-muted-foreground">—</span>}
+                            </td>
+                            <td className="p-3 text-right text-green-700 font-medium">
+                              {totalPaid > 0 ? totalPaid.toLocaleString("en-IN") : <span className="text-muted-foreground">—</span>}
+                            </td>
+                            <td className="p-3 text-right font-semibold">
+                              {outstanding > 0 ? (
+                                <span className="text-red-600">{outstanding.toLocaleString("en-IN")}</span>
+                              ) : totalGiven > 0 ? (
+                                <span className="text-green-700">Cleared</span>
+                              ) : (
+                                <span className="text-muted-foreground">—</span>
+                              )}
+                            </td>
+                            <td className="p-3 text-center">
+                              {outstanding > 0 ? (
+                                <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 border border-amber-200">
+                                  ₹{Math.min(outstanding, ADVANCE_MONTHLY_DEDUCTION).toLocaleString("en-IN")}/month
+                                </span>
+                              ) : (
+                                <span className="text-muted-foreground text-xs">—</span>
+                              )}
+                            </td>
+                            <td className="p-2">
+                              <div className="flex items-center gap-1">
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8"
+                                  onClick={() => {
+                                    setEmployeeDialog({ open: true, edit: emp });
+                                    setEmpCode(emp.employee_code);
+                                    setEmpName(emp.display_name);
+                                    setEmpSalary(String(emp.monthly_salary));
+                                    setEmpWeeklySalary(emp.weekly_salary != null ? String(emp.weekly_salary) : "");
+                                  }}
+                                >
+                                  <Edit2 className="h-3.5 w-3.5 text-muted-foreground" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8"
+                                  title="Grant advance"
+                                  onClick={() => {
+                                    setAdvanceDialog({ open: true, employeeCode: emp.employee_code, employeeName: emp.display_name });
+                                    setAdvanceAmount("");
+                                    setAdvanceDate(new Date().toISOString().slice(0, 10));
+                                  }}
+                                >
+                                  <DollarSign className="h-3.5 w-3.5 text-amber-600" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8 text-destructive hover:text-destructive"
+                                  onClick={() => setDeleteEmployeeId(emp.id)}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </Button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
