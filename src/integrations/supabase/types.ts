@@ -14,36 +14,6 @@ export type Database = {
   }
   public: {
     Tables: {
-      employee_advances: {
-        Row: {
-          id: string
-          employee_code: string
-          amount: number
-          granted_on: string
-          amount_paid: number
-          created_at: string
-          updated_at: string
-        }
-        Insert: {
-          id?: string
-          employee_code: string
-          amount: number
-          granted_on?: string
-          amount_paid?: number
-          created_at?: string
-          updated_at?: string
-        }
-        Update: {
-          id?: string
-          employee_code?: string
-          amount?: number
-          granted_on?: string
-          amount_paid?: number
-          created_at?: string
-          updated_at?: string
-        }
-        Relationships: []
-      }
       attendance_uploads: {
         Row: {
           created_at: string
@@ -645,7 +615,6 @@ export type Database = {
           employee_code: string
           id: string
           monthly_salary: number
-          salary_type: string
           updated_at: string
           weekly_salary: number
         }
@@ -655,7 +624,6 @@ export type Database = {
           employee_code: string
           id?: string
           monthly_salary?: number
-          salary_type?: string
           updated_at?: string
           weekly_salary?: number
         }
@@ -665,7 +633,6 @@ export type Database = {
           employee_code?: string
           id?: string
           monthly_salary?: number
-          salary_type?: string
           updated_at?: string
           weekly_salary?: number
         }
