@@ -24,8 +24,8 @@ const mockUploads = [
 ];
 
 const mockPayrollEmployees: PayrollEmployee[] = [
-  { id: "e1", employee_code: "SP001", display_name: "Rajan Kumar", monthly_salary: 18000, weekly_salary: 4500, updated_at: "" },
-  { id: "e2", employee_code: "SP002", display_name: "Priya S", monthly_salary: 20000, weekly_salary: 5000, updated_at: "" },
+  { id: "e1", employee_code: "SP001", display_name: "Rajan Kumar", monthly_salary: 18000, weekly_salary: 4500, created_at: "", updated_at: "" },
+  { id: "e2", employee_code: "SP002", display_name: "Priya S", monthly_salary: 20000, weekly_salary: 5000, created_at: "", updated_at: "" },
 ];
 
 describe("Payroll delete flow", () => {

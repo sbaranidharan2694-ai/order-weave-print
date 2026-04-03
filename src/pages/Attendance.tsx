@@ -57,6 +57,8 @@ import {
   useUpsertPayrollEmployee,
   useDeletePayrollEmployee,
   useBulkUpsertPayrollEmployees,
+  useEmployeeAdvances,
+  useGrantAdvance,
   parseEmployeesFromPdfText,
   aggregateAttendanceByMonth,
   getPayrollRowsForMonth,
@@ -66,6 +68,7 @@ import {
   getStandardWorkingDaysForWeekEnding,
   getSalaryPeriodLabel,
   SALARY_TYPE_LABELS,
+  ADVANCE_MONTHLY_DEDUCTION,
   type PayrollEmployee,
   type SalaryType,
 } from "@/hooks/usePayroll";
@@ -85,10 +88,12 @@ export default function Attendance() {
   const saveUpload = useSaveAttendanceUpload();
   const deleteUpload = useDeleteAttendanceUpload();
   const { data: payrollEmployees = [], isLoading: payrollLoading } = usePayrollEmployees();
+  const { data: employeeAdvances = [] } = useEmployeeAdvances();
   const upsertPayroll = useUpsertPayrollEmployee();
   const deletePayrollEmployee = useDeletePayrollEmployee();
   const removeEmployeeEverywhere = useRemoveEmployeeEverywhere();
   const bulkUpsertPayroll = useBulkUpsertPayrollEmployees();
+  const grantAdvance = useGrantAdvance();
   const [uploading, setUploading] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [deleteEmployeeId, setDeleteEmployeeId] = useState<string | null>(null);
@@ -104,6 +109,9 @@ export default function Attendance() {
   const [empSalary, setEmpSalary] = useState("");
   const [empWeeklySalary, setEmpWeeklySalary] = useState("");
   const [empSalaryType, setEmpSalaryType] = useState<SalaryType>("monthly_8th");
+  const [advanceDialog, setAdvanceDialog] = useState<{ open: boolean; employeeCode?: string; employeeName?: string }>({ open: false });
+  const [advanceAmount, setAdvanceAmount] = useState("");
+  const [advanceDate, setAdvanceDate] = useState("");
 
   const byMonth = useMemo(() => aggregateAttendanceByMonth(uploads), [uploads]);
   const byWeek = useMemo(() => aggregateAttendanceByWeek(uploads), [uploads]);
@@ -118,8 +126,8 @@ export default function Attendance() {
   const weeklySummaries = useWeeklyHours(uploads, selectedHoursMonth);
 
   const payrollRows = useMemo(
-    () => getPayrollRowsForMonth(byMonth, payrollEmployees, selectedMonth),
-    [byMonth, payrollEmployees, selectedMonth]
+    () => getPayrollRowsForMonth(byMonth, payrollEmployees, selectedMonth, employeeAdvances),
+    [byMonth, payrollEmployees, selectedMonth, employeeAdvances]
   );
   const payrollRowsWeekly = useMemo(
     () => getPayrollRowsForWeek(byWeek, payrollEmployees, selectedWeek),
@@ -128,6 +136,7 @@ export default function Attendance() {
 
   const totalNetPay = useMemo(() => payrollRows.reduce((s, r) => s + r.netPay, 0), [payrollRows]);
   const totalLossOfPay = useMemo(() => payrollRows.reduce((s, r) => s + r.lossOfPay, 0), [payrollRows]);
+  const totalAdvanceDeduction = useMemo(() => payrollRows.reduce((s, r) => s + r.advanceDeduction, 0), [payrollRows]);
   const totalNetPayWeekly = useMemo(() => payrollRowsWeekly.reduce((s, r) => s + r.netPay, 0), [payrollRowsWeekly]);
   const totalLossOfPayWeekly = useMemo(() => payrollRowsWeekly.reduce((s, r) => s + r.lossOfPay, 0), [payrollRowsWeekly]);
 
@@ -697,17 +706,18 @@ export default function Attendance() {
                       <table className="w-full text-sm">
                         <thead>
                           <tr className="border-b bg-muted/50">
-                            <th className="text-left p-3 font-semibold">Code</th>
-                            <th className="text-left p-3 font-semibold">Name</th>
-                            <th className="text-center p-3 font-semibold text-green-600">Present</th>
-                            <th className="text-center p-3 font-semibold text-red-600">Absent</th>
-                            <th className="text-center p-3 font-semibold" title="Mon–Sat count in month">Working days</th>
-                            <th className="text-right p-3 font-semibold">Monthly salary (₹)</th>
-                            <th className="text-right p-3 font-semibold text-red-600">Loss of pay (₹)</th>
-                            <th className="text-right p-3 font-semibold text-primary">Net pay (₹)</th>
-                            <th className="text-center p-3 font-semibold text-orange-600">Pay Date</th>
-                             <th className="w-20 p-2" />
-                           </tr>
+                             <th className="text-left p-3 font-semibold">Code</th>
+                             <th className="text-left p-3 font-semibold">Name</th>
+                             <th className="text-center p-3 font-semibold text-green-600">Present</th>
+                             <th className="text-center p-3 font-semibold text-red-600">Absent</th>
+                             <th className="text-center p-3 font-semibold" title="Mon–Sat count in month">Working days</th>
+                             <th className="text-right p-3 font-semibold">Monthly salary (₹)</th>
+                             <th className="text-right p-3 font-semibold text-red-600">Loss of pay (₹)</th>
+                             <th className="text-right p-3 font-semibold text-amber-600" title={`₹${ADVANCE_MONTHLY_DEDUCTION.toLocaleString("en-IN")} deducted/month until advance is cleared`}>Advance (₹)</th>
+                             <th className="text-right p-3 font-semibold text-primary">Net pay (₹)</th>
+                             <th className="text-center p-3 font-semibold text-orange-600">Pay Date</th>
+                              <th className="w-20 p-2" />
+                            </tr>
                          </thead>
                          <tbody>
                            {payrollRows.map((row, i) => (
@@ -722,44 +732,62 @@ export default function Attendance() {
                                <td className="p-3 text-center">{row.workingDays}</td>
                                <td className="p-3 text-right font-medium">{row.monthlySalary > 0 ? row.monthlySalary.toLocaleString("en-IN") : "—"}</td>
                                <td className="p-3 text-right text-red-600">{row.lossOfPay > 0 ? row.lossOfPay.toLocaleString("en-IN") : "—"}</td>
+                               <td className="p-3 text-right text-amber-600 font-medium">
+                                 {row.advanceDeduction > 0 ? (
+                                   <button
+                                     className="underline decoration-dotted cursor-pointer hover:text-amber-800"
+                                     title="Click to grant advance"
+                                     onClick={() => { setAdvanceDialog({ open: true, employeeCode: row.code, employeeName: row.name }); setAdvanceAmount(""); setAdvanceDate(new Date().toISOString().slice(0, 10)); }}
+                                   >
+                                     {row.advanceDeduction.toLocaleString("en-IN")}
+                                   </button>
+                                 ) : (
+                                   <button
+                                     className="text-muted-foreground hover:text-amber-600 text-xs underline decoration-dotted cursor-pointer"
+                                     onClick={() => { setAdvanceDialog({ open: true, employeeCode: row.code, employeeName: row.name }); setAdvanceAmount(""); setAdvanceDate(new Date().toISOString().slice(0, 10)); }}
+                                   >
+                                     Grant
+                                   </button>
+                                 )}
+                               </td>
                                <td className="p-3 text-right font-semibold text-primary">{row.netPay.toLocaleString("en-IN")}</td>
                                <td className="p-3 text-center">
-                                 <span className="inline-flex items-center rounded-full bg-orange-50 px-2 py-0.5 text-xs font-medium text-orange-700 border border-orange-200">
-                                   {row.payDate ? format(parseISO(row.payDate), "dd MMM") : "—"}
-                                 </span>
-                               </td>
-                               <td className="p-2">
-                                 <div className="flex items-center gap-1">
-                                   <Button
-                                     variant="ghost"
-                                     size="icon"
-                                     className="h-8 w-8"
-                                     onClick={() => {
-                                       const existing = payrollEmpByCode.get((row.code || "").trim().toUpperCase());
-                                       setEmployeeDialog({ open: true, edit: existing ?? undefined });
-                                       setEmpCode(existing?.employee_code ?? row.code);
-                                       setEmpName(existing?.display_name ?? row.name);
-                                       setEmpSalary(existing ? String(existing.monthly_salary) : "");
-                                       setEmpWeeklySalary(existing?.weekly_salary != null ? String(existing.weekly_salary) : "");
-                                       setEmpSalaryType(existing?.salary_type ?? "monthly_8th");
-                                     }}
-                                   >
-                                     <Edit2 className="h-3.5 w-3.5 text-muted-foreground" />
-                                   </Button>
-                                   <Button
-                                     variant="ghost"
-                                     size="icon"
-                                     className="h-8 w-8 text-red-500 hover:text-red-700 hover:bg-red-50"
-                                     onClick={() => {
-                                       const existing = payrollEmpByCode.get((row.code || "").trim().toUpperCase());
-                                       setDeleteEmployeeName(existing?.display_name || row.name || row.code);
-                                       setDeleteEmployeeCode(row.code || "");
-                                       setDeleteEmployeeId(existing?.id ?? `attendance-only::${row.code}`);
-                                     }}
-                                   >
-                                     <Trash2 className="h-3.5 w-3.5" />
-                                   </Button>
-                                 </div>
+                                  <span className="inline-flex items-center rounded-full bg-orange-50 px-2 py-0.5 text-xs font-medium text-orange-700 border border-orange-200">
+                                    {row.payDate ? format(parseISO(row.payDate), "dd MMM") : "—"}
+                                  </span>
+                                </td>
+                                <td className="p-2">
+                                  <div className="flex items-center gap-1">
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-8 w-8"
+                                      onClick={() => {
+                                        const existing = payrollEmpByCode.get((row.code || "").trim().toUpperCase());
+                                        setEmployeeDialog({ open: true, edit: existing ?? undefined });
+                                        setEmpCode(existing?.employee_code ?? row.code);
+                                        setEmpName(existing?.display_name ?? row.name);
+                                        setEmpSalary(existing ? String(existing.monthly_salary) : "");
+                                        setEmpWeeklySalary(existing?.weekly_salary != null ? String(existing.weekly_salary) : "");
+                                        setEmpSalaryType(existing?.salary_type ?? "monthly_8th");
+                                      }}
+                                    >
+                                      <Edit2 className="h-3.5 w-3.5 text-muted-foreground" />
+                                    </Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-8 w-8 text-red-500 hover:text-red-700 hover:bg-red-50"
+                                      onClick={() => {
+                                        const existing = payrollEmpByCode.get((row.code || "").trim().toUpperCase());
+                                        setDeleteEmployeeName(existing?.display_name || row.name || row.code);
+                                        setDeleteEmployeeCode(row.code || "");
+                                        setDeleteEmployeeId(existing?.id ?? `attendance-only::${row.code}`);
+                                      }}
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    </Button>
+                                  </div>
                                </td>
                              </tr>
                            ))}
@@ -854,6 +882,11 @@ export default function Attendance() {
                       <span className="text-muted-foreground">
                         Total loss of pay: <strong className="text-red-600">₹{totalLossOfPay.toLocaleString("en-IN")}</strong>
                       </span>
+                      {totalAdvanceDeduction > 0 && (
+                        <span className="text-muted-foreground">
+                          Total advance deduction: <strong className="text-amber-600">₹{totalAdvanceDeduction.toLocaleString("en-IN")}</strong>
+                        </span>
+                      )}
                       <span className="text-muted-foreground">
                         Total to pay: <strong className="text-primary">₹{totalNetPay.toLocaleString("en-IN")}</strong>
                       </span>
@@ -929,6 +962,63 @@ export default function Attendance() {
           )}
         </TabsContent>
       </Tabs>
+
+      <Dialog
+        open={advanceDialog.open}
+        onOpenChange={(o) => setAdvanceDialog((p) => ({ ...p, open: o }))}
+      >
+        <DialogContent className="rounded-2xl sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Grant Advance</DialogTitle>
+            <DialogDescription>
+              Grant a salary advance to <strong>{advanceDialog.employeeName ?? advanceDialog.employeeCode}</strong>. ₹{ADVANCE_MONTHLY_DEDUCTION.toLocaleString("en-IN")} will be deducted each month starting the <em>next</em> month until fully recovered.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-2">
+            <div className="grid gap-2">
+              <Label>Advance amount (₹)</Label>
+              <Input
+                type="number"
+                min={1}
+                step={500}
+                value={advanceAmount}
+                onChange={(e) => setAdvanceAmount(e.target.value)}
+                placeholder="e.g. 10000"
+                className="rounded-xl"
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label>Date granted</Label>
+              <Input
+                type="date"
+                value={advanceDate}
+                onChange={(e) => setAdvanceDate(e.target.value)}
+                className="rounded-xl"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAdvanceDialog({ open: false })}>Cancel</Button>
+            <Button
+              className="rounded-xl"
+              disabled={grantAdvance.isPending}
+              onClick={async () => {
+                const amt = Number(advanceAmount);
+                if (!amt || amt <= 0) { toast.error("Enter a valid advance amount"); return; }
+                if (!advanceDialog.employeeCode) return;
+                await grantAdvance.mutateAsync({
+                  employee_code: advanceDialog.employeeCode,
+                  amount: amt,
+                  granted_on: advanceDate || new Date().toISOString().slice(0, 10),
+                });
+                setAdvanceDialog({ open: false });
+              }}
+            >
+              {grantAdvance.isPending ? "Saving…" : "Grant Advance"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={employeeDialog.open}

@@ -31,6 +31,18 @@ export type AttendanceMonthSummary = {
   workingDays: number;
 };
 
+export type EmployeeAdvance = {
+  id: string;
+  employee_code: string;
+  amount: number;
+  granted_on: string;
+  amount_paid: number;
+  created_at: string;
+  updated_at: string;
+};
+
+const ADVANCE_MONTHLY_DEDUCTION = 2000;
+
 /** One row in the payroll table (monthly): attendance + salary + computed pay */
 export type PayrollRow = {
   code: string;
@@ -41,6 +53,7 @@ export type PayrollRow = {
   workingDays: number;
   monthlySalary: number;
   lossOfPay: number;
+  advanceDeduction: number;
   netPay: number;
   salaryType: SalaryType;
   payDate: string;
@@ -250,10 +263,33 @@ export function aggregateAttendanceByMonth(uploads: AttendanceUpload[]): Map<str
 /**
  * Build payroll table rows for a given month: attendance + salary + loss of pay + net pay.
  */
+export function getAdvanceDeductionForMonth(
+  advances: EmployeeAdvance[],
+  employeeCode: string,
+  monthYear: string
+): number {
+  const code = normalizeCode(employeeCode);
+  const [y, m] = monthYear.split("-").map(Number);
+  if (!y || !m) return 0;
+  const periodStart = new Date(y, m - 1, 1);
+
+  const outstanding = advances
+    .filter((a) => {
+      if (normalizeCode(a.employee_code) !== code) return false;
+      const granted = new Date(a.granted_on + "T00:00:00");
+      const remaining = a.amount - a.amount_paid;
+      return remaining > 0 && granted < periodStart;
+    })
+    .reduce((sum, a) => sum + Math.max(0, a.amount - a.amount_paid), 0);
+
+  return Math.min(outstanding, ADVANCE_MONTHLY_DEDUCTION);
+}
+
 export function getPayrollRowsForMonth(
   byMonth: Map<string, Map<string, AttendanceMonthSummary>>,
   payrollEmployees: PayrollEmployee[],
-  monthYear: string
+  monthYear: string,
+  advances: EmployeeAdvance[] = []
 ): PayrollRow[] {
   const monthMap = byMonth.get(monthYear);
   if (!monthMap || monthMap.size === 0) return [];
@@ -273,8 +309,9 @@ export function getPayrollRowsForMonth(
     if (emp?.salary_type === "weekly") continue;
 
     const salary = Number(emp?.monthly_salary) || 0;
-    const salaryType: SalaryType = (emp?.salary_type && emp.salary_type !== "weekly")
-      ? emp.salary_type
+    const rawSalaryType = emp?.salary_type;
+    const salaryType: SalaryType = (rawSalaryType === "monthly_8th" || rawSalaryType === "monthly_1st")
+      ? rawSalaryType
       : "monthly_8th";
 
     // Cap absent to standardWD to prevent impossible values from bad/duplicate PDF data
@@ -288,7 +325,8 @@ export function getPayrollRowsForMonth(
       standardWD > 0 && absentForLop > 0
         ? Math.round((Number(salary) * absentForLop) / standardWD)
         : 0;
-    const netPay = Math.max(0, salary - lossOfPay);
+    const advanceDeduction = getAdvanceDeductionForMonth(advances, summary.code, monthYear);
+    const netPay = Math.max(0, salary - lossOfPay - advanceDeduction);
     const payDate = getPayDate(salaryType, monthYear);
 
     rows.push({
@@ -300,6 +338,7 @@ export function getPayrollRowsForMonth(
       workingDays: standardWD,
       monthlySalary: salary,
       lossOfPay,
+      advanceDeduction,
       netPay,
       salaryType,
       payDate,
@@ -595,6 +634,82 @@ export function parseEmployeesFromPdfText(text: string): ParsedEmployeeRow[] {
 
   return result;
 }
+
+export function useEmployeeAdvances() {
+  return useQuery({
+    queryKey: ["employee_advances"],
+    queryFn: async () => {
+      try {
+        const { data, error } = await supabase
+          .from("employee_advances")
+          .select("*")
+          .order("granted_on", { ascending: false });
+        if (error) {
+          if (error.code === "42P01" || error.message?.includes("does not exist") || error.message?.includes("schema cache")) return [];
+          throw error;
+        }
+        return (data ?? []) as EmployeeAdvance[];
+      } catch {
+        return [];
+      }
+    },
+    retry: false,
+  });
+}
+
+export function useGrantAdvance() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: { employee_code: string; amount: number; granted_on: string }) => {
+      const { data, error } = await supabase
+        .from("employee_advances")
+        .insert({
+          employee_code: (payload.employee_code || "").trim().toUpperCase(),
+          amount: Number(payload.amount),
+          granted_on: payload.granted_on,
+          amount_paid: 0,
+        })
+        .select()
+        .single();
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["employee_advances"] });
+      toast.success("Advance granted.");
+    },
+    onError: (e: unknown) => {
+      const msg = e != null && typeof e === "object" && "message" in e ? String((e as { message?: unknown }).message) : "Failed to grant advance";
+      toast.error(msg);
+    },
+  });
+}
+
+export function useMarkAdvancePaid() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: { id: string; amount_paid: number }) => {
+      const { data, error } = await supabase
+        .from("employee_advances")
+        .update({ amount_paid: payload.amount_paid, updated_at: new Date().toISOString() })
+        .eq("id", payload.id)
+        .select()
+        .single();
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["employee_advances"] });
+      toast.success("Advance updated.");
+    },
+    onError: (e: unknown) => {
+      const msg = e != null && typeof e === "object" && "message" in e ? String((e as { message?: unknown }).message) : "Failed to update advance";
+      toast.error(msg);
+    },
+  });
+}
+
+export { ADVANCE_MONTHLY_DEDUCTION };
 
 export function useBulkUpsertPayrollEmployees() {
   const qc = useQueryClient();
