@@ -238,6 +238,36 @@ export type Database = {
         }
         Relationships: []
       }
+      employee_advances: {
+        Row: {
+          amount: number
+          amount_paid: number
+          created_at: string
+          employee_code: string
+          granted_on: string
+          id: string
+          updated_at: string
+        }
+        Insert: {
+          amount?: number
+          amount_paid?: number
+          created_at?: string
+          employee_code: string
+          granted_on?: string
+          id?: string
+          updated_at?: string
+        }
+        Update: {
+          amount?: number
+          amount_paid?: number
+          created_at?: string
+          employee_code?: string
+          granted_on?: string
+          id?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       expenses: {
         Row: {
           amount: number
