@@ -5,13 +5,13 @@ const env = import.meta.env as Record<string, string | undefined>;
 const SUPABASE_URL =
   env.VITE_SUPABASE_URL ??
   env.SUPABASE_URL ??
-  "";
+  "https://hlpmmdmgdgyzsxnnrdjl.supabase.co";
 
 const SUPABASE_KEY =
   env.VITE_SUPABASE_PUBLISHABLE_KEY ??
   env.VITE_SUPABASE_ANON_KEY ??
   env.SUPABASE_ANON_KEY ??
-  "";
+  "sb_publishable_-nGUo2cxoxIOXRoaKBiP_A_Ht4OsA9a";
 const DEBUG = (import.meta as { env?: { DEV?: boolean } }).env?.DEV === true;
 
 /**
