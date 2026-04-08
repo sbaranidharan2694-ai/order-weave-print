@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { format, startOfMonth, startOfWeek } from "date-fns";
+import { format, startOfMonth } from "date-fns";
 
 export const EXPENSE_CATEGORIES = [
   "Ink / Toner",
@@ -56,19 +56,19 @@ export function useExpenses(filters?: LedgerFilters) {
       if (filters?.from) q = q.gte("expense_date", filters.from);
       if (filters?.to) q = q.lte("expense_date", filters.to);
       if (filters?.category) q = q.eq("category", filters.category);
-      if (filters?.entryType && filters.entryType !== "all") {
-        if (filters.entryType === "expense") {
-          q = q.or("entry_type.eq.expense,entry_type.is.null");
-        } else {
-          q = q.eq("entry_type", filters.entryType);
-        }
-      }
       if (filters?.paymentMethod && filters.paymentMethod !== "all") {
         q = q.eq("payment_method", filters.paymentMethod);
       }
       const { data, error } = await q;
       if (error) throw error;
-      return (data || []) as Expense[];
+      let rows = (data || []) as Expense[];
+      if (filters?.entryType && filters.entryType !== "all") {
+        rows = rows.filter((r) => {
+          const et = r.entry_type ?? "expense";
+          return et === filters.entryType;
+        });
+      }
+      return rows;
     },
   });
 }
@@ -84,13 +84,11 @@ export function useExpenseStats(dateFrom?: string, dateTo?: string) {
       const fromDate = dateFrom || monthStart;
       const toDate = dateTo || todayStr;
 
-      const ninetyDaysAgo = new Date();
-      ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
-      const broadFrom = format(ninetyDaysAgo, "yyyy-MM-dd");
+      const fetchFrom = fromDate < monthStart ? fromDate : monthStart;
 
       const { data, error } = await (supabase.from("expenses") as any)
-        .select("expense_date, amount, category, entry_type, payment_method, affects_cash")
-        .gte("expense_date", broadFrom);
+        .select("expense_date, amount, category, entry_type, payment_method")
+        .gte("expense_date", fetchFrom);
       if (error) throw error;
 
       const all = (data || []) as {
