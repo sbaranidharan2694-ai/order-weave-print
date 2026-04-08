@@ -753,8 +753,9 @@ export default function Expenses() {
                 </TableHeader>
                 <TableBody>
                   {entries.map((entry) => {
-                    const isReceipt = entry.entry_type === "receipt";
-                    const isExpense = entry.entry_type === "expense";
+                    const entryType = entry.entry_type ?? "expense";
+                    const isReceipt = entryType === "receipt";
+                    const isExpense = entryType === "expense";
                     const label = entry.counterparty || entry.category || "—";
                     return (
                       <TableRow key={entry.id}>
@@ -772,7 +773,7 @@ export default function Expenses() {
                             </Badge>
                           ) : (
                             <Badge variant="secondary" className="text-xs capitalize">
-                              {entry.entry_type.replace("_", " ")}
+                              {(entry.entry_type ?? "expense").replace("_", " ")}
                             </Badge>
                           )}
                         </TableCell>

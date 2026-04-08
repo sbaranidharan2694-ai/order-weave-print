@@ -108,10 +108,11 @@ export function useExpenseStats(dateFrom?: string, dateTo?: string) {
 
       for (const e of all) {
         const amt = Number(e.amount) || 0;
-        const isExpense = e.entry_type === "expense";
-        const isReceipt = e.entry_type === "receipt";
-        const isOpening = e.entry_type === "opening_balance";
-        const isBankDeposit = e.entry_type === "bank_deposit";
+        const et = e.entry_type ?? "expense";
+        const isExpense = et === "expense";
+        const isReceipt = et === "receipt";
+        const isOpening = et === "opening_balance";
+        const isBankDeposit = et === "bank_deposit";
         const isToday = e.expense_date === todayStr;
         const isThisMonth = e.expense_date >= monthStart;
 
