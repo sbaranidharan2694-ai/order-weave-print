@@ -57,7 +57,11 @@ export function useExpenses(filters?: LedgerFilters) {
       if (filters?.to) q = q.lte("expense_date", filters.to);
       if (filters?.category) q = q.eq("category", filters.category);
       if (filters?.entryType && filters.entryType !== "all") {
-        q = q.eq("entry_type", filters.entryType);
+        if (filters.entryType === "expense") {
+          q = q.or("entry_type.eq.expense,entry_type.is.null");
+        } else {
+          q = q.eq("entry_type", filters.entryType);
+        }
       }
       if (filters?.paymentMethod && filters.paymentMethod !== "all") {
         q = q.eq("payment_method", filters.paymentMethod);
@@ -108,7 +112,7 @@ export function useExpenseStats(dateFrom?: string, dateTo?: string) {
 
       for (const e of all) {
         const amt = Number(e.amount) || 0;
-        const et = e.entry_type ?? "expense";
+        const et: string = e.entry_type == null ? "expense" : e.entry_type;
         const isExpense = et === "expense";
         const isReceipt = et === "receipt";
         const isOpening = et === "opening_balance";
@@ -173,10 +177,11 @@ export function useDailySummary(date: string) {
 
       for (const r of rows) {
         const amt = Number(r.amount) || 0;
-        if (r.entry_type === "opening_balance") openingCash += amt;
-        if (r.entry_type === "receipt" && r.payment_method === "Cash") cashReceived += amt;
-        if (r.entry_type === "expense" && r.payment_method === "Cash") cashExpenses += amt;
-        if (r.entry_type === "bank_deposit") bankDeposited += amt;
+        const rt: string = r.entry_type == null ? "expense" : r.entry_type;
+        if (rt === "opening_balance") openingCash += amt;
+        if (rt === "receipt" && r.payment_method === "Cash") cashReceived += amt;
+        if (rt === "expense" && r.payment_method === "Cash") cashExpenses += amt;
+        if (rt === "bank_deposit") bankDeposited += amt;
         if (r.entry_type === "adjustment" && r.actual_counted !== null) {
           savedActualCounted = r.actual_counted;
           savedVariance = r.variance;
