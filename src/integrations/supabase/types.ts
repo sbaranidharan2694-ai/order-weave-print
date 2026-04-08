@@ -270,34 +270,55 @@ export type Database = {
       }
       expenses: {
         Row: {
+          actual_counted: number | null
+          affects_cash: boolean
           amount: number
           category: string
+          counterparty: string | null
           created_at: string
+          created_by: string | null
           description: string | null
+          entry_type: string
           expense_date: string
           id: string
+          order_ref: string | null
           payment_method: string
           updated_at: string
+          variance: number | null
         }
         Insert: {
+          actual_counted?: number | null
+          affects_cash?: boolean
           amount?: number
           category: string
+          counterparty?: string | null
           created_at?: string
+          created_by?: string | null
           description?: string | null
+          entry_type?: string
           expense_date?: string
           id?: string
+          order_ref?: string | null
           payment_method?: string
           updated_at?: string
+          variance?: number | null
         }
         Update: {
+          actual_counted?: number | null
+          affects_cash?: boolean
           amount?: number
           category?: string
+          counterparty?: string | null
           created_at?: string
+          created_by?: string | null
           description?: string | null
+          entry_type?: string
           expense_date?: string
           id?: string
+          order_ref?: string | null
           payment_method?: string
           updated_at?: string
+          variance?: number | null
         }
         Relationships: []
       }

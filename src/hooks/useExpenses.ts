@@ -1,21 +1,23 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { format, startOfMonth, startOfWeek } from "date-fns";
 
 export const EXPENSE_CATEGORIES = [
-  "Printing Materials",
-  "Paper Purchase",
   "Ink / Toner",
+  "Paper Purchase",
+  "Transport",
+  "Office Supplies",
   "Rent",
   "Electricity",
   "Staff Salary",
-  "Transport",
   "Equipment Maintenance",
-  "Office Supplies",
   "Miscellaneous",
 ];
 
-export const PAYMENT_METHODS = ["Cash", "UPI", "Bank", "Card"];
+export const PAYMENT_METHODS = ["Cash", "UPI", "Bank Transfer", "Card"];
+
+export type EntryType = "expense" | "receipt" | "bank_deposit" | "opening_balance" | "adjustment";
 
 export interface Expense {
   id: string;
@@ -26,16 +28,40 @@ export interface Expense {
   payment_method: string;
   created_at: string;
   updated_at: string;
+  created_by: string | null;
+  entry_type: EntryType;
+  affects_cash: boolean;
+  counterparty: string | null;
+  order_ref: string | null;
+  actual_counted: number | null;
+  variance: number | null;
 }
 
-export function useExpenses(filters?: { from?: string; to?: string; category?: string }) {
+export interface LedgerFilters {
+  from?: string;
+  to?: string;
+  category?: string;
+  entryType?: "all" | "expense" | "receipt";
+  paymentMethod?: string;
+}
+
+export function useExpenses(filters?: LedgerFilters) {
   return useQuery({
     queryKey: ["expenses", filters],
     queryFn: async () => {
-      let q = supabase.from("expenses").select("*").order("expense_date", { ascending: false });
+      let q = (supabase.from("expenses") as any)
+        .select("*")
+        .order("expense_date", { ascending: false })
+        .order("created_at", { ascending: false });
       if (filters?.from) q = q.gte("expense_date", filters.from);
       if (filters?.to) q = q.lte("expense_date", filters.to);
       if (filters?.category) q = q.eq("category", filters.category);
+      if (filters?.entryType && filters.entryType !== "all") {
+        q = q.eq("entry_type", filters.entryType);
+      }
+      if (filters?.paymentMethod && filters.paymentMethod !== "all") {
+        q = q.eq("payment_method", filters.paymentMethod);
+      }
       const { data, error } = await q;
       if (error) throw error;
       return (data || []) as Expense[];
@@ -43,41 +69,131 @@ export function useExpenses(filters?: { from?: string; to?: string; category?: s
   });
 }
 
-export function useExpenseStats() {
+export function useExpenseStats(dateFrom?: string, dateTo?: string) {
   return useQuery({
-    queryKey: ["expense-stats"],
+    queryKey: ["expense-stats", dateFrom, dateTo],
     queryFn: async () => {
       const now = new Date();
-      const todayStr = now.toISOString().slice(0, 10);
-      const dayOfWeek = now.getDay();
-      const monday = new Date(now);
-      monday.setDate(now.getDate() - ((dayOfWeek + 6) % 7));
-      const weekStart = monday.toISOString().slice(0, 10);
-      const monthStart = todayStr.slice(0, 8) + "01";
+      const todayStr = format(now, "yyyy-MM-dd");
+      const monthStart = format(startOfMonth(now), "yyyy-MM-dd");
+
+      const fromDate = dateFrom || monthStart;
+      const toDate = dateTo || todayStr;
 
       const ninetyDaysAgo = new Date();
       ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
-      const fromDate = ninetyDaysAgo.toISOString().slice(0, 10);
+      const broadFrom = format(ninetyDaysAgo, "yyyy-MM-dd");
 
-      const { data, error } = await supabase
-        .from("expenses")
-        .select("expense_date, amount, category")
-        .gte("expense_date", fromDate);
+      const { data, error } = await (supabase.from("expenses") as any)
+        .select("expense_date, amount, category, entry_type, payment_method, affects_cash")
+        .gte("expense_date", broadFrom);
       if (error) throw error;
-      const all = (data || []) as { expense_date: string; amount: number; category: string }[];
 
-      let today = 0, week = 0, month = 0;
+      const all = (data || []) as {
+        expense_date: string;
+        amount: number;
+        category: string;
+        entry_type: string;
+        payment_method: string;
+        affects_cash: boolean;
+      }[];
+
+      let todayExpenses = 0;
+      let todayReceipts = 0;
+      let monthExpenses = 0;
+      let monthReceipts = 0;
+      let openingBalanceToday = 0;
+      let bankDepositedToday = 0;
       const byCategory: Record<string, number> = {};
 
       for (const e of all) {
         const amt = Number(e.amount) || 0;
-        if (e.expense_date === todayStr) today += amt;
-        if (e.expense_date >= weekStart) week += amt;
-        if (e.expense_date >= monthStart) month += amt;
-        byCategory[e.category] = (byCategory[e.category] || 0) + amt;
+        const isExpense = e.entry_type === "expense";
+        const isReceipt = e.entry_type === "receipt";
+        const isOpening = e.entry_type === "opening_balance";
+        const isBankDeposit = e.entry_type === "bank_deposit";
+        const isToday = e.expense_date === todayStr;
+        const isThisMonth = e.expense_date >= monthStart;
+
+        if (isToday && isExpense) todayExpenses += amt;
+        if (isToday && isReceipt) todayReceipts += amt;
+        if (isToday && isOpening) openingBalanceToday += amt;
+        if (isToday && isBankDeposit) bankDepositedToday += amt;
+        if (isThisMonth && isExpense) monthExpenses += amt;
+        if (isThisMonth && isReceipt) monthReceipts += amt;
+
+        if (isExpense && e.expense_date >= fromDate && e.expense_date <= toDate) {
+          byCategory[e.category] = (byCategory[e.category] || 0) + amt;
+        }
       }
 
-      return { today, week, month, byCategory };
+      const cashInHand = openingBalanceToday > 0
+        ? openingBalanceToday + todayReceipts - todayExpenses - bankDepositedToday
+        : null;
+
+      return {
+        todayExpenses,
+        todayReceipts,
+        netCashToday: todayReceipts - todayExpenses,
+        monthExpenses,
+        monthReceipts,
+        cashInHand,
+        hasOpeningBalance: openingBalanceToday > 0,
+        byCategory,
+      };
+    },
+  });
+}
+
+export function useDailySummary(date: string) {
+  return useQuery({
+    queryKey: ["daily-summary", date],
+    queryFn: async () => {
+      const { data, error } = await (supabase.from("expenses") as any)
+        .select("amount, entry_type, payment_method, affects_cash, actual_counted, variance")
+        .eq("expense_date", date);
+      if (error) throw error;
+
+      const rows = (data || []) as {
+        amount: number;
+        entry_type: string;
+        payment_method: string;
+        affects_cash: boolean;
+        actual_counted: number | null;
+        variance: number | null;
+      }[];
+
+      let openingCash = 0;
+      let cashReceived = 0;
+      let cashExpenses = 0;
+      let bankDeposited = 0;
+      let savedActualCounted: number | null = null;
+      let savedVariance: number | null = null;
+
+      for (const r of rows) {
+        const amt = Number(r.amount) || 0;
+        if (r.entry_type === "opening_balance") openingCash += amt;
+        if (r.entry_type === "receipt" && r.payment_method === "Cash") cashReceived += amt;
+        if (r.entry_type === "expense" && r.payment_method === "Cash") cashExpenses += amt;
+        if (r.entry_type === "bank_deposit") bankDeposited += amt;
+        if (r.entry_type === "adjustment" && r.actual_counted !== null) {
+          savedActualCounted = r.actual_counted;
+          savedVariance = r.variance;
+        }
+      }
+
+      const expectedCash = openingCash + cashReceived - cashExpenses - bankDeposited;
+
+      return {
+        openingCash,
+        cashReceived,
+        cashExpenses,
+        bankDeposited,
+        expectedCash,
+        actualCounted: savedActualCounted,
+        variance: savedVariance,
+        hasOpeningBalance: openingCash > 0,
+      };
     },
   });
 }
@@ -85,19 +201,39 @@ export function useExpenseStats() {
 export function useCreateExpense() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (expense: { expense_date: string; category: string; description?: string; amount: number; payment_method: string }) => {
+    mutationFn: async (expense: {
+      expense_date: string;
+      category: string;
+      description?: string;
+      amount: number;
+      payment_method: string;
+      entry_type?: EntryType;
+      affects_cash?: boolean;
+      counterparty?: string;
+      order_ref?: string;
+    }) => {
       const { data: { user } } = await supabase.auth.getUser();
-      const { data, error } = await supabase.from("expenses").insert({
+      const entryType = expense.entry_type || "expense";
+      const affectsCash = expense.affects_cash !== undefined
+        ? expense.affects_cash
+        : expense.payment_method === "Cash";
+      const { data, error } = await (supabase.from("expenses") as any).insert({
         ...expense,
+        entry_type: entryType,
+        affects_cash: affectsCash,
         created_by: user?.id ?? null,
-      } as any).select().single();
+      }).select().single();
       if (error) throw error;
       return data;
     },
-    onSuccess: () => {
+    onSuccess: (_data, vars) => {
       qc.invalidateQueries({ queryKey: ["expenses"] });
       qc.invalidateQueries({ queryKey: ["expense-stats"] });
-      toast.success("Expense added!");
+      qc.invalidateQueries({ queryKey: ["daily-summary"] });
+      const type = vars.entry_type || "expense";
+      if (type === "receipt") toast.success("Receipt added!");
+      else if (type === "opening_balance") toast.success("Opening balance set!");
+      else toast.success("Expense added!");
     },
     onError: (err) => toast.error("Failed: " + (err as Error).message),
   });
@@ -113,7 +249,8 @@ export function useUpdateExpense() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["expenses"] });
       qc.invalidateQueries({ queryKey: ["expense-stats"] });
-      toast.success("Expense updated!");
+      qc.invalidateQueries({ queryKey: ["daily-summary"] });
+      toast.success("Entry updated!");
     },
     onError: (err) => toast.error("Failed: " + (err as Error).message),
   });
@@ -129,7 +266,58 @@ export function useDeleteExpense() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["expenses"] });
       qc.invalidateQueries({ queryKey: ["expense-stats"] });
-      toast.success("Expense deleted!");
+      qc.invalidateQueries({ queryKey: ["daily-summary"] });
+      toast.success("Entry deleted!");
+    },
+    onError: (err) => toast.error("Failed: " + (err as Error).message),
+  });
+}
+
+export function useSaveDailyClosing() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      date,
+      actualCounted,
+      expectedCash,
+    }: {
+      date: string;
+      actualCounted: number;
+      expectedCash: number;
+    }) => {
+      const { data: { user } } = await supabase.auth.getUser();
+      const variance = actualCounted - expectedCash;
+
+      const { data: existing } = await (supabase.from("expenses") as any)
+        .select("id")
+        .eq("expense_date", date)
+        .eq("entry_type", "adjustment")
+        .maybeSingle();
+
+      if (existing?.id) {
+        const { error } = await (supabase.from("expenses") as any)
+          .update({ actual_counted: actualCounted, variance, amount: 0 })
+          .eq("id", existing.id);
+        if (error) throw error;
+      } else {
+        const { error } = await (supabase.from("expenses") as any).insert({
+          expense_date: date,
+          entry_type: "adjustment",
+          category: "Adjustment",
+          payment_method: "Cash",
+          amount: 0,
+          affects_cash: false,
+          actual_counted: actualCounted,
+          variance,
+          description: "Daily closing reconciliation",
+          created_by: user?.id ?? null,
+        });
+        if (error) throw error;
+      }
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["daily-summary"] });
+      toast.success("Daily closing saved!");
     },
     onError: (err) => toast.error("Failed: " + (err as Error).message),
   });
