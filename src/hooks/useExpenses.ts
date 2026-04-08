@@ -3,6 +3,17 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { format, startOfMonth } from "date-fns";
 
+let _schemaHasNewCols: boolean | null = null;
+
+async function schemaHasNewCols(): Promise<boolean> {
+  if (_schemaHasNewCols !== null) return _schemaHasNewCols;
+  const { error } = await (supabase.from("expenses") as any)
+    .select("entry_type")
+    .limit(1);
+  _schemaHasNewCols = !error;
+  return _schemaHasNewCols;
+}
+
 export const EXPENSE_CATEGORIES = [
   "Ink / Toner",
   "Paper Purchase",
@@ -217,16 +228,24 @@ export function useCreateExpense() {
       order_ref?: string;
     }) => {
       const { data: { user } } = await supabase.auth.getUser();
-      const entryType = expense.entry_type || "expense";
-      const affectsCash = expense.affects_cash !== undefined
-        ? expense.affects_cash
-        : expense.payment_method === "Cash";
-      const { data, error } = await (supabase.from("expenses") as any).insert({
-        ...expense,
-        entry_type: entryType,
-        affects_cash: affectsCash,
+      const hasNew = await schemaHasNewCols();
+      const base = {
+        expense_date: expense.expense_date,
+        category: expense.category || "Miscellaneous",
+        description: expense.description,
+        amount: expense.amount,
+        payment_method: expense.payment_method,
         created_by: user?.id ?? null,
-      }).select().single();
+      };
+      const payload = hasNew ? {
+        ...base,
+        entry_type: expense.entry_type || "expense",
+        affects_cash: expense.payment_method === "Cash",
+        counterparty: expense.counterparty,
+        order_ref: expense.order_ref,
+      } : base;
+      const { data, error } = await (supabase.from("expenses") as any)
+        .insert(payload).select().single();
       if (error) throw error;
       return data;
     },
@@ -247,7 +266,17 @@ export function useUpdateExpense() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, ...updates }: Partial<Expense> & { id: string }) => {
-      const { error } = await (supabase.from("expenses") as any).update(updates).eq("id", id);
+      const hasNew = await schemaHasNewCols();
+      const safeUpdates: Record<string, unknown> = { ...updates };
+      if (!hasNew) {
+        delete safeUpdates.entry_type;
+        delete safeUpdates.affects_cash;
+        delete safeUpdates.counterparty;
+        delete safeUpdates.order_ref;
+        delete safeUpdates.actual_counted;
+        delete safeUpdates.variance;
+      }
+      const { error } = await (supabase.from("expenses") as any).update(safeUpdates).eq("id", id);
       if (error) throw error;
     },
     onSuccess: () => {
@@ -289,6 +318,11 @@ export function useSaveDailyClosing() {
       actualCounted: number;
       expectedCash: number;
     }) => {
+      const hasNew = await schemaHasNewCols();
+      if (!hasNew) {
+        toast.error("Run database migration first to enable daily closing.");
+        return;
+      }
       const { data: { user } } = await supabase.auth.getUser();
       const variance = actualCounted - expectedCash;
 
