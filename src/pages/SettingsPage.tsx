@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { useState, useEffect } from "react";
-import { X, Plus, Pencil, Trash2, CheckCircle2 } from "lucide-react";
+import { X, Plus, Pencil, Trash2, CheckCircle2, Copy, ExternalLink, QrCode } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -103,9 +103,39 @@ export default function SettingsPage() {
     setShowTemplateModal(false);
   };
 
+  const ORDER_FORM_URL = "https://sbaranidharan2694-ai.github.io/superprinters-order-form/";
+
+  const copyLink = () => {
+    navigator.clipboard.writeText(ORDER_FORM_URL);
+    toast.success("Link copied to clipboard!");
+  };
+
   return (
     <div className="max-w-2xl mx-auto space-y-6 animate-fade-in pb-24">
       <h1 className="text-2xl font-bold text-foreground">Settings</h1>
+
+      {/* Public Order Form */}
+      <Card className="shadow-card border border-[#E5E7EB] rounded-xl p-6 bg-gradient-to-br from-blue-50 to-indigo-50">
+        <CardHeader className="p-0 pb-4 border-b border-blue-100 mb-4">
+          <div className="flex items-center gap-2">
+            <QrCode className="h-4 w-4 text-blue-600" />
+            <CardTitle className="text-[15px] font-semibold text-[#1E293B]">Public Order Form</CardTitle>
+          </div>
+          <p className="text-sm text-muted-foreground mt-1">Share this link with customers so they can place orders directly — no portal access required.</p>
+        </CardHeader>
+        <CardContent className="p-0 space-y-3">
+          <div className="flex items-center gap-2 bg-white border border-blue-200 rounded-lg px-3 py-2">
+            <span className="text-sm text-blue-700 font-mono flex-1 truncate">{ORDER_FORM_URL}</span>
+            <Button size="sm" variant="ghost" className="h-7 px-2 text-blue-600 hover:text-blue-700 hover:bg-blue-50 flex-shrink-0" onClick={copyLink}>
+              <Copy className="h-3.5 w-3.5 mr-1" /> Copy
+            </Button>
+            <Button size="sm" variant="ghost" className="h-7 px-2 text-blue-600 hover:text-blue-700 hover:bg-blue-50 flex-shrink-0" onClick={() => window.open(ORDER_FORM_URL, "_blank")}>
+              <ExternalLink className="h-3.5 w-3.5 mr-1" /> Open
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">💡 Share via WhatsApp, print as a QR code on receipts, or add to your website.</p>
+        </CardContent>
+      </Card>
 
       <Card className="shadow-card border border-[#E5E7EB] rounded-xl p-6 mb-6">
         <CardHeader className="p-0 pb-4 border-b border-[#F1F5F9] mb-4">
