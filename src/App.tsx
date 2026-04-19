@@ -25,6 +25,7 @@ const Expenses = lazy(() => import("@/pages/Expenses"));
 const Attendance = lazy(() => import("@/pages/Attendance"));
 const Login = lazy(() => import("@/pages/Login"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
+const PublicOrderForm = lazy(() => import("@/pages/PublicOrderForm"));
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const auth = useAuth();
@@ -66,6 +67,7 @@ function AppContent() {
     <Suspense fallback={<PageLoader />}>
       <Routes>
         <Route path="/login" element={<Login />} />
+        <Route path="/order" element={<PublicOrderForm />} />
         <Route
           path="/*"
           element={

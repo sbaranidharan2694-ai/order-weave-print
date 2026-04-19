@@ -70,6 +70,7 @@ export const SOURCE_COLORS: Record<string, string> = {
   'email': 'bg-source-email',
   'manual': 'bg-source-manual',
   'purchase_order': 'bg-sky-500',
+  'online': 'bg-emerald-500',
 };
 
 export const PRODUCT_TYPES = [
@@ -88,6 +89,7 @@ export const ORDER_SOURCES = [
   { value: 'email', label: 'Email' },
   { value: 'manual', label: 'Manual' },
   { value: 'purchase_order', label: 'Purchase Order' },
+  { value: 'online', label: 'Online Form' },
 ];
 
 // WhatsApp message templates per status
