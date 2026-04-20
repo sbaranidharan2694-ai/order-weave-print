@@ -103,7 +103,7 @@ export default function SettingsPage() {
     setShowTemplateModal(false);
   };
 
-  const ORDER_FORM_URL = "https://sbaranidharan2694-ai.github.io/superprinters-order-form/";
+  const ORDER_FORM_URL = "https://superprinters-order-form.netlify.app";
 
   const copyLink = () => {
     navigator.clipboard.writeText(ORDER_FORM_URL);
