@@ -3,6 +3,7 @@ import { useOrder, useStatusLogs, useUpdateOrderStatus, useCreateOrder } from "@
 import { useFulfillments, useAddFulfillment, useUpdateFulfillment, useDeleteFulfillment, type Fulfillment } from "@/hooks/useFulfillments";
 import { useProductionJobsByOrder, useUpdateJobStatus, useUpdateJob } from "@/hooks/useProductionJobs";
 import { useOrderItems } from "@/hooks/useOrderItems";
+import { useOrderFiles, useUploadOrderFile, useDeleteOrderFile } from "@/hooks/useOrderFiles";
 import { useNotificationLogs, useLogNotification } from "@/hooks/useNotificationLogs";
 import { JOB_STATUSES, JOB_STATUS_LABELS } from "@/lib/productionJobConstants";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,7 +14,7 @@ import { NotifyPrompt } from "@/components/NotifyPrompt";
 import { ORDER_STATUSES, STATUS_EMOJIS, WHATSAPP_STATUS_TEMPLATES, fillWhatsAppTemplate } from "@/lib/constants";
 import { useSettings } from "@/hooks/useSettings";
 import { format, parseISO, formatDistanceToNow } from "date-fns";
-import { MessageCircle, Mail, Pencil, Printer, ArrowLeft, Copy, Plus, Trash2, Bell, CheckCircle2, Clock, ChevronUp, ChevronDown, Briefcase, ExternalLink } from "lucide-react";
+import { MessageCircle, Mail, Pencil, Printer, ArrowLeft, Copy, Plus, Trash2, Bell, CheckCircle2, Clock, ChevronUp, ChevronDown, Briefcase, ExternalLink, Paperclip, Download, ImageIcon, FileText, Upload } from "lucide-react";
 import { useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -55,6 +56,9 @@ export default function OrderDetail() {
   const updateJobStatus = useUpdateJobStatus();
   const updateJob = useUpdateJob();
   const { data: orderItems = [] } = useOrderItems(id);
+  const { data: orderFiles = [] } = useOrderFiles(id);
+  const uploadFile = useUploadOrderFile();
+  const deleteFile = useDeleteOrderFile();
 
   const [showStatusModal, setShowStatusModal] = useState(false);
   const [newStatus, setNewStatus] = useState("");
@@ -667,6 +671,69 @@ export default function OrderDetail() {
                   })}
                 </tbody>
               </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Artwork / Design Files */}
+      <Card className="shadow-card rounded-2xl border border-[#E5E7EB]">
+        <CardHeader className="border-b border-[#F1F5F9]">
+          <CardTitle className="text-sm font-semibold text-[#1E293B] flex items-center justify-between flex-wrap gap-2">
+            <span className="flex items-center gap-1.5"><Paperclip className="h-4 w-4" /> Design / Artwork Files</span>
+            <label className="cursor-pointer">
+              <input type="file" className="hidden" multiple
+                accept=".pdf,.jpg,.jpeg,.png,.ai,.psd,.cdr,.zip,.tif,.tiff,.eps"
+                onChange={async e => {
+                  const files = Array.from(e.target.files || []);
+                  for (const file of files) await uploadFile.mutateAsync({ orderId: id!, file });
+                  e.target.value = "";
+                }}
+              />
+              <span className="inline-flex items-center gap-1 text-xs font-medium border border-[#E5E7EB] rounded-md px-2.5 py-1.5 hover:bg-muted transition-colors">
+                <Upload className="h-3 w-3" /> Upload Files
+              </span>
+            </label>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-4">
+          {orderFiles.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No files attached yet.</p>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {orderFiles.map(f => {
+                const isImage = f.mime_type?.startsWith("image/");
+                const url = f.signedUrl || f.storage_url;
+                return (
+                  <div key={f.id} className="flex items-center gap-3 border border-[#E5E7EB] rounded-lg p-2.5 bg-[#F8FAFC]">
+                    {isImage ? (
+                      <a href={url} target="_blank" rel="noopener noreferrer" className="flex-shrink-0">
+                        <img src={url} alt={f.filename} className="w-12 h-12 rounded object-cover border border-[#E5E7EB]" />
+                      </a>
+                    ) : (
+                      <div className="w-12 h-12 rounded bg-[#0C1A2E] flex items-center justify-center flex-shrink-0">
+                        <FileText className="h-5 w-5 text-[#C9973A]" />
+                      </div>
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-semibold text-[#1E293B] truncate" title={f.filename}>{f.filename}</p>
+                      <p className="text-[11px] text-muted-foreground mt-0.5">
+                        {f.file_size ? (f.file_size < 1048576 ? (f.file_size / 1024).toFixed(1) + " KB" : (f.file_size / 1048576).toFixed(1) + " MB") : ""}
+                        {f.uploaded_at ? " · " + format(parseISO(f.uploaded_at), "dd MMM, HH:mm") : ""}
+                      </p>
+                    </div>
+                    <div className="flex gap-1 flex-shrink-0">
+                      <a href={url} download={f.filename} target="_blank" rel="noopener noreferrer">
+                        <Button variant="ghost" size="icon" className="h-7 w-7" title="Download"><Download className="h-3.5 w-3.5" /></Button>
+                      </a>
+                      <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" title="Delete"
+                        onClick={() => { if (confirm(`Delete ${f.filename}?`)) deleteFile.mutate(f.id); }}>
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
         </CardContent>
